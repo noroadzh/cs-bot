@@ -13,9 +13,11 @@ describe('ContextService', () => {
 
   it('append 5 轮后 rounds slice 到 10 条', async () => {
     let lastSetValue: string = '';
-    mockRedisInstance.get.mockResolvedValue(null);
+    // 模拟 Redis 有状态：每次 get 返回上一次 set 的内容（实现 append 依赖 get 的结果）
+    let stored: string = '[]';
+    mockRedisInstance.get.mockImplementation(() => Promise.resolve(stored));
     mockRedisInstance.multi.mockReturnValue({
-      set: function (this: any, _k: string, v: string) { lastSetValue = v; return this; },
+      set: function (this: any, _k: string, v: string, ..._a: any[]) { lastSetValue = v; stored = v; return this; },
       expire: function (this: any, ..._a: any[]) { return this; },
       exec: jest.fn().mockResolvedValue([]),
     });
@@ -28,19 +30,19 @@ describe('ContextService', () => {
     expect(rounds.length).toBe(10); // 5 rounds * 2 messages
   });
 
-  it('TTL 为 900 秒（15分钟）', async () => {
+  it('TTL 为 600 秒（默认）', async () => {
     let capturedEx: string = '';
     let capturedTtl: number = 0;
     mockRedisInstance.get.mockResolvedValue(null);
     mockRedisInstance.multi.mockReturnValue({
-      set: function (this: any, _k: string, _v: string, ex: string, ttl: number) { capturedEx = ex; capturedTtl = ttl; return this; },
+      set: function (this: any, _k: string, _v: string, ex: string, ttl: number, ..._a: any[]) { capturedEx = ex; capturedTtl = ttl; return this; },
       expire: function (this: any, ..._a: any[]) { return this; },
       exec: jest.fn().mockResolvedValue([]),
     });
     const svc = new ContextService({} as any);
     await svc.append('chat-y', 'user-b', { question: 'hi', answer: 'hello' });
     expect(capturedEx).toBe('EX');
-    expect(capturedTtl).toBe(900);
+    expect(capturedTtl).toBe(600); // schema 默认值
   });
 
   it('get 返回空时 []', async () => {

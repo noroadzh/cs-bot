@@ -45,6 +45,7 @@
     "@types/jest": "^29.5.14",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.10.7",
+    "@types/pg": "^8.23.1",
     "@types/supertest": "^6.0.2",
     "@types/xml2js": "^0.4.14",
     "ioredis-mock": "^8.9.0",

@@ -8,7 +8,7 @@ import { EnvString, EnvInt, EnvBool, EnvFloat, preprocessEnv } from '@cs-bot/sha
 export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   // 企微
   WECHAT_CORP_ID: EnvString.regex(/^[a-zA-Z0-9_\-]{6,30}$/, 'WECHAT_CORP_ID format'),
-  WECHAT_AGENT_ID: EnvInt,
+  WECHAT_AGENT_ID: EnvInt(),
   WECHAT_AGENT_SECRET: EnvString.min(8),
   WECHAT_TOKEN: EnvString.min(3),
   WECHAT_ENCODING_AES_KEY: EnvString.length(43),
@@ -23,7 +23,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LLM_PRIMARY_API_KEY: EnvString.min(8),
   LLM_FALLBACK_BASE_URL: EnvString.url(),
   LLM_FALLBACK_API_KEY: EnvString.min(8),
-  LLM_TIMEOUT_MS: EnvInt.default(15000),
+  LLM_TIMEOUT_MS: EnvInt(15000),
 
   // Admin
   ADMIN_USER: EnvString.default('admin'),
@@ -31,15 +31,15 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   ALLOWED_ADMIN_IPS: EnvString.default('127.0.0.1/32'),
 
   // Mode
-  USE_MOCK_LLM: EnvBool.default(true),
-  USE_MOCK_LICENSE: EnvBool.default(true),
-  USAGE_REPORT_ENABLED: EnvBool.default(false),
+  USE_MOCK_LLM: EnvBool(true),
+  USE_MOCK_LICENSE: EnvBool(true),
+  USAGE_REPORT_ENABLED: EnvBool(false),
 
   // 阈值
-  CONFIDENCE_THRESHOLD: EnvFloat.default(0.75),
-  CONTEXT_ROUNDS: EnvInt.default(5),
-  CONTEXT_TTL_SEC: EnvInt.default(600),
-  MISS_RECORD_RETENTION_DAYS: EnvInt.default(90),
+  CONFIDENCE_THRESHOLD: EnvFloat(0.75),
+  CONTEXT_ROUNDS: EnvInt(5),
+  CONTEXT_TTL_SEC: EnvInt(600),
+  MISS_RECORD_RETENTION_DAYS: EnvInt(90),
   SLOW_REPLY_TEXT: EnvString.default('系统繁忙，请稍后再试或联系人工客服'),
 
   // 拒绝话术
@@ -47,9 +47,9 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // Redis
   REDIS_HOST: EnvString.default('127.0.0.1'),
-  REDIS_PORT: EnvInt.default(6379),
+  REDIS_PORT: EnvInt(6379),
   REDIS_PASSWORD: EnvString.optional().default(''),
-  REDIS_DB: EnvInt.default(0),
+  REDIS_DB: EnvInt(0),
 
   // Postgres
   DATABASE_URL: EnvString.default('postgresql://cs:cs@127.0.0.1:5432/csbot'),
@@ -58,16 +58,16 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LICENSE_FILE: EnvString.default('license/license.lic'),
 
   // 限流
-  RATE_GROUP_PER_MIN: EnvInt.default(20),
-  RATE_USER_PER_MIN: EnvInt.default(5),
+  RATE_GROUP_PER_MIN: EnvInt(20),
+  RATE_USER_PER_MIN: EnvInt(5),
 
   // 长答案分段
-  MAX_SEGMENT_BYTES: EnvInt.default(2048),
-  SEGMENT_SAFE_BYTES: EnvInt.default(2000),
-  SEGMENT_GAP_MS: EnvInt.default(300),
+  MAX_SEGMENT_BYTES: EnvInt(2048),
+  SEGMENT_SAFE_BYTES: EnvInt(2000),
+  SEGMENT_GAP_MS: EnvInt(300),
 
   // Server
-  PORT: EnvInt.default(3000),
+  PORT: EnvInt(3000),
   HOST: EnvString.default('0.0.0.0'),
 
   // Asset / Mock

@@ -7,12 +7,13 @@ import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
+import type { IMessageSender } from '../qa/message-sender.port.js';
 
 const TOKEN_TTL = 7000;
 const TOKEN_LOCK_TTL = 10;
 const TOKEN_LOCK_KEY = 'wecom:at:lock';
 
-export class WecomClient {
+export class WecomClient implements IMessageSender {
   private readonly logger = new AppLogger('WecomClient');
   private readonly api: AxiosInstance;
   private readonly redis: Redis;
@@ -133,5 +134,21 @@ export class WecomClient {
   async activeSend(traceId: string, chatId: string, content: string): Promise<void> {
     await this.sendText(chatId, content);
     this.logger.log({ traceId, chatId, action: 'active-send' });
+  }
+
+  async sendAsset(chatId: string, assetId: string, type: 'link' | 'file' | 'video'): Promise<void> {
+    switch (type) {
+      case 'link': await this.sendText(chatId, assetId); break;
+      case 'file': {
+        const mediaId = await this.uploadMedia('file', assetId);
+        await this.sendFile(chatId, mediaId);
+        break;
+      }
+      case 'video': {
+        const mediaId = await this.uploadMedia('video', assetId);
+        await this.sendVideo(chatId, mediaId);
+        break;
+      }
+    }
   }
 }

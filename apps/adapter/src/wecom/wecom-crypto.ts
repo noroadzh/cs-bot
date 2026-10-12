@@ -76,7 +76,16 @@ export class WecomCrypto {
     try {
       const xml = await parseXmlAsync(xmlText);
       const m: any = xml?.xml ?? {};
-      const atList = Array.isArray(m.AtList) ? m.AtList.map(String) : (typeof m.AtList === 'string' ? [m.AtList] : []);
+      const atList = Array.isArray(m.AtList) ? m.AtList : (m.AtList ? [m.AtList] : []);
+      // 兼容嵌套结构：<AtList><item>x</item></AtList> 解析后为 [{ item: [x] }]
+      const flatAtList: string[] = [];
+      for (const entry of atList) {
+        if (entry && typeof entry === 'object' && 'item' in entry && Array.isArray((entry as any).item)) {
+          for (const v of (entry as any).item) flatAtList.push(String(v));
+        } else {
+          flatAtList.push(String(entry));
+        }
+      }
       return {
         traceId,
         ToUserName: String(m.ToUserName ?? ''),
@@ -88,7 +97,7 @@ export class WecomCrypto {
         MediaId: m.MediaId ? String(m.MediaId) : undefined,
         CreateTime: parseInt(String(m.CreateTime ?? '0'), 10),
         text: m.Content ? String(m.Content) : (m.Recognition ? String(m.Recognition) : undefined),
-        mentioned: atList.includes(this.corpId),
+        mentioned: flatAtList.includes(this.corpId),
       };
     } catch {
       return null;
@@ -110,11 +119,15 @@ export class WecomCrypto {
     const msgLen = Buffer.alloc(4);
     msgLen.writeUInt32BE(contentBytes.length, 0);
     const corpIdBytes = Buffer.from(this.corpId, 'utf8');
-    const plaintext = Buffer.concat([random, msgLen, contentBytes, corpIdBytes]);
+    const raw = Buffer.concat([random, msgLen, contentBytes, corpIdBytes]);
+    // PKCS#7 块对齐填充（autoPadding=false 下需手动补齐到 16 字节倍数）
+    const blockSize = 16;
+    const padLen = blockSize - (raw.length % blockSize);
+    const padded = Buffer.concat([raw, Buffer.alloc(padLen, padLen)]);
     const aesKey = Buffer.from(this.encodingAesKey + '=', 'base64');
     const iv = aesKey.subarray(0, 16);
     const cipher = createCipheriv('aes-256-cbc', aesKey, iv);
     cipher.setAutoPadding(false);
-    return Buffer.concat([cipher.update(plaintext), cipher.final()]).toString('base64');
+    return Buffer.concat([cipher.update(padded), cipher.final()]).toString('base64');
   }
 }

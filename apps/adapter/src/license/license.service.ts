@@ -4,6 +4,7 @@ import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
 import { ILicenseVerifier, type LicenseState } from './license.types.js';
 import { MockLicenseVerifier } from './mock-license.verifier.js';
+import { NativeLicenseVerifier } from './native-license.verifier.js';
 import { AppLogger } from '../common/logger.js';
 
 const CACHE_KEY = 'license:cache';
@@ -18,8 +19,9 @@ export class LicenseService {
   constructor(_config: ConfigService) {
     const cfg = ConfigService.instance;
     this.verifier = cfg.USE_MOCK_LICENSE
-      ? new MockLicenseVerifier({ LICENSE_FILE: cfg.LICENSE_FILE } as any)
-      : new MockLicenseVerifier({ LICENSE_FILE: cfg.LICENSE_FILE } as any);
+      ? new MockLicenseVerifier(_config)
+      : new NativeLicenseVerifier(_config);
+    this.logger.log({ detail: 'license-service-initialized', mock: cfg.USE_MOCK_LICENSE });
     this.redis = new Redis({
       host: cfg.REDIS_HOST, port: cfg.REDIS_PORT,
       password: cfg.REDIS_PASSWORD || undefined, lazyConnect: true,

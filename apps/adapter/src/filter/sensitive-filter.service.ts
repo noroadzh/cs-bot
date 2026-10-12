@@ -1,14 +1,16 @@
 /** SensitiveFilterService */
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { watch, readFileSync, existsSync } from 'fs';
 import AhoCorasick from 'ahocorasick';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 
-interface AhoInstance { search(text: string): Array<[number, number, string]>; }
+interface AhoInstance {
+  search(text: string): Array<[number, string[]]>;
+}
 
 @Injectable()
-export class SensitiveFilterService implements OnModuleInit {
+export class SensitiveFilterService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new AppLogger('SensitiveFilterService');
   private automaton: AhoInstance | null = null;
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -22,6 +24,13 @@ export class SensitiveFilterService implements OnModuleInit {
   onModuleInit() {
     this.load();
     this.startWatcher();
+  }
+
+  onModuleDestroy() {
+    if (this.watcher) {
+      this.watcher.close();
+      this.watcher = null;
+    }
   }
 
   private load(): void {
@@ -50,7 +59,7 @@ export class SensitiveFilterService implements OnModuleInit {
     if (!this.automaton || !text) return text;
     const hits = this.automaton.search(text);
     if (hits.length === 0) return text;
-    const hitWords = [...new Set(hits.map(([, , word]) => word))];
+    const hitWords = [...new Set(hits.flatMap(([, matched]) => matched).filter(Boolean))];
     this.logger.warn({ detail: 'filter-hit', count: hitWords.length });
     let result = text;
     for (const word of hitWords) {

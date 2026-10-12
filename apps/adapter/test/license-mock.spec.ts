@@ -1,19 +1,31 @@
 /**
  * MockLicenseVerifier 单元测试
- * 覆盖：无文件 valid+mock / 有合法文件 valid+!mock / 格式错误 malformed / 文件损坏 invalid
+ *
+ * 策略：真实写 license 文件到 tmpdir + 设置 LICENSE_FILE 指向该文件，避免使用 fs mock
+ * （fs mock 会污染 pino 等模块对 fs.write 的依赖）。
  */
 import { setConfig } from './__setup__/test-helpers.js';
-
-beforeAll(() => setConfig());
+import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { join } from 'path';
+import { tmpdir } from 'os';
 
 const payload64 = (obj: object) => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64');
 
+let licenseFile: string;
+
+beforeAll(() => {
+  licenseFile = join(tmpdir(), `csbot-test-license-${Date.now()}.lic`);
+});
+
+afterAll(() => {
+  if (existsSync(licenseFile)) {
+    try { unlinkSync(licenseFile); } catch { /* */ }
+  }
+});
+
 describe('MockLicenseVerifier', () => {
   it('license 文件不存在：valid=true, mock=true', async () => {
-    jest.doMock('fs', () => ({
-      readFileSync: jest.fn(),
-      existsSync: jest.fn().mockReturnValue(false),
-    }));
+    setConfig({ LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier({} as any);
     const state = await v.verify();
@@ -28,10 +40,8 @@ describe('MockLicenseVerifier', () => {
       maxChats: 100,
       fingerprint: 'fp-001',
     });
-    jest.doMock('fs', () => ({
-      readFileSync: jest.fn().mockReturnValue(`${payload}.c2ln`),
-      existsSync: jest.fn().mockReturnValue(true),
-    }));
+    writeFileSync(licenseFile, `${payload}.c2ln`, 'utf8');
+    setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier({} as any);
     const state = await v.verify();
@@ -43,10 +53,8 @@ describe('MockLicenseVerifier', () => {
   });
 
   it('格式错误：valid=true, reason=malformed（mock 模式不阻断）', async () => {
-    jest.doMock('fs', () => ({
-      readFileSync: jest.fn().mockReturnValue('garbage-content'),
-      existsSync: jest.fn().mockReturnValue(true),
-    }));
+    writeFileSync(licenseFile, 'garbage-content', 'utf8');
+    setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier({} as any);
     const state = await v.verify();
@@ -56,12 +64,9 @@ describe('MockLicenseVerifier', () => {
   });
 
   it('payload JSON 损坏：valid=true, reason=malformed', async () => {
-    // base64 of invalid JSON
     const bad = Buffer.from('{invalid-json', 'utf8').toString('base64');
-    jest.doMock('fs', () => ({
-      readFileSync: jest.fn().mockReturnValue(`${bad}.c2ln`),
-      existsSync: jest.fn().mockReturnValue(true),
-    }));
+    writeFileSync(licenseFile, `${bad}.c2ln`, 'utf8');
+    setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier({} as any);
     const state = await v.verify();

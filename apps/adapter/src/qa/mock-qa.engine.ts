@@ -37,14 +37,15 @@ export class MockQaEngine implements IQAEngine {
     let best: MockPair | null = null;
     let bestScore = 0;
     for (const pair of this.pairs) {
-      const overlap = this.jaccard(q, pair.keywords.join(' '));
+      const keywordHit = pair.keywords.some((kw) => q.includes(kw));
+      const overlap = keywordHit ? 1.0 : this.jaccard(q, pair.keywords.join(' '));
       if (overlap > bestScore) { bestScore = overlap; best = pair; }
     }
     if (!best || bestScore < 0.3) {
-      return Ok({ answer: '抱歉，暂未找到匹配答案。', quotes: [], score: 0 });
+      return new Ok({ answer: '抱歉，暂未找到匹配答案。', quotes: [], score: 0 });
     }
     const resp: AskResp = { answer: best.answer, quotes: [{ id: 'mock-1', content: best.answer, score: best.score }], score: best.score };
-    return Ok(resp);
+    return new Ok(resp);
   }
 
   private jaccard(a: string, b: string): number {

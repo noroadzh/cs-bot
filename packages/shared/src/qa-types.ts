@@ -17,6 +17,9 @@ export interface AskResp {
 
 export type AskResult = Result<AskResp, { code: number; message: string }>;
 
+/** DI token used by NestJS provider config (provide / inject) */
+export const IQA_ENGINE = Symbol('IQAEngine');
+
 export interface IQAEngine {
   readonly mode: string;
   ask(req: AskReq): Promise<AskResult>;

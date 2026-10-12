@@ -1,15 +1,15 @@
 /** QaOrchestrator */
-import { Injectable } from '@nestjs/common';
-import { type IQAEngine } from '@cs-bot/shared';
+import { Injectable, Inject } from '@nestjs/common';
+import { IQA_ENGINE, type IQAEngine } from '@cs-bot/shared';
 import { ErrCode } from '@cs-bot/shared';
 import { ContextService } from '../context/context.service.js';
 import { SensitiveFilterService } from '../filter/sensitive-filter.service.js';
 import { MissService } from '../miss/miss.service.js';
 import { AssetSenderService } from '../media/asset-sender.service.js';
-import { WecomClient } from '../wecom/wecom-client.js';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import type { InboundMsg } from '../wecom/wecom-crypto.js';
+import { IMessageSender } from './message-sender.port.js';
 
 const ASSET_RE = /\[\[素材:(\d+)\]\]/g;
 
@@ -19,12 +19,12 @@ export class QaOrchestrator {
   private readonly cfg = ConfigService.instance;
 
   constructor(
-    private readonly engine: IQAEngine,
+    @Inject(IQA_ENGINE) private readonly engine: IQAEngine,
     private readonly context: ContextService,
     private readonly filter: SensitiveFilterService,
     private readonly miss: MissService,
     private readonly assetSender: AssetSenderService,
-    private readonly wecomClient: WecomClient,
+    @Inject(IMessageSender) private readonly sender: IMessageSender,
   ) {}
 
   async handle(msg: InboundMsg, traceId: string, _triggerReason: 'mention' | 'keyword'): Promise<void> {
@@ -59,7 +59,7 @@ export class QaOrchestrator {
 
     try {
       for (let i = 0; i < segments.length; i++) {
-        await this.wecomClient.sendText(chatId, segments[i], msg.mentioned ? userId : undefined);
+        await this.sender.sendText(chatId, segments[i], msg.mentioned ? userId : undefined);
         if (i < segments.length - 1) await this.sleep(this.cfg.SEGMENT_GAP_MS);
       }
       for (const assetId of assetIds) {

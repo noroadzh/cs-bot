@@ -5,10 +5,9 @@ import { ContextModule } from '../context/context.module.js';
 import { FilterModule } from '../filter/filter.module.js';
 import { MissModule } from '../miss/miss.module.js';
 import { MediaModule } from '../media/media.module.js';
-import { WecomModule } from '../wecom/wecom.module.js';
 
 @Module({
-  imports: [QaEngineModule, ContextModule, FilterModule, MissModule, MediaModule, WecomModule],
+  imports: [QaEngineModule, ContextModule, FilterModule, MissModule, MediaModule],
   providers: [QaOrchestrator],
   exports: [QaOrchestrator],
 })

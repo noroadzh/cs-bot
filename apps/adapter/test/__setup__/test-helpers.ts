@@ -3,12 +3,13 @@
  */
 import { ConfigService } from '../../src/config/config.service.js';
 
-export const MOCK_CONFIG = Object.freeze({
+/** 所有 config schema 字段，default 部分使用 schema 中的默认值 */
+export const MOCK_CONFIG = {
   WECHAT_CORP_ID: 'test_corp_12345678',
   WECHAT_AGENT_ID: 1000001,
   WECHAT_AGENT_SECRET: 'test_secret_abcdefgh',
   WECHAT_TOKEN: 'test_token_abc',
-  WECHAT_ENCODING_AES_KEY: 'abcdefghijklmnopqrstuvwxyz1234567890ABCD',
+  WECHAT_ENCODING_AES_KEY: 'abcdefghijklmnopqrstuvwxyz1234567890ABCDEFG',
   FASTGPT_BASE_URL: 'https://fastgpt.example.com/api',
   FASTGPT_API_KEY: 'fastgpt_test_key_abcdefgh',
   FASTGPT_DATASET_IDS: 'dataset1,dataset2',
@@ -28,7 +29,7 @@ export const MOCK_CONFIG = Object.freeze({
   CONTEXT_TTL_SEC: 600,
   MISS_RECORD_RETENTION_DAYS: 90,
   SLOW_REPLY_TEXT: '系统繁忙，请稍后再试',
-  REFUSAL_TEXT: '暂时没有合适答案',
+  REFUSAL_TEXT: '暂时没有合适答案，已记录到工单',
   REDIS_HOST: '127.0.0.1',
   REDIS_PORT: 6379,
   REDIS_PASSWORD: '',
@@ -37,11 +38,18 @@ export const MOCK_CONFIG = Object.freeze({
   LICENSE_FILE: '/tmp/test-license.lic',
   RATE_GROUP_PER_MIN: 20,
   RATE_USER_PER_MIN: 5,
+  MAX_SEGMENT_BYTES: 2048,
+  SEGMENT_SAFE_BYTES: 2000,
+  SEGMENT_GAP_MS: 300,
+  PORT: 3000,
+  HOST: '0.0.0.0',
   MOCK_QA_FILE: '',
+  KEYWORDS_FILE: '',
+  WECHAT_BOT_USER_ID: '',
   LOG_LEVEL: 'info',
-});
+} satisfies Record<string, unknown>;
 
-export function setConfig(overrides: Partial<typeof MOCK_CONFIG> = {}): void {
+export function setConfig(overrides: Partial<Record<string, unknown>> = {}): void {
   (ConfigService as any)._instance = { ...MOCK_CONFIG, ...overrides };
 }
 
