@@ -1,10 +1,9 @@
-# Spec Delta: qa-orchestration
+# qa-orchestration Specification
 
 ## Purpose
-
 Coordinates the answer-generation flow: ask the QA engine for an answer, judge its confidence, decide between answering or refusing, split long answers, resolve asset references, and apply the sensitive filter before sending.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: IQAEngine interface abstraction
 The system MUST define an `IQAEngine` interface with a single `ask({question, history, datasetIds?}): Promise<Result<{answer, quotes, score}>>` method. Concrete implementations (`MockQaEngine`, `FastGPTQaEngine`) MUST be selected at startup based on the `USE_MOCK_LLM` environment variable.

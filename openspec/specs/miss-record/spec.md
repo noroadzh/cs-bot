@@ -1,10 +1,9 @@
-# Spec Delta: miss-record
+# miss-record Specification
 
 ## Purpose
-
 Captures every question the bot could not confidently answer so the operations team can later expand the knowledge base; persists asynchronously and exports to Excel on demand.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Asynchronous miss persistence
 The system MUST persist each low-confidence question to `miss_record` table asynchronously, never blocking the response pipeline, and MUST retry from a local cache of up to 1000 entries if the database write fails.

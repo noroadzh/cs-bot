@@ -1,10 +1,9 @@
-# Spec Delta: mock-qa-engine
+# mock-qa-engine Specification
 
 ## Purpose
-
 Provides a deterministic, configurable, network-free QA engine used during development and pre-production integration so that the entire message pipeline (routing, context, sensitive filter, send) can be exercised without depending on a real FastGPT deployment.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Built-in example Q&A pairs
 The system MUST ship with at least 10 hand-curated example Q&A pairs covering common customer questions (return policy, shipping, pricing, business hours, contact channels), each with a confidence score in the range [0.0, 1.0].

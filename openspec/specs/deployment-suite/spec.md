@@ -1,10 +1,9 @@
-# Spec Delta: deployment-suite
+# deployment-suite Specification
 
 ## Purpose
-
 Packages the adapter and its 5 dependencies (FastGPT, PostgreSQL+pgvector, Redis, MongoDB, nginx) into a one-command Docker Compose deployment that runs on a single 4C8G cloud server with only port 443 exposed to the public internet.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Six-service compose file
 The system MUST ship a `docker-compose.yml` defining exactly six services: `adapter`, `fastgpt`, `pg`, `mongo`, `redis`, `nginx`. Only port 443 on `nginx` MUST be published to the host; all other ports stay on the internal compose network.

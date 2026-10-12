@@ -1,10 +1,9 @@
-# Spec Delta: admin-api
+# admin-api Specification
 
 ## Purpose
-
 Exposes management endpoints (miss-record export, keyword reload, config check, license status) under Basic Auth + IP whitelist so operators can monitor and tune the bot without SSH access.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Basic Auth with IP whitelist
 The system MUST require HTTP Basic Auth credentials matching `ADMIN_USER`/`ADMIN_PASSWORD` AND require the source IP to fall within `ALLOWED_ADMIN_IPS` (CIDR list) for every `/admin/*` and `/healthz` management endpoint.

@@ -1,10 +1,9 @@
-# Spec Delta: wecom-integration
+# wecom-integration Specification
 
 ## Purpose
-
 Lets the adapter service securely receive and send messages to WeCom group chats through the official self-built application API, with proper signature verification, message encryption/decryption, and a 3.5-second passive-response race against active-push delivery.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: WeCom callback signature verification
 The system MUST verify every callback message from WeCom by validating that `SHA1(sorted(token, timestamp, nonce, encrypt))` equals the `msg_signature` query parameter.

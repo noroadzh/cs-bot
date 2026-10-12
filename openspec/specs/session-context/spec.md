@@ -1,10 +1,9 @@
-# Spec Delta: session-context
+# session-context Specification
 
 ## Purpose
-
 Maintains per-user, per-group conversation history in Redis so the bot can answer follow-up questions with awareness of the last few exchanges.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Context storage with sliding 5-round window
 The system MUST store the last 5 conversation rounds (each round = 1 question + 1 answer) per `(chatId, userId)` pair in Redis as a JSON array under key `ctx:{chatId}:{userId}`, with TTL 600 seconds refreshed on every write.

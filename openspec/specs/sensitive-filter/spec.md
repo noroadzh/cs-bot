@@ -1,10 +1,9 @@
-# Spec Delta: sensitive-filter
+# sensitive-filter Specification
 
 ## Purpose
-
 Catches outbound content that contains forbidden words from a hot-reloadable word list and replaces the offending segment with a safe phrase before any message reaches the group chat.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Aho-Corasick multi-pattern matching
 The system MUST build an Aho-Corasick automaton from `config/sensitive-words.txt` (one word per line, UTF-8) and use it to scan every outbound answer text. Build time MUST stay under 50ms for a 10,000-word dictionary.

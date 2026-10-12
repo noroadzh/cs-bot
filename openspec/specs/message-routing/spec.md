@@ -1,10 +1,9 @@
-# Spec Delta: message-routing
+# message-routing Specification
 
 ## Purpose
-
 Decides which incoming WeCom messages should be processed by the bot and which should be silently ignored, while protecting the system from duplicate replays and excessive request rates.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: Message deduplication via Redis SETNX
 The system MUST deduplicate every incoming message by its `MsgId` using a `SETNX dedup:{msgid}` write with TTL 172800 seconds. A return value of 0 (already exists) MUST terminate processing silently.

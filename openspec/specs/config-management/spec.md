@@ -1,10 +1,9 @@
-# Spec Delta: config-management
+# config-management Specification
 
 ## Purpose
-
 Centralizes all runtime configuration loading with strong type safety, fail-fast startup behavior, and runtime reloadability of non-secret knobs.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: zod-validated startup
 The system MUST validate every required env var against a zod schema at startup. If any var is missing or fails format validation, the system MUST print a list of missing keys with masked values and exit with code 1.

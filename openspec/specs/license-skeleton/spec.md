@@ -1,10 +1,9 @@
-# Spec Delta: license-skeleton
+# license-skeleton Specification
 
 ## Purpose
-
 Verifies the software license at startup and during operation so the bot stops serving paid features when the license is missing, expired, or bound to a different machine — with a mock-friendly implementation that lets development proceed without a Rust native binary.
 
-## ADDED Requirements
+## Requirements
 
 ### Requirement: ILicenseVerifier interface
 The system MUST define an `ILicenseVerifier` interface with method `verify(): Promise<LicenseState>` where `LicenseState = {valid: boolean, reason?: string, expiresAt?: Date, daysLeft?: number, maxChats?: number, fingerprint?: string}`. The selected implementation is chosen by the `USE_MOCK_LICENSE` env variable.
