@@ -1,0 +1,6 @@
+{
+  "name": "@cs-bot/license-native",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts"
+}

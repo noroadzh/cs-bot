@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+.nuxt/
+
+# Environment
+.env
+.env.*.local
+.env.local
+
+# Logs
+*.log
+logs/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Docker
+docker-compose.override.yml
+
+# Backup
+backup/
+
+# Test coverage
+coverage/
+
+# Misc
+*.swp
+*.swo
+*~

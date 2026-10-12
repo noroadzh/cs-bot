@@ -1,0 +1,58 @@
+# 三阶段构建
+# 1. builder：编译 TS + 嵌入混淆产物
+# 2. native：收集 native 预编译文件（后续注入）
+# 3. runtime：distroless 镜像
+
+# ----- Stage 1: builder -----
+FROM node:20-bookworm-slim AS builder
+WORKDIR /app
+
+# 启用 pnpm
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+# 复制依赖描述
+COPY pnpm-workspace.yaml package.json ./
+COPY packages/shared/package.json packages/shared/
+COPY apps/adapter/package.json apps/adapter/
+
+# 安装依赖
+RUN pnpm install --frozen-lockfile || pnpm install
+
+# 复制源码
+COPY packages/ packages/
+COPY apps/adapter/ apps/adapter/
+COPY tsconfig.base.json ./
+
+# 编译
+RUN pnpm -C packages/shared build
+RUN pnpm -C apps/adapter build
+
+# 嵌入混淆产物（如启用 javascript-obfuscator）— 开发期跳过
+# RUN pnpm -C apps/adapter obfuscate
+
+# ----- Stage 2: native -----
+FROM alpine:3.19 AS native
+ARG TARGETPLATFORM=linux/amd64
+# 后续从 packages/license-native/prebuilds/ 复制 .node
+# COPY --from=builder /app/packages/license-native/prebuilds/${TARGETPLATFORM}/ /native/
+# 当前为空镜像
+
+# ----- Stage 3: runtime -----
+FROM gcr.io/distroless/nodejs20-debian12:nonroot AS runtime
+WORKDIR /app
+
+COPY --from=builder /app/dist/ /app/dist/
+COPY --from=builder /app/apps/adapter/dist/ /app/apps/adapter/dist/
+COPY --from=builder /app/packages/shared/dist/ /app/packages/shared/dist/
+COPY --from=builder /app/apps/adapter/src/miss/001-miss-record.sql /app/migrate/001-miss-record.sql
+COPY --from=builder /app/config /app/config
+# COPY --from=native /native/ /app/packages/license-native/prebuilds/
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+EXPOSE 3000
+
+USER nonroot
+
+CMD ["node", "--enable-source-maps", "apps/adapter/dist/main.js"]

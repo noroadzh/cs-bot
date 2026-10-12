@@ -1,0 +1,57 @@
+/**
+ * 应用启动入口
+ * 启动顺序：Config → License → Redis 探活 → PG 探活 → 监听
+ */
+import { NestFactory } from '@nestjs/core';
+import { ConfigService } from './config/config.service.js';
+import { LicenseService } from './license/license.service.js';
+import { AppModule } from './app.module.js';
+import { AppLogger } from './common/logger.js';
+import { Redis } from 'ioredis';
+
+async function bootstrap() {
+  const logger = new AppLogger('Bootstrap');
+
+  // D8 启动顺序
+  // 1. ConfigService 已在 AppModule.onModuleInit 中执行 fail-fast
+  // 2. LicenseService 已在 AppModule.onModuleInit 中执行首次校验
+  // 3. Redis 探活
+  const config = ConfigService.instance;
+  let redis: Redis | null = null;
+  try {
+    redis = new Redis({ host: config.REDIS_HOST, port: config.REDIS_PORT, password: config.REDIS_PASSWORD || undefined, lazyConnect: true, connectTimeout: 3000 });
+    await redis.ping();
+    logger.log({ phase: 'ready', detail: 'redis' });
+  } catch (err) {
+    logger.error({ phase: 'error', detail: 'redis-ping', err: (err as Error).message });
+    process.exit(1);
+  } finally {
+    redis?.disconnect();
+  }
+
+  // 4. PG 探活（延迟导入避免 NestJS 未就绪）
+  try {
+    const { default: pg } = await import('pg');
+    const client = new pg.Client({ connectionString: config.DATABASE_URL, connectionTimeoutMillis: 3000 });
+    await client.connect();
+    await client.query('SELECT 1');
+    await client.end();
+    logger.log({ phase: 'ready', detail: 'postgresql' });
+  } catch (err) {
+    logger.error({ phase: 'error', detail: 'postgresql-ping', err: (err as Error).message });
+    process.exit(1);
+  }
+
+  // 5. 注册全局异常过滤器，启动 HTTP
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  const PORT = config.PORT ?? 3000;
+  const HOST = config.HOST ?? '0.0.0.0';
+  await app.listen(PORT, HOST);
+  logger.log({ phase: 'ready', detail: `http listen`, PORT, HOST });
+}
+
+bootstrap().catch((err) => {
+  console.error('[Bootstrap.Fatal]', err);
+  process.exit(1);
+});

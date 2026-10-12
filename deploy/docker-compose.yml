@@ -1,0 +1,106 @@
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+      - ./nginx/logs:/var/log/nginx
+    depends_on:
+      adapter:
+        condition: service_healthy
+    networks:
+      - csbot
+
+  adapter:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.adapter
+    image: cs-bot-adapter:latest
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${POSTGRES_DB:-csbot}
+    depends_on:
+      redis:
+        condition: service_healthy
+      pg:
+        condition: service_healthy
+    networks:
+      - csbot
+
+  fastgpt:
+    image: labring/fastgpt:v4.8.17
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_started
+      pg:
+        condition: service_healthy
+    environment:
+      DEFAULT_ROOT_PSW: ${FASTGPT_ROOT_PASSWORD:-fastgpt123456}
+      FILE_TOKEN: ${FASTGPT_FILE_TOKEN:-filetoken1234567890}
+      MONGODB_URI: mongodb://mongo:27017/fastgpt
+      PG_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/fastgpt
+      REDIS_URL: redis://redis:6379/1
+    volumes:
+      - fastgpt-data:/data
+    networks:
+      - csbot
+
+  pg:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cs}
+      POSTGRES_DB: ${POSTGRES_DB:-csbot}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ../apps/adapter/src/miss/001-miss-record.sql:/docker-entrypoint-initdb.d/01-miss-record.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - csbot
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - csbot
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - csbot
+
+networks:
+  csbot:
+    driver: bridge
+
+volumes:
+  pg-data:
+  mongo-data:
+  redis-data:
+  fastgpt-data:
