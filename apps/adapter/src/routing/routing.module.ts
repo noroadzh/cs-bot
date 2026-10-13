@@ -8,6 +8,6 @@ import { QaModule } from '../qa/qa.module.js';
 @Module({
   imports: [QaModule],
   providers: [TriggerService, DedupService, RateLimiterService, RoutingService],
-  exports: [RoutingService],
+  exports: [RoutingService, TriggerService],
 })
 export class RoutingModule {}

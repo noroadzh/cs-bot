@@ -5,7 +5,6 @@
 import { Controller, Post, Query, Body, Req, Res, HttpCode, HttpStatus } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { WecomCrypto } from './wecom-crypto.js';
-import { WecomClient } from './wecom-client.js';
 import { RoutingService } from '../routing/routing.service.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
@@ -13,10 +12,9 @@ import { ErrCode } from '@cs-bot/shared';
 @Controller('wecom')
 export class WecomController {
   private readonly logger = new AppLogger('WecomController');
-  private readonly crypto = new WecomCrypto({} as any);
 
   constructor(
-    private readonly wecomClient: WecomClient,
+    private readonly crypto: WecomCrypto,
     private readonly routingService: RoutingService,
   ) {}
 

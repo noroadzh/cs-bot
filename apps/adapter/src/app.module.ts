@@ -9,6 +9,7 @@ import { ConfigService } from './config/config.service.js';
 import { LicenseModule } from './license/license.module.js';
 import { LicenseService } from './license/license.service.js';
 import { WecomModule } from './wecom/wecom.module.js';
+import { WecomCallbackModule } from './wecom/wecom-callback.module.js';
 import { RoutingModule } from './routing/routing.module.js';
 import { ContextModule } from './context/context.module.js';
 import { QaModule } from './qa/qa.module.js';
@@ -24,6 +25,7 @@ import { HealthModule } from './health/health.module.js';
     ConfigModule,
     LicenseModule,
     WecomModule,
+    WecomCallbackModule,
     RoutingModule,
     ContextModule,
     QaModule,
