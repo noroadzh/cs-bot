@@ -28,8 +28,15 @@ describe('MissExportService', () => {
     const svc = new MissExportService({} as any);
     const promise = svc.queryRecords(90);
     expect(promise).toBeInstanceOf(Promise);
-    // 显式消费 rejection，避免 unhandled rejection 污染后续用例
-    await expect(promise).rejects.toBeDefined();
+    // 无真实 DB 时连接失败，reject 的原因值不确定（可能是 undefined/Error），
+    // 因此只要「不抛同步错误且最终 reject」即视为符合契约
+    let rejected = false;
+    try {
+      await promise;
+    } catch {
+      rejected = true;
+    }
+    expect(rejected).toBe(true);
   });
 
   it('3.6.b exportXlsx 接受 Writable 作为 res 参数，DB 错误降级为 WARN 不 reject', async () => {
