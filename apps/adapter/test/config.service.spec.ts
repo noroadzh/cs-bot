@@ -4,8 +4,9 @@
  * 策略：AppConfigSchema.safeParse 是真正的 fail-fast 校验逻辑，
  * 此 suite 直接测 schema（不调用 ConfigService.onModuleInit，避免 process.exit(1)）。
  */
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { AppConfigSchema } from '../src/config/config.schema.js';
+import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
 const validEnv: Record<string, unknown> = {
   WECHAT_CORP_ID: 'ww1234567890abcdef',
@@ -110,5 +111,69 @@ describe('AppConfigSchema', () => {
     if (result.success) {
       expect(result.data.WECHAT_BOT_USER_ID).toBe('');
     }
+  });
+});
+
+describe('ConfigService.instance 静态访问器', () => {
+  afterEach(() => resetConfig());
+
+  it('未初始化时访问 instance → 抛 "not initialized yet"', () => {
+    resetConfig();
+    const { ConfigService } = require('../src/config/config.service.js');
+    expect(() => ConfigService.instance).toThrow(/not initialized/);
+  });
+
+  it('注入 _instance 后访问 instance → 返回注入的配置值', () => {
+    setConfig({ WECHAT_CORP_ID: 'ww-test-12345678', ADMIN_PASSWORD: 'pwd' });
+    const { ConfigService } = require('../src/config/config.service.js');
+    expect(ConfigService.instance.WECHAT_CORP_ID).toBe('ww-test-12345678');
+    expect(ConfigService.instance.ADMIN_PASSWORD).toBe('pwd');
+  });
+});
+
+describe('ConfigService.onModuleInit', () => {
+  const ORIGINAL_EXIT = process.exit;
+
+  beforeEach(() => resetConfig()); // onModuleInit 从 process.env 重新解析，不依赖已有 _instance
+  afterEach(() => {
+    resetConfig();
+    process.exit = ORIGINAL_EXIT;
+  });
+
+  it('环境变量齐备 → safeParse 成功 → 写入 _instance', async () => {
+    const { ConfigService } = require('../src/config/config.service.js');
+    const svc = new ConfigService();
+
+    await svc.onModuleInit();
+
+    expect(ConfigService.instance).toBeDefined();
+    // 值来自 test/__setup__/env.ts 的 ENV_OVERRIDES
+    expect(ConfigService.instance.WECHAT_CORP_ID).toBe('ww1234567890abcdef');
+  });
+
+  it('环境变量缺失 → safeParse 失败 → console.error 后 process.exit(1)', async () => {
+    const errSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    // 模拟真实 exit 语义：立即中断后续执行，避免读到 undefined.USE_MOCK_LLM
+    const exitSpy = jest.fn(() => {
+      throw new Error('__process_exit__');
+    }) as unknown as typeof process.exit;
+    process.exit = exitSpy;
+
+    const saved = { ...process.env };
+    for (const k of ['WECHAT_CORP_ID', 'WECHAT_AGENT_SECRET', 'ADMIN_PASSWORD', 'DATABASE_URL']) {
+      delete process.env[k];
+    }
+    try {
+      const { ConfigService } = require('../src/config/config.service.js');
+      const svc = new ConfigService();
+      // 真实 process.exit(1) 会杀进程；stub 成抛错以便断言（onModuleInit 是同步函数）
+      expect(() => svc.onModuleInit()).toThrow('__process_exit__');
+    } finally {
+      Object.assign(process.env, saved);
+    }
+
+    expect(errSpy).toHaveBeenCalled();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    errSpy.mockRestore();
   });
 });

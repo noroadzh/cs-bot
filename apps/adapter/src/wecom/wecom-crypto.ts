@@ -9,6 +9,19 @@ import { ConfigService } from '../config/config.service.js';
 
 const parseXmlAsync = promisify(parseString) as (xml: string) => Promise<any>;
 
+/**
+ * xml2js 默认 explicitArray:true，单值文本节点解析为 [value]，多值节点为 [v1,v2]。
+ * 归一化为字符串（多值取首元素 + # 拼接以便排查），调用方可安全 String()。
+ */
+function scalar(v: unknown): string {
+  if (v == null) return '';
+  if (Array.isArray(v)) {
+    if (v.length === 0) return '';
+    return v.map((x) => (typeof x === 'string' ? x : String(x))).join('#');
+  }
+  return typeof v === 'string' ? v : String(v);
+}
+
 export interface InboundMsg {
   traceId?: string;
   ToUserName: string;
@@ -64,7 +77,8 @@ export class WecomCrypto {
       const text = this.decryptAes(encrypt);
       const xml = await parseXmlAsync(text);
       const m: any = xml?.xml ?? {};
-      const receiveid = m.ReceiveId ?? m.ToUserName ?? '';
+      // xml2js 默认 explicitArray:true，单值节点会解析成 ['x']，需归一化为字符串再比对
+      const receiveid = scalar(m.ReceiveId ?? m.ToUserName);
       if (receiveid !== this.corpId) return null;
       return text;
     } catch {
