@@ -13,10 +13,41 @@ cp .env.template .env
 # 编辑 .env，填入 WECHAT_* 与 FASTGPT_* 凭证
 # USE_MOCK_LLM=true（默认）下不会真正调用外部服务
 
-# 3. 启动（仅 mock 模式可用，无需启动 redis/pg）
+# 3. 签发开发期 license（mock 模式也强校验，见下）
+node packages/license-native/bin/license.js issue --days 30 --output license/license.lic
+
+# 4. 启动（仅 mock 模式可用，无需启动 redis/pg）
 pnpm -C apps/adapter build
 USE_MOCK_LLM=true USE_MOCK_LICENSE=true node apps/adapter/dist/main.js
 ```
+
+## License 机制
+
+license 校验分三层，`USE_MOCK_LICENSE` 只跳过**签名验签**，不跳过格式与机器绑定：
+
+| 层 | mock 模式 | 生产模式 |
+|---|---|---|
+| 格式（`base64.payload.base64sig` 两段） | ✅ 校验 | ✅ 校验 |
+| 机器指纹绑定 | ✅ 校验 | ✅ 校验 |
+| Ed25519 签名 | ❌ stub 通过 | ✅ 验签 |
+| 反回放（`antireplay`） | ❌ 跳过 | ✅ 校验 |
+
+```
+license issue  --days 30                     # 签发 30 天
+license issue  --expires-at 2026-12-31       # 签发到指定日期
+license verify                                # 自检（exit 0 = valid）
+```
+
+**签发私钥**：`packages/license-native/test_keys/test_signing_key.pem`（Ed25519，PKCS8）。
+MVP 阶段明文存放；**生产签发必须换 KMS/HSM**，本 CLI 的 PEM 路径不可用于生产。
+
+**生产挂载**：
+
+```bash
+docker run -v /srv/cs-bot/license/license.lic:/app/license/license.lic:ro ...
+```
+
+详见 `docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md`。
 
 ## 部署到生产
 

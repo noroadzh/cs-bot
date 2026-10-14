@@ -1,59 +1,89 @@
 /**
- * MockLicenseVerifier
- * - 文件不存在：warn + 返回 mock valid
- * - 格式错误：warn + 返回 mock malformed
- * - 正确格式：解析 payload，返回 mock valid + parsed expiresAt
- * 不验签（签名验证在 NativeLicenseVerifier 中实现）
+ * Mock mode license verifier
+ *
+ * Mock 只 stub 验签（不验签），保留 format + payload parse + 过期 + fingerprint 绑定校验。
+ * 语义见 change B: mock 不再"永远 valid:true"，而是真的 parse 一次 license。
+ *
+ * 依赖 packages/license-native 的 fingerprint()（容错：失败跳过绑定，仅 warn）。
  */
-import { readFileSync, existsSync } from 'fs';
-import { ConfigService } from '../config/config.service.js';
-import { ILicenseVerifier, type LicenseState } from './license.types.js';
-import { AppLogger } from '../common/logger.js';
+import { createRequire } from 'node:module';
+import type { LicenseState } from './license.types.js';
 
-export class MockLicenseVerifier implements ILicenseVerifier {
-  private readonly logger = new AppLogger('MockLicenseVerifier');
-  private readonly licenseFile: string;
+const require = createRequire(import.meta.url);
 
-  constructor(_config: ConfigService) {
-    this.licenseFile = ConfigService.instance.LICENSE_FILE;
+let fingerprintOfHost: string | null = null;
+try {
+  const native = require('@cs-bot/license-native') as typeof import('@cs-bot/license-native');
+  try {
+    fingerprintOfHost = native.fingerprint();
+  } catch {
+    fingerprintOfHost = null;
+  }
+} catch {
+  fingerprintOfHost = null;
+}
+
+export class MockLicenseVerifier {
+  private readonly expectedFingerprint: string | null;
+
+  constructor() {
+    this.expectedFingerprint = fingerprintOfHost;
   }
 
-  async verify(): Promise<LicenseState> {
-    if (!existsSync(this.licenseFile)) {
-      this.logger.warn({ detail: 'license-file-not-found', path: this.licenseFile });
-      return { valid: true, reason: 'mock', mock: true };
+  verify(license: string): LicenseState {
+    const fallback: LicenseState = {
+      valid: false,
+      reason: 'mock-no-license',
+      mock: true,
+      fingerprint: '',
+      expiresAtMs: 0,
+      daysLeft: 0,
+      maxChats: 0,
+    };
+
+    if (!license || license.trim() === '') {
+      return fallback;
     }
 
+    // 1. 格式：必须正好两段 `<b64payload>.<b64sig>`
+    const parts = license.trim().split('.');
+    if (parts.length !== 2) {
+      return { ...fallback, reason: 'malformed' };
+    }
+
+    // 2. payload 解析
+    let payload: { fingerprint?: string; expiresAtMs?: number; maxChats?: number };
     try {
-      const raw = readFileSync(this.licenseFile, 'utf8').trim();
-      // 格式：base64payload.base64sig
-      const parts = raw.split('.');
-      if (parts.length !== 2) {
-        this.logger.warn({ detail: 'license-malformed', reason: 'invalid-format' });
-        return { valid: true, reason: 'malformed', mock: true };
-      }
-
-      // 解码 payload（JSON）
-      const payloadStr = Buffer.from(parts[0], 'base64').toString('utf8');
-      const payload = JSON.parse(payloadStr);
-
-      const expiresAt = payload.expiresAt ?? payload.exp ?? '';
-      const maxChats = payload.maxChats ?? payload.seats ?? 999;
-      const fingerprint = payload.fingerprint ?? payload.deviceId ?? '';
-
-      // 简单检查是否过期（mock 模式下永远返回 valid）
-      if (expiresAt && new Date(expiresAt) < new Date()) {
-        return { valid: true, reason: 'expired', expiresAt, maxChats, fingerprint, mock: true };
-      }
-
-      const daysLeft = expiresAt
-        ? Math.ceil((new Date(expiresAt).getTime() - Date.now()) / 86400000)
-        : undefined;
-
-      return { valid: true, reason: 'valid', expiresAt, daysLeft, maxChats, fingerprint, mock: true };
-    } catch (err) {
-      this.logger.warn({ detail: 'license-parse-error', err: (err as Error).message });
-      return { valid: true, reason: 'malformed', mock: true };
+      const decoded = Buffer.from(parts[0], 'base64').toString('utf8');
+      payload = JSON.parse(decoded);
+    } catch {
+      return { ...fallback, reason: 'malformed' };
     }
+
+    // 3. 过期检查
+    const expiresAtMs = Number(payload.expiresAtMs ?? 0);
+    const now = Date.now();
+    const daysLeft = Math.floor((expiresAtMs - now) / 86_400_000);
+    const baseState: LicenseState = {
+      valid: daysLeft >= 0,
+      reason: daysLeft >= 0 ? 'valid' : 'expired',
+      mock: true,
+      fingerprint: payload.fingerprint ?? '',
+      expiresAtMs,
+      daysLeft,
+      maxChats: Number(payload.maxChats ?? 0),
+    };
+
+    if (!baseState.valid) {
+      return baseState;
+    }
+
+    // 4. fingerprint 绑定（容错：expectedFingerprint 为 null 时跳过）
+    const fp = payload.fingerprint ?? '';
+    if (this.expectedFingerprint !== null && fp !== '' && fp !== this.expectedFingerprint) {
+      return { ...baseState, valid: false, reason: 'fingerprint-mismatch' };
+    }
+
+    return baseState;
   }
 }

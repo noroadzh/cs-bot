@@ -1,38 +1,33 @@
-# Dependencies
+# Rust / NAPI
+target/
+index.node
+prebuilds/
+.cargo/
+Cargo.lock
+package-lock.json
+
+# Node
 node_modules/
-.pnpm-store/
-
-# Build outputs
 dist/
-build/
-.next/
-.nuxt/
-
-# Environment
-.env
-.env.*.local
-.env.local
-
-# Logs
 *.log
-logs/
 
-# OS / Editor
-.DS_Store
-Thumbs.db
+# IDE
 .idea/
 .vscode/
-
-# Docker
-docker-compose.override.yml
-
-# Backup
-backup/
-
-# Test coverage
-coverage/
-
-# Misc
 *.swp
-*.swo
-*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude
+.claude/
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Coverage
+coverage/
+apps/adapter/coverage/

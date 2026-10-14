@@ -2,5 +2,37 @@
   "name": "@cs-bot/license-native",
   "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts"
+  "description": "Rust native license verification module for CS Bot (M9)",
+  "main": "./prebuilds/linux-x64-gnu/index.node",
+  "types": "./index.d.ts",
+  "bin": {
+    "license": "./bin/license.js"
+  },
+  "files": [
+    "prebuilds/linux-x64-gnu/",
+    "index.d.ts",
+    "bin/"
+  ],
+  "scripts": {
+    "build": "napi build --platform linux --arch x64 --target x86_64-unknown-linux-gnu",
+    "build:strip": "napi build --platform linux --arch x64 --target x86_64-unknown-linux-gnu --strip",
+    "test": "cargo test",
+    "prebuild": "npm run build -- --strip",
+    "issue": "node bin/license.js issue",
+    "verify": "node bin/license.js verify"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "license",
+    "ed25519",
+    "n-api",
+    "native"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@napi-rs/cli": "^3.10.8"
+  }
 }

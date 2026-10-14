@@ -44,7 +44,8 @@ export class AppModule implements OnModuleInit {
 
   async onModuleInit() {
     // ConfigService 在构造时已完成 fail-fast 校验（见 config.service.ts）
-    // LicenseService 首次校验（warn 但不 exit）
-    await this.licenseService.verifyAndCache();
+    // LicenseService 启动序：fingerprint → selfcheck → verify → 终态判定
+    // production + invalid 时内部 process.exit(1)
+    await this.licenseService.startupCheck();
   }
 }

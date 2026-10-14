@@ -1,7 +1,8 @@
 # cycle-dependency Specification
 
 ## Purpose
-TBD - created by archiving change cs-bot-bugfix-core. Update Purpose after archive.
+
+Ensures the module dependency graph is acyclic by enforcing layer boundaries: the Q&A orchestration layer must not directly depend on the outbound message delivery layer (WecomClient). Instead, it depends on the `IMessageSender` interface, which WecomClient implements. This prevents circular import issues and enables testability through interface injection.
 
 ## Requirements
 

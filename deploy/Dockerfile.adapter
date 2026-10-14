@@ -1,7 +1,41 @@
-# 三阶段构建
-# 1. builder：编译 TS + 嵌入混淆产物
-# 2. native：收集 native 预编译文件（后续注入）
+# 四阶段构建
+# 0. native：编译 Rust N-API 模块（linux/amd64 glibc，与 runtime 同代）
+# 1. builder：编译 TS
+# 2. assets：汇总 native 产物
 # 3. runtime：distroless 镜像
+
+# ----- Stage 0: native -----
+# 必须与 runtime 同为 Debian 12 (glibc 2.36)，否则 .node 无法加载。
+# 这里不做 cross-compile：stage 本身就是 linux/amd64，产物即目标平台。
+FROM rust:1-bookworm AS native
+WORKDIR /native
+
+# Rust crate 依赖 napi-derive（纯 Rust），无需 node/openssl；
+# 只需链接器与 pkg-config。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY packages/license-native/Cargo.toml packages/license-native/Cargo.lock ./
+COPY packages/license-native/build.rs ./
+COPY packages/license-native/src/ ./src/
+
+# 依赖层单独缓存：只改 src/ 时不会重编全部依赖
+RUN mkdir -p src \
+    && printf 'fn main() {}\n' > build.rs \
+    && cargo build --release --target x86_64-unknown-linux-gnu \
+    && rm -rf src build.rs
+
+# 恢复真实源码并重编（产物覆盖上一层的缓存占位）
+COPY packages/license-native/build.rs ./
+COPY packages/license-native/src/ ./src/
+RUN cargo build --release --target x86_64-unknown-linux-gnu
+
+# cdylib（crate-type=cdylib）→ napi 约定的 index.node
+RUN cp target/x86_64-unknown-linux-gnu/release/liblicense_native.so /native/index.node \
+    && file /native/index.node \
+    && ls -l /native/index.node
 
 # ----- Stage 1: builder -----
 FROM node:20-bookworm-slim AS builder
@@ -30,23 +64,20 @@ RUN pnpm -C apps/adapter build
 # 嵌入混淆产物（如启用 javascript-obfuscator）— 开发期跳过
 # RUN pnpm -C apps/adapter obfuscate
 
-# ----- Stage 2: native -----
-FROM alpine:3.19 AS native
-ARG TARGETPLATFORM=linux/amd64
-# 后续从 packages/license-native/prebuilds/ 复制 .node
-# COPY --from=builder /app/packages/license-native/prebuilds/${TARGETPLATFORM}/ /native/
-# 当前为空镜像
+# ----- Stage 2: assets -----
+# 把 native .node 汇齐（pubkey 已编入 .node 内部，无需单独拷）
+FROM scratch AS assets
+COPY --from=native /native/index.node /assets/packages/license-native/prebuilds/linux-x64-gnu/index.node
 
 # ----- Stage 3: runtime -----
 FROM gcr.io/distroless/nodejs20-debian12:nonroot AS runtime
 WORKDIR /app
 
-COPY --from=builder /app/dist/ /app/dist/
 COPY --from=builder /app/apps/adapter/dist/ /app/apps/adapter/dist/
 COPY --from=builder /app/packages/shared/dist/ /app/packages/shared/dist/
+COPY --from=assets /assets/packages/license-native/prebuilds/ /app/packages/license-native/prebuilds/
 COPY --from=builder /app/apps/adapter/src/miss/001-miss-record.sql /app/migrate/001-miss-record.sql
 COPY --from=builder /app/config /app/config
-# COPY --from=native /native/ /app/packages/license-native/prebuilds/
 
 ENV NODE_ENV=production
 ENV PORT=3000

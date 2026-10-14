@@ -1,0 +1,7 @@
+name: 2026-10-13-cs-bot-license-rust
+description: Rust 原生授权模块 (Ed25519验签/指纹/防重放/自检)
+schema: spec-driven
+created: 2026-10-13
+specs:
+  - license-skeleton
+store: local
