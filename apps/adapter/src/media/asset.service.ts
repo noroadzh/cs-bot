@@ -2,7 +2,7 @@
  * Asset Service
  * Handles CRUD operations for media assets
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { Pool } from 'pg';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
@@ -43,14 +43,28 @@ export class AssetService {
    * Create asset from uploaded file buffer
    */
   async createFromFile(buffer: Buffer, originalName: string, mimeType: string): Promise<Asset> {
-    // Validate size
+    // 2.4 超限 → 413 Payload Too Large（裸 Error 会被 Nest 翻成 500，语义错误）
     if (buffer.length > MAX_ASSET_BYTES) {
-      throw new Error(`File too large: max ${MAX_ASSET_BYTES} bytes`);
+      throw new HttpException(
+        {
+          errCode: 'ASSET_TOO_LARGE',
+          detail: `file exceeds max size of ${MAX_ASSET_BYTES} bytes`,
+          maxBytes: MAX_ASSET_BYTES,
+        },
+        HttpStatus.PAYLOAD_TOO_LARGE,
+      );
     }
 
-    // Validate MIME type
+    // 2.5 MIME 不在白名单 → 415 Unsupported Media Type
     if (!ALLOWED_MIME_TYPES.includes(mimeType)) {
-      throw new Error(`Unsupported MIME type: ${mimeType}`);
+      throw new HttpException(
+        {
+          errCode: 'UNSUPPORTED_MEDIA_TYPE',
+          detail: `unsupported MIME type: ${mimeType}`,
+          allowed: ALLOWED_MIME_TYPES,
+        },
+        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+      );
     }
 
     const id = randomUUID();

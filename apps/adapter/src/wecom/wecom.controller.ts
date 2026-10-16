@@ -69,6 +69,8 @@ export class WecomController {
     // before dispatching to the routing pipeline. The recognition description is
     // injected as Content so the QA engine sees a normal text query. Failures
     // must not block message routing.
+    // PRD FR-9 规则 2: 识别失败或超时回复引导话术，不把占位文本发给 QA
+    const GUIDANCE_TEXT = '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～';
     const parsedMsg = msg as any;
     if (!parsedMsg.Content && parsedMsg.MediaId && parsedMsg.MsgType === 'image') {
       this.usageService.increment('imagesReceived');
@@ -80,13 +82,17 @@ export class WecomController {
           parsedMsg.Content = description;
           parsedMsg.Recognition = description;
         } else {
+          // 识别返回空（无有效内容 / 超时 / 失败）→ 跳过 routing，直接回复引导话术
           this.usageService.increment('imagesSkipped');
-          parsedMsg.Content = '[图片消息]';
+          await this.sendGuidanceAndSkipRouting(parsedMsg, traceId, GUIDANCE_TEXT);
+          return;
         }
       } catch (err) {
+        // 识别过程抛异常 → 跳过 routing，直接回复引导话术
         this.usageService.increment('imagesSkipped');
         this.logger.warn({ traceId, detail: 'image-recognize-failed', err: (err as Error).message });
-        parsedMsg.Content = '[图片消息]';
+        await this.sendGuidanceAndSkipRouting(parsedMsg, traceId, GUIDANCE_TEXT);
+        return;
       }
     }
 
@@ -94,5 +100,26 @@ export class WecomController {
     this.routingService.dispatch(msg, traceId).catch((err) => {
       this.logger.error({ traceId, err: (err as Error).message });
     });
+  }
+
+  /**
+   * 识别失败时：直接发引导话术，不走 routing 链路
+   */
+  private async sendGuidanceAndSkipRouting(
+    msg: { AgentID?: string; FromUserName?: string; ChatId?: string },
+    traceId: string,
+    text: string,
+  ): Promise<void> {
+    const chatId = msg.ChatId || msg.FromUserName;
+    if (!chatId) {
+      this.logger.warn({ traceId, detail: 'no-chat-id-for-guidance' });
+      return;
+    }
+    try {
+      await this.wecomClient.sendText(chatId, text);
+      this.logger.log({ traceId, chatId, detail: 'guidance-sent' });
+    } catch (err) {
+      this.logger.error({ traceId, chatId, detail: 'guidance-send-fail', err: (err as Error).message });
+    }
   }
 }

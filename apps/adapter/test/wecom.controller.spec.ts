@@ -220,9 +220,9 @@ describe('WecomController.callback', () => {
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesRecognized');
     });
 
-    it('image recognize returns null → Content = [图片消息] + imagesSkipped', async () => {
+    it('image recognize returns null → 跳过 routing，回复引导话术 + imagesSkipped', async () => {
       const crypto = makeCrypto({
-        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-456', Content: '' })),
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-456', Content: '', ChatId: 'chat-1' })),
       });
       const routing = makeRouting();
       const controller = makeController(crypto, routing) as any;
@@ -234,11 +234,13 @@ describe('WecomController.callback', () => {
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
+      expect(routing.dispatch).not.toHaveBeenCalled(); // PRD FR-9 规则 2: 跳过 routing
+      expect(controller.__client.sendText).toHaveBeenCalledWith('chat-1', '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～');
     });
 
-    it('image download throws → Content = [图片消息] + imagesSkipped (不阻塞 routing)', async () => {
+    it('image download throws → 跳过 routing，回复引导话术 + imagesSkipped', async () => {
       const crypto = makeCrypto({
-        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-789', Content: '' })),
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-789', Content: '', ChatId: 'chat-2' })),
       });
       const routing = makeRouting();
       const controller = makeController(crypto, routing) as any;
@@ -249,7 +251,8 @@ describe('WecomController.callback', () => {
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
-      expect(routing.dispatch).toHaveBeenCalled(); // routing 不阻塞
+      expect(routing.dispatch).not.toHaveBeenCalled(); // PRD FR-9 规则 2: 跳过 routing
+      expect(controller.__client.sendText).toHaveBeenCalledWith('chat-2', '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～');
     });
 
     it('normal text message → no image counter calls', async () => {

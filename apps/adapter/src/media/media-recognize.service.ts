@@ -57,7 +57,10 @@ export class MediaRecognizeService {
         timeout: ConfigService.instance.LLM_TIMEOUT_MS,
       });
       const buf = Buffer.from(resp.data);
-      return this.recognizeImage(buf, 'image/jpeg');
+      // MIME 取自响应头而非写死：企微下载的图可能是 png/webp，写死 jpeg 会让识别走错分支。
+      // 头缺失时才回落 jpeg（保留旧行为），头存在但不在白名单则由 recognizeImage 记 skip。
+      const mimeType = parseMimeType(resp.headers?.['content-type']) ?? 'image/jpeg';
+      return this.recognizeImage(buf, mimeType);
     } catch (err) {
       this.logger.error({ phase: 'error', detail: 'recognize-image-url', err: (err as Error).message });
       return '';
@@ -97,4 +100,19 @@ export class MediaRecognizeService {
 
 function mockDescribe(_buf: Buffer, mimeType: string): string {
   return `用户发送了一张 ${mimeType} 图片（mock 模式：图片识别未启用真实模型）。`;
+}
+
+/**
+ * 从 HTTP Content-Type 头解析出干净的 MIME 字符串。
+ * - 大小写 / charset / boundary 等参数全部忽略
+ * - 头缺失或解析失败 → null（由调用方决定是否回落）
+ * 入参用 `unknown` 以兼容 axios 的 AxiosHeaderValue（包含 string | string[] | null）。
+ */
+export function parseMimeType(contentTypeHeader: unknown): string | null {
+  if (contentTypeHeader == null) return null;
+  const raw = Array.isArray(contentTypeHeader) ? contentTypeHeader[0] : contentTypeHeader;
+  if (typeof raw !== 'string' || !raw) return null;
+  const semi = raw.indexOf(';');
+  const mime = (semi >= 0 ? raw.slice(0, semi) : raw).trim().toLowerCase();
+  return mime || null;
 }
