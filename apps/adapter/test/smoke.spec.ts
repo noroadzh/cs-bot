@@ -18,6 +18,7 @@ import { AppConfigSchema } from '../src/config/config.schema.js';
 import type { AppConfigInput } from '../src/config/config.schema.js';
 import { setConfig } from './__setup__/test-helpers.js';
 import request from 'supertest';
+import { LicenseService } from '../src/license/license.service.js';
 
 // ---------------------------------------------------------------------------
 // 全局 mock（ioredis / pg / axios）
@@ -57,6 +58,17 @@ jest.mock('axios', () => ({
 }));
 
 // ---------------------------------------------------------------------------
+// Mock license：startupCheck 需读到未过期的 license，否则 healthz 会 503
+// ---------------------------------------------------------------------------
+const MOCK_LICENSE_PATH = '/tmp/test-license.lic';
+const mockLicensePayload = {
+  expiresAtMs: Date.now() + 86_400_000 * 365, // 1 年后
+  fingerprint: '',
+  maxChats: 100,
+};
+const mockLicense = `${Buffer.from(JSON.stringify(mockLicensePayload), 'utf8').toString('base64')}.mock-sig`;
+
+// ---------------------------------------------------------------------------
 // 构造有效配置并注入到 ConfigService 单例
 // ---------------------------------------------------------------------------
 const validEnv: Record<string, unknown> = {
@@ -81,6 +93,7 @@ const validEnv: Record<string, unknown> = {
   REDIS_HOST: '127.0.0.1',
   REDIS_PORT: 6379,
   DATABASE_URL: 'postgresql://cs:cs@127.0.0.1:5432/csbot',
+  LICENSE_FILE: MOCK_LICENSE_PATH,
 };
 
 let app: any;
@@ -89,6 +102,12 @@ const adminAuth = (user = 'admin', pass = 'admin-test-pwd'): string =>
   `Basic ${Buffer.from(`${user}:${pass}`, 'utf8').toString('base64')}`;
 
 beforeAll(async () => {
+  // 写入 mock license 文件
+  const fs = await import('node:fs');
+  fs.writeFileSync(MOCK_LICENSE_PATH, mockLicense, 'utf8');
+  // 把 LICENSE_FILE 注入 process.env，让 ConfigService.onModuleInit 重新 parse 时也用此路径
+  process.env.LICENSE_FILE = MOCK_LICENSE_PATH;
+
   const parsed = AppConfigSchema.parse(validEnv) as AppConfigInput;
   (ConfigService as any)._instance = parsed;
 
@@ -98,11 +117,21 @@ beforeAll(async () => {
 
   app = module.createNestApplication();
   await app.init();
+
+  // startupCheck 是启动期手动触发的，测试里也要显式跑一次以填充 LicenseService.state
+  const license = app.get(LicenseService);
+  await license.startupCheck();
 });
 
 afterAll(async () => {
   if (app) await app.close();
   (ConfigService as any)._instance = undefined;
+  // 清理临时 license 文件
+  try {
+    const fs = await import('node:fs');
+    if (fs.existsSync(MOCK_LICENSE_PATH)) fs.unlinkSync(MOCK_LICENSE_PATH);
+  } catch {}
+  delete process.env.LICENSE_FILE;
 });
 
 describe('smoke.spec.ts', () => {

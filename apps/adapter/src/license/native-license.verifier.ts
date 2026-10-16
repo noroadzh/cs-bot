@@ -17,12 +17,18 @@ import type {
 } from '@cs-bot/license-native';
 import type { LicenseState } from './license.types.js';
 
-const require = createRequire(import.meta.url);
+// 生产（NodeNext → ESM）无全局 require，用 createRequire 以 cwd 锚点解析；
+// ts-jest 以 commonjs 转译，此时 import.meta 是编译错误，故不能直接用 import.meta.url。
+// 包名解析走 node_modules 向上查找，cwd 锚点与模块自身路径锚点等效（WORKDIR=/app）。
+const nodeRequire: NodeRequire =
+  typeof require === 'function'
+    ? require
+    : createRequire(process.cwd() + '/');
 
 /** N-API 模块可能加载失败时回退；这种回退禁止掩盖 startupCheck 的预期错误。 */
 let native: typeof import('@cs-bot/license-native') | null = null;
 try {
-  native = require('@cs-bot/license-native') as typeof import('@cs-bot/license-native');
+  native = nodeRequire('@cs-bot/license-native') as typeof import('@cs-bot/license-native');
 } catch (err) {
   // 故意吞掉，verify() 时再以 mock-no-license 形态上报
   // （生产模式 startupCheck 会视情况 exit）
@@ -61,6 +67,11 @@ export class NativeLicenseVerifier {
    * 启动期取得本机指纹。失败返回 null（后续绑定跳过）。
    */
   getFingerprint(): string | null {
+    return this.expectedFingerprint;
+  }
+
+  /** 兼容 LicenseVerifierLike 接口 */
+  fingerprint(): string | null {
     return this.expectedFingerprint;
   }
 

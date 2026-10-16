@@ -3,6 +3,7 @@
  * 启动顺序：Config → License → Redis 探活 → PG 探活 → 监听
  */
 import { NestFactory } from '@nestjs/core';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from './config/config.service.js';
 import { LicenseService } from './license/license.service.js';
 import { AppModule } from './app.module.js';
@@ -42,8 +43,17 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // 5. 注册全局异常过滤器，启动 HTTP
+  // 5. 注册全局异常过滤器，初始化 Swagger，启动 HTTP
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
+
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('CS Bot API')
+    .setDescription('微信群智能客服机器人管理接口')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('docs', app, document);
 
   const PORT = config.PORT ?? 3000;
   const HOST = config.HOST ?? '0.0.0.0';

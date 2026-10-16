@@ -1,5 +1,6 @@
 /** GET /admin/config-check · POST /admin/config/reload · POST /admin/keywords/reload */
 import { Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard.js';
 import { ConfigService } from '../config/config.service.js';
 import { TriggerService } from '../routing/trigger.service.js';
@@ -19,6 +20,8 @@ const ALL_KEYS = [
 ];
 
 @Controller('admin')
+@ApiBearerAuth()
+@ApiTags('admin')
 @UseGuards(AdminGuard)
 export class ConfigController {
   private readonly cfg = ConfigService.instance;
@@ -26,6 +29,9 @@ export class ConfigController {
   constructor(private readonly trigger: TriggerService) {}
 
   @Get('config-check')
+  @ApiOperation({ summary: '配置自检' })
+  @ApiResponse({ status: 200, description: '各配置项的存在性与掩码值' })
+  @ApiResponse({ status: 401, description: 'Basic Auth 认证失败' })
   check() {
     const check: Record<string, { present: boolean; masked?: string }> = {};
     for (const k of ALL_KEYS) {
@@ -42,12 +48,16 @@ export class ConfigController {
   }
 
   @Post('config/reload')
+  @ApiOperation({ summary: '重载配置' })
+  @ApiResponse({ status: 201, description: '重载成功，返回关键词数量' })
   reload() {
     const count = this.trigger.reload();
     return { reloaded: true, keywords: count };
   }
 
   @Post('keywords/reload')
+  @ApiOperation({ summary: '热重载关键词词典' })
+  @ApiResponse({ status: 201, description: '重载成功' })
   reloadKeywords() {
     const count = this.trigger.reload();
     return { reloaded: true, count };

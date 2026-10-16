@@ -6,12 +6,14 @@ import { ContextService } from '../context/context.service.js';
 import { SensitiveFilterService } from '../filter/sensitive-filter.service.js';
 import { MissService } from '../miss/miss.service.js';
 import { AssetSenderService } from '../media/asset-sender.service.js';
+import { AssetReferenceResolver } from '../media/asset-reference.resolver.js';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
+import { UsageService } from '../usage/usage.service.js';
 import type { InboundMsg } from '../wecom/wecom-crypto.js';
 import { IMessageSender } from './message-sender.port.js';
 
-const ASSET_RE = /\[\[素材:(\d+)\]\]/g;
+const ASSET_RE = /\[\[素材:([a-f0-9-]+)\]\]/gi;
 
 @Injectable()
 export class QaOrchestrator {
@@ -24,6 +26,8 @@ export class QaOrchestrator {
     private readonly filter: SensitiveFilterService,
     private readonly miss: MissService,
     private readonly assetSender: AssetSenderService,
+    private readonly assetResolver: AssetReferenceResolver,
+    private readonly usageService: UsageService,
     @Inject(IMessageSender) private readonly sender: IMessageSender,
   ) {}
 
@@ -34,18 +38,34 @@ export class QaOrchestrator {
     const history = await this.context.get(chatId, userId);
     const result = await this.engine.ask({ question, history, traceId });
 
+    // 12.1 usage: LLM 调用后按引擎模式与来源计 token 桶
+    if (this.engine.mode !== 'mock') {
+      const source = result.ok ? result.value.source ?? 'primary' : ('primary' as const);
+      const bucket = source === 'fallback' ? 'tokensFallback' : 'tokensPrimary';
+      const tokens = result.ok ? ((result.value as any).tokens ?? 0) : 0;
+      // 仅当引擎返回有效 tokens 时计费；无 tokens 说明无法计量，不按 1 次兜底
+      if (tokens > 0) {
+        this.usageService.increment(bucket, tokens);
+      }
+    }
+
     let answer: string;
     let score = 0;
+    let answered = false;
     if (!result.ok) {
       answer = this.cfg.SLOW_REPLY_TEXT;
       this.logger.warn({ traceId, errCode: ErrCode.LLM_TIMEOUT });
+      // LLM 调用失败同样属于未应答，计入 messagesMissed
+      this.usageService.increment('messagesMissed');
     } else {
       score = result.value.score;
       if (score < this.cfg.CONFIDENCE_THRESHOLD) {
         await this.miss.record({ traceId, chatId, userId, question, score, engine: this.engine.mode, ts: new Date().toISOString() });
         answer = this.cfg.REFUSAL_TEXT;
+        this.usageService.increment('messagesMissed');
       } else {
         answer = result.value.answer;
+        answered = true;
       }
     }
 
@@ -62,10 +82,24 @@ export class QaOrchestrator {
         await this.sender.sendText(chatId, segments[i], msg.mentioned ? userId : undefined);
         if (i < segments.length - 1) await this.sleep(this.cfg.SEGMENT_GAP_MS);
       }
+      // 发送成功后才计 answered；refused 文本已发送也归入 refused
+      if (answered) {
+        this.usageService.increment('messagesAnswered');
+      } else if (score < this.cfg.CONFIDENCE_THRESHOLD) {
+        this.usageService.increment('messagesRefused');
+      }
       for (const assetId of assetIds) {
-        await this.assetSender.send(chatId, { id: assetId, type: 'link' }).catch((err) => {
-          this.logger.warn({ traceId, assetId, err: (err as Error).message });
-        });
+        const asset = await this.assetResolver.resolveReference(assetId);
+        if (!asset) {
+          this.logger.warn({ traceId, assetId, detail: 'unresolved-asset-reference' });
+          continue;
+        }
+        await this.assetSender
+          .send(chatId, { id: asset.id, type: asset.type })
+          .then(() => this.usageService.increment('assetsSent'))
+          .catch((err) => {
+            this.logger.warn({ traceId, assetId, err: (err as Error).message });
+          });
       }
       if (score >= this.cfg.CONFIDENCE_THRESHOLD) {
         await this.context.append(chatId, userId, { question, answer });

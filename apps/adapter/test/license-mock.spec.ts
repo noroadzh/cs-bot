@@ -11,11 +11,17 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
-import { writeFileSync, unlinkSync, existsSync } from 'fs';
+import { writeFileSync, unlinkSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
 const payload64 = (obj: object) => Buffer.from(JSON.stringify(obj), 'utf8').toString('base64');
+
+/**
+ * MockLicenseVerifier.verify() 只解析传入的字符串，不读 LICENSE_FILE。
+ * 生产路径是 LicenseService 先读文件再传给 verify()；这里补上同一层读取。
+ */
+const readLicense = (path: string): string => readFileSync(path, 'utf8');
 
 let licenseFile: string;
 
@@ -54,7 +60,7 @@ describe('MockLicenseVerifier', () => {
     setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier();
-    const state = v.verify();
+    const state = v.verify(readLicense(licenseFile));
     expect(state.valid).toBe(true);
     expect(state.reason).toBe('valid');
     expect(state.maxChats).toBe(100);
@@ -68,7 +74,7 @@ describe('MockLicenseVerifier', () => {
     setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier();
-    const state = v.verify();
+    const state = v.verify(readLicense(licenseFile));
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('malformed');
     expect(state.mock).toBe(true);
@@ -80,7 +86,7 @@ describe('MockLicenseVerifier', () => {
     setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier();
-    const state = v.verify();
+    const state = v.verify(readLicense(licenseFile));
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('malformed');
   });
@@ -95,7 +101,7 @@ describe('MockLicenseVerifier', () => {
     setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier();
-    const state = v.verify();
+    const state = v.verify(readLicense(licenseFile));
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('expired');
     expect(state.daysLeft).toBe(-1);
@@ -107,7 +113,7 @@ describe('MockLicenseVerifier', () => {
     setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier();
-    const state = v.verify();
+    const state = v.verify(readLicense(licenseFile));
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('malformed');
   });
@@ -122,7 +128,7 @@ describe('MockLicenseVerifier', () => {
     setConfig({ LICENSE_FILE: licenseFile });
     const { MockLicenseVerifier } = await import('../src/license/mock-license.verifier.js');
     const v = new MockLicenseVerifier();
-    const state = v.verify();
+    const state = v.verify(readLicense(licenseFile));
     expect(state.valid).toBe(true);
     expect(state.reason).toBe('valid');
   });

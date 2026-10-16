@@ -7,13 +7,14 @@
  * 依赖 packages/license-native 的 fingerprint()（容错：失败跳过绑定，仅 warn）。
  */
 import { createRequire } from 'node:module';
-import type { LicenseState } from './license.types.js';
+import type { LicenseState, SelfcheckResult } from './license.types.js';
 
-const require = createRequire(import.meta.url);
+const nodeRequire: NodeRequire =
+  typeof require === 'function' ? require : createRequire(process.cwd() + '/');
 
 let fingerprintOfHost: string | null = null;
 try {
-  const native = require('@cs-bot/license-native') as typeof import('@cs-bot/license-native');
+  const native = nodeRequire('@cs-bot/license-native') as typeof import('@cs-bot/license-native');
   try {
     fingerprintOfHost = native.fingerprint();
   } catch {
@@ -30,7 +31,22 @@ export class MockLicenseVerifier {
     this.expectedFingerprint = fingerprintOfHost;
   }
 
-  verify(license: string): LicenseState {
+  /**
+   * mock 模式不做启动期反调试自检，返回 null（LicenseService 视作"无自检"）。
+   */
+  selfcheck(): SelfcheckResult | null {
+    return null;
+  }
+
+  /** 兼容 LicenseVerifierLike 接口：本机指纹，失败为 null */
+  fingerprint(): string | null {
+    return this.expectedFingerprint;
+  }
+
+  /**
+   * mock 模式不跑 native 签名与反回放，`_statePath` 仅用于满足统一签名。
+   */
+  verify(license?: string, _statePath?: string | null): LicenseState {
     const fallback: LicenseState = {
       valid: false,
       reason: 'mock-no-license',
@@ -60,10 +76,15 @@ export class MockLicenseVerifier {
       return { ...fallback, reason: 'malformed' };
     }
 
-    // 3. 过期检查
-    const expiresAtMs = Number(payload.expiresAtMs ?? 0);
+    // 3. 过期检查（expiresAtMs 缺失 → malformed，避免静默当成 1970）
+    const expiresAtMsRaw = payload.expiresAtMs;
+    if (typeof expiresAtMsRaw !== 'number' || !Number.isFinite(expiresAtMsRaw)) {
+      return { ...fallback, reason: 'malformed' };
+    }
+    const expiresAtMs = expiresAtMsRaw;
     const now = Date.now();
-    const daysLeft = Math.floor((expiresAtMs - now) / 86_400_000);
+    // 向零截断：过期 1 天内 daysLeft=-1 而非 -2
+    const daysLeft = Math.trunc((expiresAtMs - now) / 86_400_000);
     const baseState: LicenseState = {
       valid: daysLeft >= 0,
       reason: daysLeft >= 0 ? 'valid' : 'expired',

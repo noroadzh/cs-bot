@@ -7,9 +7,10 @@ import { Module } from '@nestjs/common';
 import { WecomController } from './wecom.controller.js';
 import { WecomModule } from './wecom.module.js';
 import { RoutingModule } from '../routing/routing.module.js';
+import { MediaModule } from '../media/media.module.js';
 
 @Module({
-  imports: [WecomModule, RoutingModule],
+  imports: [WecomModule, RoutingModule, MediaModule],
   controllers: [WecomController],
 })
 export class WecomCallbackModule {}

@@ -194,6 +194,14 @@ cp .env.template .env && chmod 600 .env && vim .env
 | LOCAL_LLM_BASE_URL | | http://vllm:8000/v1 | 本地推理端点（增项 D） |
 | LOCAL_EMBEDDING_URL | | http://xinference:9997 | 本地 embedding 端点（增项 D） |
 | USAGE_REPORT_ENABLED | | false | 用量上报开关（私有化保持 false） |
+| USAGE_WEBHOOK_URL | | - | 用量上报 Webhook 地址（SaaS 形态填，私有化为空） |
+| USAGE_REPORT_INTERVAL_MS | | 86400000 | 快照周期（默认 24h，毫秒） |
+| USAGE_PERIOD | | daily | 计量周期：daily / weekly / monthly |
+| QWEN_VL_BASE_URL | | - | 视觉模型端点（增项 A；为空则走 mock） |
+| QWEN_VL_API_KEY | | - | 视觉模型 Key（增项 A） |
+| QWEN_VL_MODEL | | qwen-vl-max | 视觉模型名称（增项 A） |
+| MAX_ASSET_REFS | | 2 | 单次回复最大引用素材数（增项 A） |
+| ASSET_MAX_FILE_MB | | 20 | 素材上限（增项 A） |
 
 ### 7.4 放置证书与授权文件
 
@@ -222,6 +230,10 @@ curl -s https://<域名>/healthz          # {"status":"ok"}
 # 3) 授权状态
 curl -s -u admin:<口令> https://<域名>/admin/license
 # 期望：valid=true、剩余天数>0、maxChats 与合同一致
+# 4) 用量快照（若启用上报）
+curl -s -u admin:<口令> https://<域名>/admin/usage
+# 5) 素材列表（增项 A）
+curl -s -u admin:<口令> https://<域名>/admin/assets
 ```
 
 ## 8. 部署验证与冒烟测试
@@ -236,6 +248,8 @@ curl -s -u admin:<口令> https://<域名>/admin/license
 | 6 | 未命中导出 | `curl -u admin:... "https://<域名>/admin/miss-records?from=...&to=...&format=xlsx" -o out.xlsx` | 得到 xlsx，行数与库内一致 |
 | 7 | 重启恢复 | `docker compose restart && docker compose ps` | 全部恢复，知识库数据不丢 |
 | 8 | 密钥检查 | `grep -r "Secret\|sk-" docker-compose.yml nginx/` | 无明文密钥 |
+| 9 | 用量端点 | `curl -u admin:... https://<域名>/admin/usage` | 返回 JSON 含 messagesReceived / tokensPrimary 等桶 |
+| 10 | 图片识别（增项 A） | 群内发一张产品图并 @机器人 | 返回图片描述文本；识别失败回引导话术且不阻塞文本问答 |
 
 全部通过后进入 UAT（按 PRD AC 清单执行）。
 
@@ -300,6 +314,7 @@ curl -X POST -u admin:<口令> https://<域名>/admin/license/reload
 | 容器反复重启 | ① .env 缺必填项（fail-fast） ② license 缺失/验签失败 | `docker compose logs adapter | head -50`，按日志提示补齐配置或证书 |
 | 回复内容被替换为安全话术 | 命中敏感词库 | 属预期行为；查审计日志确认命中词，必要时精简词库 |
 | 图片识别一直失败（增项 A） | qwen-vl 超时/配额 | 查 dashscope 出站与配额；识别失败会自动回引导话术，不影响文本问答 |
+| 用量端点空/缺桶 | 上报未启用或周期未到 | 确认 `USAGE_REPORT_ENABLED`；`USAGE_PERIOD=daily` 需等当日快照 |
 | 导入任务长时间无进度（增项 B） | 内存水位 >80% 自动暂挂 | 等待低峰自动续跑；`GET /admin/import/jobs/:id` 看进度与统计 |
 | 磁盘告警 | 备份/日志堆积 | 清理 `backup/`（保留 7 天自动）；确认日志轮转生效 |
 | Redis OOM 重启 | maxmemory 到顶 | 默认 384M + allkeys-lru 自动驱逐；持续告警则考虑升配 |
@@ -358,6 +373,15 @@ CONTEXT_TTL_SEC=600
 LLM_TIMEOUT_MS=15000
 MISS_RECORD_RETENTION_DAYS=90
 USAGE_REPORT_ENABLED=false
+# ---- 用量上报（SaaS 形态填；私有化留空）----
+USAGE_WEBHOOK_URL=
+USAGE_REPORT_INTERVAL_MS=86400000
+USAGE_PERIOD=daily
+# ---- 增项 A：多媒体识别与素材管理（留空走 mock）----
+QWEN_VL_BASE_URL=
+QWEN_VL_API_KEY=
+QWEN_VL_MODEL=qwen-vl-max
+MAX_ASSET_REFS=2
 ```
 
 ## 附录 D：本地模型部署与切换（增项包 D）
@@ -405,6 +429,9 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
 | 配置自检 | `curl -u admin:*** https://<域名>/admin/config-check` |
 | 授权状态 | `curl -u admin:*** https://<域名>/admin/license` |
 | 授权热加载 | `curl -X POST -u admin:*** https://<域名>/admin/license/reload` |
+| 用量快照 | `curl -s -u admin:*** https://<域名>/admin/usage` |
+| 素材列表（增项 A） | `curl -s -u admin:*** https://<域名>/admin/assets` |
+| 素材上传（增项 A） | `curl -s -u admin:*** -F "file=@xxx.jpg" https://<域名>/admin/assets` |
 | 手动备份 | `docker exec adapter /app/scripts/backup.sh` |
 | 进数据库 | `docker exec -it pg psql -U postgres -d adapter_db` |
 

@@ -57,7 +57,13 @@ function makeRouting(dispatchImpl?: (...a: any[]) => any) {
 
 function makeController(crypto: any, routing: any) {
   const { WecomController } = require('../src/wecom/wecom.controller.js');
-  return new WecomController(crypto, routing);
+  const usageService = { increment: jest.fn(), snapshot: jest.fn() };
+  const recognizeService = { recognizeImage: jest.fn() };
+  const wecomClient = { sendText: jest.fn(), sendMedia: jest.fn(), downloadMedia: jest.fn() };
+  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient);
+  // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
+  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient });
+  return controller;
 }
 
 describe('WecomController.callback', () => {
@@ -190,6 +196,75 @@ describe('WecomController.callback', () => {
       const callArgs = (routing.dispatch as any).mock.calls[0];
       expect(typeof callArgs[1]).toBe('string');
       expect(callArgs[1].length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('Image handling + usage counters', () => {
+    it('image message + MediaId → calls downloadMedia + recognizeImage', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-123', Content: '' })),
+      });
+      const routing = makeRouting();
+      const controller = makeController(crypto, routing) as any;
+
+      const res = makeRes();
+      controller.__client.downloadMedia.mockResolvedValue(Buffer.from('fake-jpeg'));
+      controller.__recognize.recognizeImage.mockResolvedValue('a cat sitting on a bench');
+
+      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+
+      expect(controller.__client.downloadMedia).toHaveBeenCalledWith('media-123');
+      expect(controller.__recognize.recognizeImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/jpeg');
+      expect(controller.__usage.increment).toHaveBeenCalledWith('messagesReceived');
+      expect(controller.__usage.increment).toHaveBeenCalledWith('imagesReceived');
+      expect(controller.__usage.increment).toHaveBeenCalledWith('imagesRecognized');
+    });
+
+    it('image recognize returns null → Content = [图片消息] + imagesSkipped', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-456', Content: '' })),
+      });
+      const routing = makeRouting();
+      const controller = makeController(crypto, routing) as any;
+
+      const res = makeRes();
+      controller.__client.downloadMedia.mockResolvedValue(Buffer.from('fake-jpeg'));
+      controller.__recognize.recognizeImage.mockResolvedValue(null);
+
+      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+
+      expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
+    });
+
+    it('image download throws → Content = [图片消息] + imagesSkipped (不阻塞 routing)', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-789', Content: '' })),
+      });
+      const routing = makeRouting();
+      const controller = makeController(crypto, routing) as any;
+
+      const res = makeRes();
+      controller.__client.downloadMedia.mockRejectedValue(new Error('network error'));
+
+      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+
+      expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
+      expect(routing.dispatch).toHaveBeenCalled(); // routing 不阻塞
+    });
+
+    it('normal text message → no image counter calls', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'text', Content: 'hello' })),
+      });
+      const routing = makeRouting();
+      const controller = makeController(crypto, routing) as any;
+
+      const res = makeRes();
+      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+
+      expect(controller.__usage.increment).toHaveBeenCalledWith('messagesReceived');
+      const imageCalls = (controller.__usage.increment as any).mock.calls.filter((c: any[]) => c[0].startsWith('image'));
+      expect(imageCalls.length).toBe(0);
     });
   });
 });

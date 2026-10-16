@@ -19,13 +19,12 @@ const mockNativeVerify = jest.fn(() => ({
 }));
 const mockFingerprint = jest.fn(() => 'fp-native');
 
-jest.unstable_mockModule('../src/license/native-license.verifier.js', () => ({
-  NativeLicenseVerifier: jest.fn(() => ({
-    selfcheck: mockSelfcheck,
-    verify: mockNativeVerify,
-    fingerprint: mockFingerprint,
-  })),
-}));
+/** 直接注入的 mock 替身，绕过 unstable_mockModule 的模块缓存问题 */
+const fakeNative = {
+  selfcheck: mockSelfcheck,
+  verify: mockNativeVerify,
+  fingerprint: mockFingerprint,
+};
 
 describe('LicenseService.startupCheck', () => {
   beforeEach(() => {
@@ -53,7 +52,7 @@ describe('LicenseService.startupCheck', () => {
   it('B.5.a mock 模式 + 无 license → valid=false, reason=mock-no-license', async () => {
     setConfig({ USE_MOCK_LICENSE: true, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const state = await svc.startupCheck();
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('mock-no-license');
@@ -63,7 +62,7 @@ describe('LicenseService.startupCheck', () => {
   it('B.5.b mock 模式不调用 native selfcheck', async () => {
     setConfig({ USE_MOCK_LICENSE: true, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     await svc.startupCheck();
     expect(mockSelfcheck).not.toHaveBeenCalled();
     expect(mockNativeVerify).not.toHaveBeenCalled();
@@ -72,7 +71,7 @@ describe('LicenseService.startupCheck', () => {
   it('B.5.c native 模式 selfcheck clean → 继续 verify 并返回 valid', async () => {
     setConfig({ USE_MOCK_LICENSE: false, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const state = await svc.startupCheck();
     expect(mockSelfcheck).toHaveBeenCalledTimes(1);
     expect(mockNativeVerify).toHaveBeenCalledTimes(1);
@@ -84,7 +83,7 @@ describe('LicenseService.startupCheck', () => {
     mockSelfcheck.mockReturnValue({ clean: false, evidence: ['debugger-detected', 'tracerpid-hit'] });
     setConfig({ USE_MOCK_LICENSE: false, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const state = await svc.startupCheck();
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('selfcheck-failed');
@@ -103,7 +102,7 @@ describe('LicenseService.startupCheck', () => {
     });
     setConfig({ USE_MOCK_LICENSE: false, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const state = await svc.startupCheck();
     expect(state.valid).toBe(false);
     expect(state.reason).toBe('expired');
@@ -112,7 +111,7 @@ describe('LicenseService.startupCheck', () => {
   it('B.5.f getState() 返回 startupCheck 的结果（缓存）', async () => {
     setConfig({ USE_MOCK_LICENSE: false, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const first = await svc.startupCheck();
     const cached = svc.getState();
     expect(cached).toEqual(first);
@@ -132,7 +131,7 @@ describe('LicenseService.startupCheck', () => {
     });
     setConfig({ USE_MOCK_LICENSE: false, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => {
       throw new Error('__EXIT__');
     }) as any);
@@ -154,7 +153,7 @@ describe('LicenseService.startupCheck', () => {
     });
     setConfig({ USE_MOCK_LICENSE: false, LICENSE_FILE: '/tmp/csbot-nonexistent-license.lic' });
     const { LicenseService } = await import('../src/license/license.service.js');
-    const svc = new LicenseService({} as any);
+    const svc = new LicenseService(fakeNative);
     const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as any);
     const state = await svc.startupCheck();
     expect(exitSpy).not.toHaveBeenCalled();

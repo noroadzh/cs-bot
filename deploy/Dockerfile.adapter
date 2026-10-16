@@ -77,6 +77,7 @@ COPY --from=builder /app/apps/adapter/dist/ /app/apps/adapter/dist/
 COPY --from=builder /app/packages/shared/dist/ /app/packages/shared/dist/
 COPY --from=assets /assets/packages/license-native/prebuilds/ /app/packages/license-native/prebuilds/
 COPY --from=builder /app/apps/adapter/src/miss/001-miss-record.sql /app/migrate/001-miss-record.sql
+COPY --from=builder /app/apps/adapter/src/media/002-asset.sql /app/migrate/002-asset.sql
 COPY --from=builder /app/config /app/config
 
 ENV NODE_ENV=production

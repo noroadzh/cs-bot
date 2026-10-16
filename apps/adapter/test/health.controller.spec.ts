@@ -1,62 +1,35 @@
 /**
  * HealthController 单元测试（src/health/health.controller.ts）
  *
- * controller 直接 new Redis / new PgClient，无法 DI 注入：
- * - ioredis-mock 在 lazyConnect: true 下 ping 不 resolve（5s 超时）
- * - pg 连 127.0.0.1:5432 等满 2s connectionTimeoutMillis
- * 因此 mock 两个模块，用 state 对象精确驱动每个分支。
+ * controller 通过 DI 拿到 Redis / PgClient / LicenseService 三个依赖，
+ * 依赖行为由 makeController 传入的 stub 直接驱动，不 mock 模块。
  */
-import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-
-const state: {
-  redisPing: null | (() => Promise<string>);
-  pgConnect: null | (() => Promise<void>);
-  pgQuery: null | (() => Promise<unknown>);
-} = {
-  redisPing: null,
-  pgConnect: null,
-  pgQuery: null,
-};
-
-jest.mock('ioredis', () => {
-  return {
-    Redis: class {
-      constructor(public readonly opts: unknown) {}
-      ping(): Promise<string> {
-        return state.redisPing ? state.redisPing() : Promise.resolve('PONG');
-      }
-      disconnect(): void {}
-    },
-  };
-});
-
-jest.mock('pg', () => {
-  return {
-    Client: class {
-      constructor(public readonly opts: unknown) {}
-      connect(): Promise<void> {
-        return state.pgConnect ? state.pgConnect() : Promise.resolve();
-      }
-      query(): Promise<unknown> {
-        return state.pgQuery ? state.pgQuery() : Promise.resolve({ rows: [{ '?column?': 1 }] });
-      }
-      end(): Promise<void> {
-        return Promise.resolve();
-      }
-    },
-  };
-});
-
+import { describe, it, expect, beforeEach } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import { HealthController } from '../src/health/health.controller.js';
 import { LicenseService } from '../src/license/license.service.js';
 
-function makeLicense(s: { valid: boolean; mock?: boolean; reason?: string }) {
-  return { verifyAndCache: jest.fn(() => Promise.resolve(s)) } as any;
+interface Stub {
+  ping: () => Promise<unknown>;
+  query: (sql: string) => Promise<unknown>;
 }
 
-function makeController(licenseState: { valid: boolean; mock?: boolean; reason?: string }) {
-  return new HealthController(makeLicense(licenseState) as unknown as LicenseService);
+function makeLicense(s: { valid: boolean; mock?: boolean; reason?: string }) {
+  return { verifyAndCache: jest.fn(() => Promise.resolve(s)) } as unknown as LicenseService;
+}
+
+/** 默认全好；deps 里列出的依赖改为 reject */
+function makeController(
+  licenseState: { valid: boolean; mock?: boolean; reason?: string },
+  failing: { redis?: boolean; pg?: boolean } = {},
+): HealthController {
+  const redis = {
+    ping: () => (failing.redis ? Promise.reject(new Error('redis down')) : Promise.resolve('PONG')),
+  } as unknown as Stub;
+  const pg = {
+    query: (sql: string) => (failing.pg ? Promise.reject(new Error('pg down')) : Promise.resolve({ rows: [] })),
+  } as unknown as Stub;
+  return new HealthController(makeLicense(licenseState), redis as never, pg as never);
 }
 
 async function capture(fn: () => Promise<unknown>) {
@@ -69,9 +42,6 @@ async function capture(fn: () => Promise<unknown>) {
 
 describe('HealthController.check', () => {
   beforeEach(() => {
-    state.redisPing = null;
-    state.pgConnect = null;
-    state.pgQuery = null;
     jest.clearAllMocks();
   });
 
@@ -82,30 +52,20 @@ describe('HealthController.check', () => {
   });
 
   it('redis ping 失败 → deps 含 redis，抛 503 degraded', async () => {
-    state.redisPing = () => Promise.reject(new Error('ECONNREFUSED'));
-    const out = await capture(() => makeController({ valid: true, mock: true }).check());
+    const out = await capture(() => makeController({ valid: true, mock: true }, { redis: true }).check());
     expect((out as any).err.getStatus()).toBe(503);
     const body = (out as any).err.getResponse();
     expect(body.status).toBe('degraded');
     expect(body.deps).toEqual(['redis']);
   });
 
-  it('pg connect 失败 → deps 含 postgresql', async () => {
-    state.pgConnect = () => Promise.reject(new Error('pg down'));
-    const out = await capture(() => makeController({ valid: true, mock: true }).check());
-    expect((out as any).err.getResponse().deps).toEqual(['postgresql']);
-  });
-
-  it('pg connect 成功但 query 失败 → deps 含 postgresql', async () => {
-    state.pgQuery = () => Promise.reject(new Error('query failed'));
-    const out = await capture(() => makeController({ valid: true, mock: true }).check());
+  it('pg query 失败 → deps 含 postgresql', async () => {
+    const out = await capture(() => makeController({ valid: true, mock: true }, { pg: true }).check());
     expect((out as any).err.getResponse().deps).toEqual(['postgresql']);
   });
 
   it('redis + pg 双失败 → deps 同时含两者', async () => {
-    state.redisPing = () => Promise.reject(new Error('redis down'));
-    state.pgConnect = () => Promise.reject(new Error('pg down'));
-    const out = await capture(() => makeController({ valid: true, mock: true }).check());
+    const out = await capture(() => makeController({ valid: true, mock: true }, { redis: true, pg: true }).check());
     expect((out as any).err.getResponse().deps).toEqual(['redis', 'postgresql']);
   });
 
@@ -117,10 +77,18 @@ describe('HealthController.check', () => {
   });
 
   it('license 失效 + redis 不可达 → deps 含 redis 与 license', async () => {
-    state.redisPing = () => Promise.reject(new Error('redis down'));
-    const out = await capture(() => makeController({ valid: false, mock: false, reason: 'invalid signature' }).check());
+    const out = await capture(() =>
+      makeController({ valid: false, mock: false, reason: 'invalid signature' }, { redis: true }).check(),
+    );
     const body = (out as any).err.getResponse();
     expect(body.deps).toEqual(['redis', 'license']);
     expect(body.license.reason).toBe('invalid signature');
+  });
+
+  it('pg query 用 SELECT 1 探活（不建连）', async () => {
+    const query = jest.fn((_sql: string) => Promise.resolve({ rows: [] }));
+    const c = new HealthController(makeLicense({ valid: true, mock: true }), { ping: () => Promise.resolve('PONG') } as never, { query } as never);
+    await capture(() => c.check());
+    expect(query).toHaveBeenCalledWith('SELECT 1');
   });
 });

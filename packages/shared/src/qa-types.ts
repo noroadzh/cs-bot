@@ -13,6 +13,8 @@ export interface AskResp {
   answer: string;
   quotes?: Array<{ id: string; content: string; score: number }>;
   score: number;
+  /** Which LLM served the answer. Omitted means unknown / mock. */
+  source?: 'primary' | 'fallback';
 }
 
 export type AskResult = Result<AskResp, { code: number; message: string }>;

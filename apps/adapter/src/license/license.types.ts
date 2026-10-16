@@ -29,6 +29,13 @@ export interface LicenseState {
   maxChats: number
 }
 
+/** selfcheck 探测结果：clean=true 表示无调试/劫持痕迹 */
+export interface SelfcheckResult {
+  clean: boolean
+  /** 不干净时的证据条目（如 'debugger-detected' / 'tracerpid-hit'） */
+  evidence: string[]
+}
+
 /** 供 guard / admin 查询的只读视图 */
 export interface ILicenseVerifier {
   verify(license: string, statePath?: string | null): LicenseState

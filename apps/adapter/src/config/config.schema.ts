@@ -33,7 +33,6 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   // Mode
   USE_MOCK_LLM: EnvBool(true),
   USE_MOCK_LICENSE: EnvBool(true),
-  USAGE_REPORT_ENABLED: EnvBool(false),
 
   // 阈值
   CONFIDENCE_THRESHOLD: EnvFloat(0.75),
@@ -74,6 +73,18 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   MOCK_QA_FILE: EnvString.default('config/mock-qa.json'),
   KEYWORDS_FILE: EnvString.default('config/keywords.yml'),
   SENSITIVE_WORDS_FILE: EnvString.default('config/sensitive-words.txt'),
+
+  // Media
+  MAX_ASSET_BYTES: EnvInt(20971520), // 20MB
+  // 未配置（''）表示 mock/关闭；配置了则必须是合法 URL / 足长 key
+  QWEN_VL_BASE_URL: EnvString.url().optional().or(z.literal('')),
+  QWEN_VL_API_KEY: EnvString.min(8).optional().or(z.literal('')),
+
+  // Usage
+  USAGE_REPORT_ENABLED: EnvBool(false),
+  USAGE_WEBHOOK_URL: EnvString.optional().default(''),
+  USAGE_REPORT_INTERVAL_MS: EnvInt(86400000), // 24h
+  USAGE_PERIOD: z.enum(['daily', 'weekly', 'monthly']).default('daily'),
 
   // Bot user
   WECHAT_BOT_USER_ID: EnvString.optional().default(''),

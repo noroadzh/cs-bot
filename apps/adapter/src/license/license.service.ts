@@ -10,11 +10,19 @@
  *   3. verify()       → mock 或 native
  *   4. 终态判定       → production && !valid → exit(1)；否则 warn 继续
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '../config/config.service.js';
 import { NativeLicenseVerifier } from './native-license.verifier.js';
 import { MockLicenseVerifier } from './mock-license.verifier.js';
 import type { LicenseState } from './license.types.js';
+import type { SelfcheckResult } from './license.types.js';
+
+/** spec 注入用的最小接口。NativeLicenseVerifier / MockLicenseVerifier 形态都覆盖。 */
+export interface LicenseVerifierLike {
+  fingerprint(): string | null;
+  selfcheck(): SelfcheckResult | null;
+  verify(license: string, statePath: string | null): LicenseState;
+}
 
 @Injectable()
 export class LicenseService {
@@ -30,9 +38,30 @@ export class LicenseService {
   };
 
   private readonly isMock: boolean;
+  private readonly nativeVerifier: LicenseVerifierLike;
+  private readonly mockVerifier: LicenseVerifierLike;
 
-  constructor(private readonly config: ConfigService) {
-    this.isMock = this.config.USE_MOCK_LICENSE;
+  constructor(
+    @Optional() nativeVerifier?: LicenseVerifierLike,
+    @Optional() mockVerifier?: LicenseVerifierLike,
+  ) {
+    this.isMock = ConfigService.instance.USE_MOCK_LICENSE;
+    // spec 可注入替换；未注入时自建
+    this.nativeVerifier = nativeVerifier ?? new NativeLicenseVerifier();
+    this.mockVerifier = mockVerifier ?? new MockLicenseVerifier();
+  }
+
+  /**
+   * 只读已缓存的 license 状态，不触发新校验。
+   * admin / health 端点用它在请求路径上取状态（校验在 startupCheck 阶段已完成）。
+   */
+  verifyAndCache(): LicenseState {
+    return this.state;
+  }
+
+  /** 重新走一遍完整校验并刷新缓存（POST /admin/license/reload） */
+  reload(): Promise<LicenseState> {
+    return this.startupCheck();
   }
 
   /**
@@ -45,7 +74,7 @@ export class LicenseService {
 
     // --- Step 1+2: fingerprint + selfcheck（仅 native 路径）---
     if (!this.isMock) {
-      const native = new NativeLicenseVerifier();
+      const native = this.nativeVerifier;
       const self = native.selfcheck();
       if (self && !self.clean) {
         this.logger.error(`license selfcheck failed: ${self.evidence.join(', ')}`);
@@ -61,7 +90,7 @@ export class LicenseService {
 
       // --- Step 3: verify ---
       const licenseRaw = this.readLicenseFile();
-      const statePath = licenseRaw ? `${this.config.LICENSE_FILE}.antireplay.json` : null;
+      const statePath = licenseRaw ? `${ConfigService.instance.LICENSE_FILE}.antireplay.json` : null;
       const nativeState = native.verify(licenseRaw ?? '', statePath);
       this.state = nativeState;
 
@@ -74,9 +103,9 @@ export class LicenseService {
       }
     } else {
       // --- mock: 跳过 selfcheck，但仍走 format + 绑定校验 ---
-      const mock = new MockLicenseVerifier();
+      const mock = this.mockVerifier;
       const licenseRaw = this.readLicenseFile() ?? '';
-      this.state = mock.verify(licenseRaw);
+      this.state = mock.verify(licenseRaw, null);
 
       if (this.state.valid) {
         this.logger.log(`license-ok (mock) daysLeft=${this.state.daysLeft}`);
@@ -104,7 +133,7 @@ export class LicenseService {
   private readLicenseFile(): string | null {
     try {
       const fs = require('node:fs') as typeof import('node:fs');
-      const raw = fs.readFileSync(this.config.LICENSE_FILE, 'utf8');
+      const raw = fs.readFileSync(ConfigService.instance.LICENSE_FILE, 'utf8');
       return raw.trim();
     } catch {
       return null;

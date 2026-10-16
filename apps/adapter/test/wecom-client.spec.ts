@@ -7,6 +7,7 @@
  *       WecomClient 构造函数内部自行 new Redis()，由 ioredis mock 兜底。
  */
 import { describe, it, expect, beforeAll, beforeEach, jest } from '@jest/globals';
+import { setConfig } from './__setup__/test-helpers.js';
 
 const apiMock = {
   get: jest.fn<(...a: any[]) => Promise<any>>(),
@@ -32,8 +33,10 @@ jest.mock('ioredis', () => ({
 }));
 
 beforeAll(() => {
-  process.env.WECHAT_CORP_ID = 'ww1234567890abcdef';
-  process.env.WECHAT_AGENT_SECRET = 'test_secret_abcdefgh';
+  setConfig({
+    WECHAT_CORP_ID: 'ww1234567890abcdef',
+    WECHAT_AGENT_SECRET: 'test_secret_abcdefgh',
+  });
 });
 
 beforeEach(() => {

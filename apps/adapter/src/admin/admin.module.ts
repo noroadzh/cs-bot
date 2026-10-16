@@ -6,9 +6,10 @@ import { LicenseController } from './license.controller.js';
 import { MissModule } from '../miss/miss.module.js';
 import { LicenseModule } from '../license/license.module.js';
 import { RoutingModule } from '../routing/routing.module.js';
+import { UsageModule } from '../usage/usage.module.js';
 
 @Module({
-  imports: [MissModule, LicenseModule, RoutingModule],
+  imports: [MissModule, LicenseModule, RoutingModule, UsageModule],
   controllers: [ConfigController, MissController, LicenseController],
   providers: [AdminGuard],
   exports: [AdminGuard],

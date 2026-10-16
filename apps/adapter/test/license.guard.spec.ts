@@ -10,7 +10,10 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { ErrCode } from '@cs-bot/shared';
 
 function makeGuard(state: { valid: boolean; reason: string; mock?: boolean; daysLeft?: number }) {
-  const licenseService = { verifyAndCache: jest.fn(async () => state) } as any;
+  const licenseService = {
+    getState: jest.fn(() => state),
+    verifyAndCache: jest.fn(async () => state),
+  } as any;
   // 动态 import 以避免顶层 ConfigService 单例初始化时序问题
   return licenseService;
 }
@@ -63,6 +66,6 @@ describe('LicenseGuard', () => {
     await expect(guard.canActivate({} as any)).rejects.toBeInstanceOf(HttpException);
     await expect(guard.canActivate({} as any)).rejects.toBeInstanceOf(HttpException);
 
-    expect(svc.verifyAndCache).toHaveBeenCalledTimes(2);
+    expect(svc.getState).toHaveBeenCalledTimes(2);
   });
 });

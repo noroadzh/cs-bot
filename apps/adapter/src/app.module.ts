@@ -16,6 +16,7 @@ import { QaModule } from './qa/qa.module.js';
 import { FilterModule } from './filter/filter.module.js';
 import { MissModule } from './miss/miss.module.js';
 import { MediaModule } from './media/media.module.js';
+import { UsageModule } from './usage/usage.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { HealthModule } from './health/health.module.js';
 
@@ -32,6 +33,7 @@ import { HealthModule } from './health/health.module.js';
     FilterModule,
     MissModule,
     MediaModule,
+    UsageModule,
     AdminModule,
     HealthModule,
   ],

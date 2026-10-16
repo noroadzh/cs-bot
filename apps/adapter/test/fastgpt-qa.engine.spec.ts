@@ -63,7 +63,7 @@ describe('FastGPTQaEngine', () => {
 
     const value = expectOk(await engine.ask(req({ question: '怎么退款？' })));
 
-    expect(value).toEqual({ answer: '这是答案', quotes: [], score: 0.8 });
+    expect(value).toEqual({ answer: '这是答案', quotes: [], score: 0.8, source: 'primary' });
   });
 
   it('降级路径：无 choices → 读 data[0].content 且透传 data[0].score', async () => {
@@ -72,7 +72,7 @@ describe('FastGPTQaEngine', () => {
 
     const value = expectOk(await engine.ask(req()));
 
-    expect(value).toEqual({ answer: '原生格式答案', quotes: [], score: 0.93 });
+    expect(value).toEqual({ answer: '原生格式答案', quotes: [], score: 0.93, source: 'primary' });
   });
 
   it('空响应兜底：既无 choices 也无 data → answer 空串 + score 0.8', async () => {
@@ -81,7 +81,7 @@ describe('FastGPTQaEngine', () => {
 
     const value = expectOk(await engine.ask(req()));
 
-    expect(value).toEqual({ answer: '', quotes: [], score: 0.8 });
+    expect(value).toEqual({ answer: '', quotes: [], score: 0.8, source: 'primary' });
   });
 
   it('history 映射为 messages 前缀，question 作为最后一条 user 消息', async () => {
@@ -146,7 +146,11 @@ describe('FastGPTQaEngine', () => {
   });
 
   it('异常路径：axios 抛网络错 → 返回 Err(LLM_TIMEOUT) 而非向上抛', async () => {
-    post.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    // config 默认配了 LLM_FALLBACK_*，primary 失败后 engine 会再打一次 fallback；
+    // 两次都要 reject，否则第二次 post 拿到 undefined，错误信息就不是 ECONNREFUSED 了。
+    post
+      .mockRejectedValueOnce(new Error('ECONNREFUSED')) // primary
+      .mockRejectedValueOnce(new Error('ECONNREFUSED')); // fallback
     const engine = await buildEngine();
 
     const res = await engine.ask(req());

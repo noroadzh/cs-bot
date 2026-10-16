@@ -2,8 +2,14 @@
  * RoutingService 单元测试
  * 覆盖：dedup 命中跳过 / 触发条件未命中跳过 / 限流命中跳过 / 正常路由到 orchestrator
  */
-import { describe, it, expect, beforeAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, beforeEach } from '@jest/globals';
 import { setConfig } from './__setup__/test-helpers.js';
+
+/** 5 参注入的 UsageService 替身：只做埋点计数，不参与路由决策，故全文件共用一个 */
+const usageMock = { increment: jest.fn() };
+
+beforeAll(() => setConfig());
+beforeEach(() => usageMock.increment.mockClear());
 
 const makeMsg = (overrides: Record<string, unknown> = {}): any => ({
   MsgId: 'msg-001',
@@ -36,6 +42,7 @@ describe('RoutingService', () => {
       dedupMock as any,
       rateMock as any,
       orchMock as any,
+      usageMock as any,
     );
 
     await svc.dispatch(makeMsg(), 'trace-1');
@@ -62,6 +69,7 @@ describe('RoutingService', () => {
       dedupMock as any,
       rateMock as any,
       orchMock as any,
+      usageMock as any,
     );
 
     await svc.dispatch(makeMsg(), 'trace-2');
@@ -88,6 +96,7 @@ describe('RoutingService', () => {
       dedupMock as any,
       rateMock as any,
       orchMock as any,
+      usageMock as any,
     );
 
     await svc.dispatch(makeMsg(), 'trace-3');
@@ -113,6 +122,7 @@ describe('RoutingService', () => {
       dedupMock as any,
       rateMock as any,
       orchMock as any,
+      usageMock as any,
     );
 
     await svc.dispatch(makeMsg(), 'trace-4');
@@ -141,6 +151,7 @@ describe('RoutingService', () => {
       dedupMock as any,
       rateMock as any,
       orchMock as any,
+      usageMock as any,
     );
 
     await svc.dispatch(makeMsg({ MsgId: undefined }), 'trace-5');
@@ -165,6 +176,7 @@ describe('RoutingService', () => {
       dedupMock as any,
       rateMock as any,
       orchMock as any,
+      usageMock as any,
     );
 
     await svc.dispatch(makeMsg({ ChatId: undefined }), 'trace-6');

@@ -6,6 +6,7 @@ import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypt
 import { parseString } from 'xml2js';
 import { promisify } from 'util';
 import { ConfigService } from '../config/config.service.js';
+import type { AppConfigInput } from '../config/config.schema.js';
 
 const parseXmlAsync = promisify(parseString) as (xml: string) => Promise<any>;
 
@@ -41,8 +42,8 @@ export class WecomCrypto {
   private readonly encodingAesKey: string;
   private readonly corpId: string;
 
-  constructor(config: ConfigService) {
-    const cfg = ConfigService.instance;
+  constructor(config?: AppConfigInput) {
+    const cfg = config ?? ConfigService.instance;
     this.token = cfg.WECHAT_TOKEN;
     this.encodingAesKey = cfg.WECHAT_ENCODING_AES_KEY;
     this.corpId = cfg.WECHAT_CORP_ID;

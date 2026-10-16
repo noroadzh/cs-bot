@@ -54,6 +54,14 @@ const stubAsset = (): any => ({
   send: jest.fn(async () => undefined),
 });
 
+const stubAssetResolver = (): any => ({
+  resolve: jest.fn(() => []),
+});
+
+const stubUsage = (): any => ({
+  increment: jest.fn(),
+});
+
 const makeSender = () => ({
   sendText: jest.fn(async (..._args: unknown[]) => undefined),
   sendAsset: jest.fn(async (..._args: unknown[]) => undefined),
@@ -70,6 +78,8 @@ describe('QaOrchestrator', () => {
       stubFilter(),
       stubMiss(),
       stubAsset(),
+      stubAssetResolver(),
+      stubUsage(),
       sender as any,
     );
     await orch.handle(makeMsg({ mentioned: true }), 'trace-1', 'mention');
@@ -83,7 +93,7 @@ describe('QaOrchestrator', () => {
     ConfigService.instance.SEGMENT_SAFE_BYTES = 80;
     const engine = stubEngine({ ask: jest.fn(async () => ({ ok: true, value: { answer: long, quotes: [], score: 0.9 } })) });
     const sender = makeSender();
-    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), sender as any);
+    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await orch.handle(makeMsg(), 'trace-2', 'keyword');
     expect(sender.sendText.mock.calls.length).toBeGreaterThan(1);
   });
@@ -93,7 +103,7 @@ describe('QaOrchestrator', () => {
     const engine = stubEngine({ ask: jest.fn(async () => ({ ok: true, value: { answer: 'no idea', quotes: [], score: 0.1 } })) });
     const miss = stubMiss();
     const sender = makeSender();
-    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), miss, stubAsset(), sender as any);
+    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), miss, stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await orch.handle(makeMsg(), 'trace-3', 'keyword');
     expect(miss.record).toHaveBeenCalledTimes(1);
     expect(sender.sendText).toHaveBeenCalledWith('chat-1', '暂时没有合适答案，已记录到工单', undefined);
@@ -103,7 +113,7 @@ describe('QaOrchestrator', () => {
     const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
     const engine = stubEngine({ ask: jest.fn(async () => ({ ok: false, error: { code: -1, message: 'timeout' } })) });
     const sender = makeSender();
-    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), sender as any);
+    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await expect(orch.handle(makeMsg(), 'trace-4', 'keyword')).resolves.toBeUndefined();
     expect(sender.sendText).toHaveBeenCalledWith('chat-1', '系统繁忙，请稍后再试', undefined);
   });
@@ -113,7 +123,7 @@ describe('QaOrchestrator', () => {
     const engine = stubEngine();
     const ctx = stubContext();
     const sender = makeSender();
-    const orch = new QaOrchestrator(engine, ctx, stubFilter(), stubMiss(), stubAsset(), sender as any);
+    const orch = new QaOrchestrator(engine, ctx, stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await orch.handle(makeMsg(), 'trace-5', 'keyword');
     expect(ctx.append).toHaveBeenCalledWith('chat-1', 'user-A', { question: 'hello', answer: 'mock-answer' });
   });
@@ -124,5 +134,72 @@ describe('QaOrchestrator', () => {
     // 确认类名引用中无 WecomClient
     const m = /import\s+.*?\s+from\s+['"][^'"]*wecom-client/.exec(src);
     expect(m).toBeNull();
+  });
+
+  it('1.6.g increments usage: tokensPrimary + messagesAnswered on success', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine({
+      mode: 'fastgpt',
+      ask: jest.fn(async () => ({ ok: true, value: { answer: 'mock-answer', quotes: [], score: 0.9, tokens: 150 } })),
+    });
+    const usage = stubUsage();
+    const sender = makeSender();
+    const orch = new QaOrchestrator(
+      engine,
+      stubContext(),
+      stubFilter(),
+      stubMiss(),
+      stubAsset(),
+      stubAssetResolver(),
+      usage,
+      sender as any,
+    );
+    await orch.handle(makeMsg(), 'trace-6', 'keyword');
+    expect(usage.increment).toHaveBeenCalledWith('tokensPrimary', 150);
+    expect(usage.increment).toHaveBeenCalledWith('messagesAnswered');
+  });
+
+  it('1.6.h increments usage: tokensFallback + messagesMissed on fallback error', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine({
+      mode: 'fastgpt',
+      ask: jest.fn(async () => ({ ok: false, error: { code: -1, message: 'timeout' } })),
+    });
+    const usage = stubUsage();
+    const sender = makeSender();
+    const orch = new QaOrchestrator(
+      engine,
+      stubContext(),
+      stubFilter(),
+      stubMiss(),
+      stubAsset(),
+      stubAssetResolver(),
+      usage,
+      sender as any,
+    );
+    await orch.handle(makeMsg(), 'trace-7', 'keyword');
+    expect(usage.increment).toHaveBeenCalledWith('messagesMissed');
+  });
+
+  it('1.6.i increments usage: messagesMissed + messagesRefused on low confidence', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine({
+      ask: jest.fn(async () => ({ ok: true, value: { answer: 'no idea', quotes: [], score: 0.1 } })),
+    });
+    const usage = stubUsage();
+    const sender = makeSender();
+    const orch = new QaOrchestrator(
+      engine,
+      stubContext(),
+      stubFilter(),
+      stubMiss(),
+      stubAsset(),
+      stubAssetResolver(),
+      usage,
+      sender as any,
+    );
+    await orch.handle(makeMsg(), 'trace-8', 'keyword');
+    expect(usage.increment).toHaveBeenCalledWith('messagesMissed');
+    expect(usage.increment).toHaveBeenCalledWith('messagesRefused');
   });
 });

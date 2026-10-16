@@ -16,7 +16,7 @@ const CORP_ID = cfg.WECHAT_CORP_ID;
 const ENCODING_AES_KEY = cfg.WECHAT_ENCODING_AES_KEY;
 
 function makeCrypto(): WecomCrypto {
-  return new WecomCrypto({} as any);
+  return new WecomCrypto(ConfigService.instance);
 }
 
 function sign(ts: string, nonce: string, encrypt: string): string {
