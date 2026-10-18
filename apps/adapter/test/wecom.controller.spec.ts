@@ -55,15 +55,16 @@ function makeRouting(dispatchImpl?: (...a: any[]) => any) {
   return { dispatch } as any;
 }
 
-function makeController(crypto: any, routing: any) {
-  const { WecomController } = require('../src/wecom/wecom.controller.js');
+function makeController(crypto: any, routing: any, gateCheck?: jest.Mock) {
+  const { WecomController, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT } = require('../src/wecom/wecom.controller.js');
   const usageService = { increment: jest.fn(), snapshot: jest.fn() };
   const recognizeService = { recognizeImage: jest.fn() };
   const wecomClient = { sendText: jest.fn(), sendMedia: jest.fn(), downloadMedia: jest.fn() };
-  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient);
+  const licenseGate = { check: gateCheck ?? jest.fn(async () => ({ allowed: true })) };
+  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate);
   // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
-  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient });
-  return controller;
+  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate });
+  return { controller, wecomClient, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
 }
 
 describe('WecomController.callback', () => {
@@ -74,7 +75,7 @@ describe('WecomController.callback', () => {
   describe('URL 验证（echostr）', () => {
     it('echostr 存在 + 解密成功 → 200 + send(明文)', async () => {
       const crypto = makeCrypto({ decryptMsg: jest.fn(() => Promise.resolve('echo-plain')) });
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, 'echo-cipher', {}, {} as any, res);
@@ -87,7 +88,7 @@ describe('WecomController.callback', () => {
 
     it('echostr 存在 + 解密失败 → 401 + WECOM_SIGN_INVALID', async () => {
       const crypto = makeCrypto({ decryptMsg: jest.fn(() => Promise.resolve(null)) });
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, 'echo-cipher', {}, {} as any, res);
@@ -101,7 +102,7 @@ describe('WecomController.callback', () => {
   describe('消息回调', () => {
     it('body 是 string → 直接作为密文解密', async () => {
       const crypto = makeCrypto();
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'raw-cipher', {} as any, res);
@@ -113,7 +114,7 @@ describe('WecomController.callback', () => {
 
     it('body 是对象且有 Encrypt → 取 Encrypt 字段', async () => {
       const crypto = makeCrypto();
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, { Encrypt: 'obj-cipher' }, {} as any, res);
@@ -124,7 +125,7 @@ describe('WecomController.callback', () => {
 
     it('body 是对象但无 Encrypt → 退化为空串（仍走解密）', async () => {
       const crypto = makeCrypto({ decryptMsg: jest.fn(() => Promise.resolve(null)) });
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, { Other: 'x' }, {} as any, res);
@@ -135,7 +136,7 @@ describe('WecomController.callback', () => {
 
     it('解密失败 → 401 + WECOM_SIGN_INVALID', async () => {
       const crypto = makeCrypto({ decryptMsg: jest.fn(() => Promise.resolve(null)) });
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'bad-cipher', {} as any, res);
@@ -148,7 +149,7 @@ describe('WecomController.callback', () => {
 
     it('parseXml 返回 null → 400 + WECOM_DECRYPT_FAIL', async () => {
       const crypto = makeCrypto({ parseXml: jest.fn(() => Promise.resolve(null)) });
-      const controller = makeController(crypto, makeRouting());
+      const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
@@ -162,7 +163,7 @@ describe('WecomController.callback', () => {
     it('parseXml 成功 → 200 + send(\'\') + dispatch（异步不阻塞响应）', async () => {
       const crypto = makeCrypto();
       const routing = makeRouting();
-      const controller = makeController(crypto, routing);
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
@@ -176,7 +177,7 @@ describe('WecomController.callback', () => {
     it('dispatch 抛错 → 被 .catch 吞掉（不向企微返回 5xx）', async () => {
       const crypto = makeCrypto();
       const routing = makeRouting(jest.fn<any>(() => Promise.reject(new Error('dispatch boom'))));
-      const controller = makeController(crypto, routing);
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
@@ -188,7 +189,7 @@ describe('WecomController.callback', () => {
     it('dispatch 收到的 traceId 是字符串（来自 Node crypto.randomUUID）', async () => {
       const crypto = makeCrypto();
       const routing = makeRouting();
-      const controller = makeController(crypto, routing);
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
@@ -205,7 +206,7 @@ describe('WecomController.callback', () => {
         parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-123', Content: '' })),
       });
       const routing = makeRouting();
-      const controller = makeController(crypto, routing) as any;
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       controller.__client.downloadMedia.mockResolvedValue(Buffer.from('fake-jpeg'));
@@ -225,7 +226,7 @@ describe('WecomController.callback', () => {
         parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-456', Content: '', ChatId: 'chat-1' })),
       });
       const routing = makeRouting();
-      const controller = makeController(crypto, routing) as any;
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       controller.__client.downloadMedia.mockResolvedValue(Buffer.from('fake-jpeg'));
@@ -243,7 +244,7 @@ describe('WecomController.callback', () => {
         parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-789', Content: '', ChatId: 'chat-2' })),
       });
       const routing = makeRouting();
-      const controller = makeController(crypto, routing) as any;
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       controller.__client.downloadMedia.mockRejectedValue(new Error('network error'));
@@ -260,7 +261,7 @@ describe('WecomController.callback', () => {
         parseXml: jest.fn(() => Promise.resolve({ MsgType: 'text', Content: 'hello' })),
       });
       const routing = makeRouting();
-      const controller = makeController(crypto, routing) as any;
+      const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
       await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);

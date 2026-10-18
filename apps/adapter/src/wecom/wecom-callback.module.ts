@@ -8,9 +8,10 @@ import { WecomController } from './wecom.controller.js';
 import { WecomModule } from './wecom.module.js';
 import { RoutingModule } from '../routing/routing.module.js';
 import { MediaModule } from '../media/media.module.js';
+import { LicenseModule } from '../license/license.module.js';
 
 @Module({
-  imports: [WecomModule, RoutingModule, MediaModule],
+  imports: [WecomModule, RoutingModule, MediaModule, LicenseModule],
   controllers: [WecomController],
 })
 export class WecomCallbackModule {}

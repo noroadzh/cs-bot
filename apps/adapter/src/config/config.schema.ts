@@ -55,6 +55,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // License
   LICENSE_FILE: EnvString.default('license/license.lic'),
+  // 运维告警 webhook（企微群机器人）；空串 = 关闭告警。到期提醒 / 新群被拒 / 指纹变化都走它
+  OPS_WEBHOOK_URL: EnvString.optional().default(''),
 
   // 限流
   RATE_GROUP_PER_MIN: EnvInt(20),

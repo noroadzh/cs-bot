@@ -41,6 +41,12 @@ export class LicenseService {
   private readonly nativeVerifier: LicenseVerifierLike;
   private readonly mockVerifier: LicenseVerifierLike;
 
+  /** 运行期复核缓存时间戳；0 表示尚未校验 */
+  private lastCheckedAt = 0;
+
+  /** 运行期缓存 TTL（概要设计 M9：读内存缓存，TTL 1h，过期重验） */
+  private static readonly CACHE_TTL_MS = 3_600_000;
+
   constructor(
     @Optional() nativeVerifier?: LicenseVerifierLike,
     @Optional() mockVerifier?: LicenseVerifierLike,
@@ -52,10 +58,30 @@ export class LicenseService {
   }
 
   /**
-   * 只读已缓存的 license 状态，不触发新校验。
-   * admin / health 端点用它在请求路径上取状态（校验在 startupCheck 阶段已完成）。
+   * 回调路径 / health / admin 读取入口：TTL 内返回内存缓存（<1ms），
+   * 过期则同步重验一次（native verify 为纯 CPU 验签，亚毫秒级）。
    */
   verifyAndCache(): LicenseState {
+    if (Date.now() - this.lastCheckedAt >= LicenseService.CACHE_TTL_MS) {
+      return this.revalidate();
+    }
+    return this.state;
+  }
+
+  /**
+   * 运行期复核：只走 verify（含指纹比对/过期/回拨），不走 selfcheck、不 exit。
+   * 发现证书过期或指纹变化 → valid=false，调用方进入受限模式。
+   */
+  revalidate(): LicenseState {
+    this.state = this.doVerify();
+    this.lastCheckedAt = Date.now();
+    if (this.state.valid) {
+      this.logger.log(
+        `license-revalidate-ok daysLeft=${this.state.daysLeft}`,
+      );
+    } else {
+      this.logger.warn(`license revalidate invalid: reason=${this.state.reason}`);
+    }
     return this.state;
   }
 
@@ -88,24 +114,20 @@ export class LicenseService {
         return this.state;
       }
 
-      // --- Step 3: verify ---
-      const licenseRaw = this.readLicenseFile();
-      const statePath = licenseRaw ? `${ConfigService.instance.LICENSE_FILE}.antireplay.json` : null;
-      const nativeState = native.verify(licenseRaw ?? '', statePath);
-      this.state = nativeState;
+      this.state = this.doVerify();
+      this.lastCheckedAt = Date.now();
 
-      if (nativeState.valid) {
+      if (this.state.valid) {
         this.logger.log(
-          `license-ok fp=${nativeState.fingerprint.slice(0, 12)} daysLeft=${nativeState.daysLeft} maxChats=${nativeState.maxChats}`,
+          `license-ok fp=${this.state.fingerprint.slice(0, 12)} daysLeft=${this.state.daysLeft} maxChats=${this.state.maxChats}`,
         );
       } else {
-        this.logger.error(`license invalid: reason=${nativeState.reason}`);
+        this.logger.error(`license invalid: reason=${this.state.reason}`);
       }
     } else {
       // --- mock: 跳过 selfcheck，但仍走 format + 绑定校验 ---
-      const mock = this.mockVerifier;
-      const licenseRaw = this.readLicenseFile() ?? '';
-      this.state = mock.verify(licenseRaw, null);
+      this.state = this.doVerify();
+      this.lastCheckedAt = Date.now();
 
       if (this.state.valid) {
         this.logger.log(`license-ok (mock) daysLeft=${this.state.daysLeft}`);
@@ -123,6 +145,17 @@ export class LicenseService {
     }
 
     return this.state;
+  }
+
+  /** verify 单步（mock 或 native 路径，含过期/指纹/回拨比对），供启动与运行期复核共用 */
+  private doVerify(): LicenseState {
+    if (this.isMock) {
+      const licenseRaw = this.readLicenseFile() ?? '';
+      return this.mockVerifier.verify(licenseRaw, null);
+    }
+    const licenseRaw = this.readLicenseFile();
+    const statePath = licenseRaw ? `${ConfigService.instance.LICENSE_FILE}.antireplay.json` : null;
+    return this.nativeVerifier.verify(licenseRaw ?? '', statePath);
   }
 
   /** 供 guard / admin 查询 */

@@ -9,6 +9,8 @@ import { WecomClient } from './wecom-client.js';
 import { RoutingService } from '../routing/routing.service.js';
 import { MediaRecognizeService } from '../media/media-recognize.service.js';
 import { UsageService } from '../usage/usage.service.js';
+import { LicenseGateService } from '../license/license-gate.service.js';
+import { LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT } from '../license/license-gate.service.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
 
@@ -22,6 +24,7 @@ export class WecomController {
     private readonly usageService: UsageService,
     private readonly recognizeService: MediaRecognizeService,
     private readonly wecomClient: WecomClient,
+    private readonly licenseGate: LicenseGateService,
   ) {}
 
   @Post('callback')
@@ -63,6 +66,31 @@ export class WecomController {
 
     // 12.2 Increment messagesReceived for every valid incoming message
     this.usageService.increment('messagesReceived');
+
+    // M9 授权闸门：license 失效 → 受限模式；新群超 maxChats → 拒绝。
+    // 拦截时代发提示话术，消息不进 routing（也不做图片识别，省识别成本）。
+    const gateChatId = (msg as { ChatId?: string; FromUserName?: string }).ChatId
+      || (msg as { FromUserName?: string }).FromUserName
+      || '';
+    let gateBlocked = false;
+    if (gateChatId) {
+      const decision = await this.licenseGate.check(gateChatId, '');
+      // TS 对非可辨识联合的控制流窄化不完美，用 'reason' in decision 安全访问
+      if (!decision.allowed) {
+        gateBlocked = true;
+        const isChatLimit = 'reason' in decision && decision.reason === 'chat-limit';
+        const text = isChatLimit ? LICENSE_CHAT_LIMIT_TEXT : LICENSE_INVALID_TEXT;
+        try {
+          await this.wecomClient.sendText(gateChatId, text);
+        } catch (err) {
+          this.logger.warn({ traceId, detail: 'license-gate-notice-fail', err: (err as Error).message });
+        }
+      }
+    }
+    if (gateBlocked) {
+      res.status(HttpStatus.OK).send('');
+      return;
+    }
 
     // 6.1 / 6.2 / 6.3 Image message handling: if the inbound message carries a
     // MediaId and no text Content, download the bytes and run image recognition
