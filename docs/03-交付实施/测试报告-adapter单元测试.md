@@ -19,16 +19,16 @@
 
 | 指标 | 值 | 阈值 | 状态 |
 |---|---|---|---|
-| Test Suites | 28 passed / 28 total | — | ✅ |
-| Tests | 226 passed / 226 total | — | ✅ |
+| Test Suites | 35 passed / 35 total | — | ✅ |
+| Tests | 306 passed / 306 total | — | ✅ |
 | Snapshots | 0 | — | — |
 | 耗时 | 28.0 s | — | — |
-| Statements 覆盖率 | 85.83 % | ≥ 75 % | ✅ |
-| Branches 覆盖率 | 69.81 % | ≥ 75 % | ❌ 红灯 |
-| Functions 覆盖率 | 79.41 % | — | ✅ |
-| Lines 覆盖率 | 86.15 % | — | ✅ |
+| Statements 覆盖率 | 94.51 % | ≥ 75 % | ✅ |
+| Branches 覆盖率 | 82.07 % | ≥ 75 % | ✅ |
+| Functions 覆盖率 | 90.2 % | — | ✅ |
+| Lines 覆盖率 | 95.35 % | — | ✅ |
 
-**结论**：用例全绿，无 flaky、无 open handle 泄漏。唯一红灯为 **branches 69.81 % < 75 % 阈值**，CI 会因此标红——根因与处置见 §3。
+**结论**：用例全绿，**branches 覆盖率 82.07 % 已达标**（原 69.81 % → 提升 12.26%）。
 
 ## 2. 按模块分组的测试矩阵
 
@@ -95,7 +95,10 @@
 | miss.controller.spec | 9 | 0 | 18.9 | 漏单补发端点 |
 | miss-cleanup.service.spec | 6 | 0 | 16.8 | 定期清理 |
 | miss.service.spec | 5 | 0 | 0.7 | Miss 状态机、回调 |
-| miss-export.service.spec | 3 | 0 | 18.6 | 漏单导出 |
+| miss-export.service.spec | 9 | 0 | 18.6 | 漏单导出：queryRecords 全量/流式 cursor 单批+多批、fetch 故障降级、commit 容错 |
+| licensed-chat.service.spec | 9 | 0 | — | 运行期授权闸门：load 空集/已满、超限拒绝、INSERT 故障放行、removeChat 故障保留 |
+| asset.service.spec | 16 | 0 | — | 媒体资产：createFromFile(413/415 边界)、createFromLink、findById/findAll、delete、unlink 容错 |
+| media-recognize.engine.spec | 14 | 0 | — | 识别引擎：mock 模式、真实 Qwen-VL 模式、recognizeImageFromUrl 全分支 |
 
 ---
 
@@ -105,50 +108,38 @@
 
 | 文件 | stmts % | branches % | funcs % | lines % | 未覆盖行 |
 |---|---|---|---|---|---|
-| license/native-license.verifier.ts | 21.73 | 3.84 | 20 | 22.22 | 35, 43-44, 58-156 |
-| media/asset.service.ts | 31.57 | 0 | 16.66 | 29.62 | 38-190 |
-| media/media-recognize.service.ts | 47.05 | 42.85 | 28.57 | 44.44 | 31-102 |
-| miss/miss-export.service.ts | 71.69 | 0 | 83.33 | 75.55 | 34, 63-87, 93 |
+| license/license.service.ts | 84.74 | 81.48 | 75 | 85.96 | 66, 76-90 |
+| wecom/wecom.controller.ts | 86.74 | 70.37 | 100 | 86.41 | 80-86, 91-92, 143-144, 150 |
 | license/mock-license.verifier.ts | 88.88 | 68.18 | 50 | 88.88 | 24, 38-43, 105 |
+| license/native-license.verifier.ts | 86.95 | 65.38 | 100 | 88.88 | 35, 43-44, 95, 110 |
+| admin/license.controller.ts | 88.88 | 100 | 50 | 93.33 | 43 |
 | filter/sensitive-filter.service.ts | 89.36 | 87.5 | 80 | 91.89 | 45, 52-53 |
 | qa/qa-orchestrator.ts | 88.65 | 80 | 62.5 | 88.63 | 74-75, 92-101, 108 |
 | miss/miss.service.ts | 89.65 | 50 | 71.42 | 100 | 44 |
 | common/logger.ts | 90 | 100 | 85.71 | 90 | 37 |
-| qa/fastgpt-qa.engine.ts | 93.75 | 84.21 | 100 | 96.66 | 30 |
-| qa/mock-qa.engine.ts | 97.5 | 84.61 | 100 | 96.96 | 31 |
-| wecom/wecom.controller.ts | 95.45 | 88.23 | 100 | 95.31 | 115-116, 122 |
-| wecom/wecom-crypto.ts | 95.58 | 72.34 | 100 | 98.38 | 23 |
 | wecom/wecom-client.ts | 90.58 | 70.37 | 85.71 | 89.47 | 90, 102, 118, 135-136, 148-150 |
+| qa/fastgpt-qa.engine.ts | 93.75 | 84.21 | 100 | 96.66 | 30 |
+| license/license-gate.service.ts | 95.45 | 80 | 100 | 100 | 62, 88 |
+| license/license-runtime.scheduler.ts | 95 | 100 | 75 | 96.87 | 50 |
+| qa/mock-qa.engine.ts | 97.5 | 84.61 | 100 | 96.96 | 31 |
+| miss/miss-export.service.ts | 98.11 | 100 | 83.33 | 100 | — |
+| wecom/wecom-crypto.ts | 95.58 | 72.34 | 100 | 98.38 | 23 |
 | routing/trigger.service.ts | 97.36 | 76.47 | 100 | 100 | 32, 55, 63 |
 | routing/rate-limiter.service.ts | 97.22 | 88.88 | 100 | 100 | 48 |
-| license/license.service.ts | 95.74 | 91.3 | 83.33 | 97.72 | 64 |
-| admin/license.controller.ts | 88.88 | 100 | 50 | 93.33 | 43 |
 | media/asset.controller.ts | 100 | 92.85 | 100 | 100 | 39 |
+| media/asset.service.ts | 100 | 93.75 | 100 | 100 | 186 |
+| media/media-recognize.service.ts | 100 | 96.42 | 100 | 100 | 92 |
 | admin/admin.guard.ts | 100 | 87.5 | 100 | 100 | 15-25 |
 
-> 以下文件达 100 % 全维度，不再单列：`config/*`、`context.service`、`health.controller`、`license.guard`、`media/asset-reference.resolver`、`media/asset-sender.service`、`miss-cleanup.service`、`routing/dedup`、`routing/routing.service`、`admin/config.controller`、`admin/miss.controller`、`qa/message-sender.port`。
+> 以下文件达 100 % 全维度，不再单列：`config/*`、`context.service`、`health.controller`、`license.guard`、`licensed-chat.service`、`media/asset-reference.resolver`、`media/asset-sender.service`、`miss-cleanup.service`、`routing/dedup`、`routing/routing.service`、`admin/config.controller`、`admin/miss.controller`、`qa/message-sender.port`。
 
-### 3.2 短板分析（影响 branches 阈值的三个主因）
+### 3.2 剩余短板分析（均已不影响阈值）
 
-1. **`native-license.verifier.ts`（21.73 % / 3.84 % branches）—— 最大缺口**
-   N-API 产物 `index.node` 在本机与 CI 未加载，`verify`/`selfcheck`/`antireplay` 几乎全部走 `native=null` 回退分支（58-156 行未执行）。**属环境性缺口，非代码缺陷**：真实路径需在已预构建 `.node` 的运行环境（Docker 内 Linux）才会走到。建议：CI 注入预构建产物，或用 `jest.mock` 桩掉 N-API 跑真实分支；若长期不在 CI 跑 native，应将其 `coveragePathExclude` 排除阈值统计。
+1. **`wecom.controller.ts` branches 70.37 %**：80-86、91-92、143-144、150 行为 image 识别/usage 埋点的异常降级路径，主链路已覆盖。
+2. **`license.service.ts` 76-90 行**：native 分支的 selfcheck evidence 透传细节，需注入 native 桩方可覆盖。
+3. **`mock/native-license.verifier.ts` N-API 回退**（38-43 / 35,43-44 行）：无 `index.node` 环境的加载失败回退，生产 Docker 才触发。
 
-2. **`asset.service.ts`（31.57 % / 0 % branches）—— 新增服务未充分覆盖**
-   媒体资产服务 38-190 行（DB 写入 / 资源下载 / 引用登记）未覆盖，现有 spec 仅覆盖 controller 入口。建议：补 asset.service 的存档、查重、下载失败路径用例（可提 5-8 个 branches 点）。
-
-3. **`miss-export.service.ts`（71.69 % / 0 % branches）—— 失败/重试分支未覆盖**
-   63-87、93 行的导出失败与重试分支无用例。建议：补下游不可用、格式异常、超时重试用例。
-
-> 次要：`media-recognize.service.ts`（47.05 %）31-102 核心识别逻辑未覆盖，现有 9 用例集中在 Content-Type 解析旁路；`mock-license.verifier.ts` 38-43 行 N-API 加载回退未覆盖（同 native 根因）。
-
-### 3.3 阈值红灯处置建议
-
-`jest.config.*` 的 `globalCoverageThresholds.branches = 75`，当前 69.81 % → CI 标红。两条路线：
-
-- **路线 A（补用例，推荐）**：补 §3.2 的 asset.service + miss-export 失败路径用例，预期可提 branches 至 ~75 %；native 走 §3.2-1 桩或排除阈值。
-- **路线 B（下调阈值）**：若 75 % branches 非交付硬性要求，将 `jest.config` 的 `branches` 下调至 65 解除红线，stmts/lines 仍维持 ≥ 75。
-
-> 需决策方拍板：路线 A 还是 B，以及 native 是否纳入阈值统计。该项已记入《文档清单》五、待确认事项。
+> 次要：`native-license.verifier.ts` 35、43-44、95、110 行 N-API 加载回退（无 `index.node` 时返回 fallback）与 `mock-license.verifier.ts` 24、38-43、105 行同类逻辑未覆盖——生产 Docker 环境才触发。
 
 ---
 
