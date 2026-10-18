@@ -285,11 +285,18 @@ cd /opt/cs-bot
 docker compose stop adapter                # 1. 停适配层（问答中断，选低峰窗口）
 bash scripts/backup.sh                     # 2. 升级前快照（必备，用于回滚）
 docker load -i images/adapter-<newtag>.tar # 3. 导入新镜像（其余组件不动）
+
+# 3.1 镜像完整性校验（防篡改）：提取镜像 SHA256，比对交付方提供的指纹
+docker images --no-trunc --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep "adapter:<newtag>"
+# 输出形如 adapter:v1.2.3 sha256:a1b2c3d4e5f6...，与交付文档中的指纹逐字符核对
+
 sed -i 's/adapter:<oldtag>/adapter:<newtag>/' docker-compose.yml
 docker compose up -d adapter               # 4. 启动
 curl -s https://<域名>/healthz             # 5. 验证 + 群内冒烟
 # 回滚（验证失败时）：反向改回 tag，重新 up -d；必要时用第 2 步快照恢复数据
 ```
+
+> **镜像校验说明**：交付方在发布镜像时须同时提供 `sha256` 指纹（`docker images --no-trunc` 输出），用户导入后用同样命令提取并逐字符核对。若指纹不一致则存在被植入恶意代码的风险，立即停止部署并联系交付方。
 
 ### 9.4 授权续期（到期前 15 天系统每日告警提醒）
 
@@ -331,6 +338,8 @@ curl -X POST -u admin:<口令> https://<域名>/admin/license/reload
 - [ ] 管理接口 Basic Auth + IP 白名单（`ALLOWED_ADMIN_IPS`）
 - [ ] FastGPT 后台已改强口令并限源访问
 - [ ] `license/` 目录权限 600
+- [ ] 交付镜像导入后 SHA256 指纹与交付文档一致（9.3 步骤 3.1，防镜像被替换）
+- [ ] 交付镜像已启用 JS 全量混淆（交付方构建期确认：Dockerfile 中 `obfuscate` 步骤未被跳过）
 - [ ] 备份任务已验证可执行、产物可恢复
 - [ ] SSH 密钥登录、禁用密码登录
 - [ ] 群公告已按隐私告知模板说明机器人处理规则（PRD 合规要求）
