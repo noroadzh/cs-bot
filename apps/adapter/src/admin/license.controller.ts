@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@ne
 import { AdminGuard } from './admin.guard.js';
 import { LicenseService } from '../license/license.service.js';
 import { UsageService } from '../usage/usage.service.js';
+import { LicenseStatusDto, LicenseReloadDto, AdminUsageDto } from './dto/admin-responses.dto.js';
 
 @Controller('admin')
 @ApiBearerAuth()
@@ -17,7 +18,7 @@ export class LicenseController {
 
   @Get('license')
   @ApiOperation({ summary: '查询 License 状态' })
-  @ApiResponse({ status: 200, description: '当前 License 摘要' })
+  @ApiResponse({ status: 200, type: LicenseStatusDto, description: '当前 License 摘要' })
   status() {
     const licenseStatus = this.license.verifyAndCache();
     const usage = this.usage.getUsage();
@@ -32,13 +33,13 @@ export class LicenseController {
 
   @Post('license/reload')
   @ApiOperation({ summary: '重载 License 文件' })
-  @ApiResponse({ status: 201, description: '重载结果' })
+  @ApiResponse({ status: 201, type: LicenseReloadDto, description: '重载结果' })
   reload() { return this.license.reload(); }
 
   @Get('usage')
   @ApiOperation({ summary: '查询用量统计' })
   @ApiQuery({ name: 'period', required: false, enum: ['daily', 'weekly', 'monthly'] })
-  @ApiResponse({ status: 200, description: '所选周期内的用量汇总' })
+  @ApiResponse({ status: 200, type: AdminUsageDto, description: '所选周期内的用量汇总' })
   getUsage(@Query('period') period?: 'daily' | 'weekly' | 'monthly') {
     return this.usage.getUsage(period);
   }

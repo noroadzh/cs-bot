@@ -9,6 +9,7 @@ import { LicenseService } from './license/license.service.js';
 import { AppModule } from './app.module.js';
 import { AppLogger } from './common/logger.js';
 import { Redis } from 'ioredis';
+import { SWAGGER_UI_PATH, OPENAPI_JSON_PATH } from './common/docs-paths.js';
 
 async function bootstrap() {
   const logger = new AppLogger('Bootstrap');
@@ -46,14 +47,22 @@ async function bootstrap() {
   // 5. 注册全局异常过滤器，初始化 Swagger，启动 HTTP
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('CS Bot API')
-    .setDescription('微信群智能客服机器人管理接口')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('docs', app, document);
+  if (config.SWAGGER_ENABLED) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('CS Bot API')
+      .setDescription('微信群智能客服机器人管理接口')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup(SWAGGER_UI_PATH, app, document);
+    // 原始 OpenAPI JSON 独立挂一处，供 CI 契约校验与 curl 排查使用
+    // （SwaggerModule.setup 会占用 /docs-json，这里用 /docs/openapi.json 避开）
+    app.getHttpAdapter().get(OPENAPI_JSON_PATH, (_req: unknown, res: { json: (b: unknown) => void }) => {
+      res.json(document);
+    });
+    logger.log({ phase: 'ready', detail: `swagger-ui at /${SWAGGER_UI_PATH}, openapi json at ${OPENAPI_JSON_PATH}` });
+  }
 
   const PORT = config.PORT ?? 3000;
   const HOST = config.HOST ?? '0.0.0.0';

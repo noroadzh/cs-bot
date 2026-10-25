@@ -72,3 +72,67 @@ The system MUST expose `GET /admin/usage` under Basic Auth + IP whitelist protec
 #### Scenario: Query usage with period parameter
 - **WHEN** an operator calls `GET /admin/usage?period=weekly` with valid Basic Auth
 - **THEN** the system returns HTTP 200 with the weekly aggregation
+
+### Requirement: Response DTO declarations
+
+The system MUST declare OpenAPI response schemas for every 2xx response on management
+endpoints (`/admin/*`, `/healthz`, `/wecom/*`), so that the generated OpenAPI document
+exposes the actual return shape rather than empty schemas.
+
+#### Scenario: DTO class with ApiProperty
+
+- **WHEN** a controller method returns a typed object for a 2xx response
+- **THEN** a Response DTO class exists under `apps/adapter/src/{common,admin,media}/dto/`
+  with every persisted field annotated by `@ApiProperty()`
+
+#### Scenario: Controller declares type on ApiResponse
+
+- **WHEN** a controller method is decorated with `@ApiResponse({ status: 2xx })`
+- **THEN** that decoration MUST include either `type:` (pointing to a DTO class) or
+  `schema:` (inline schema, allowed only for primitive / callback responses)
+
+#### Scenario: Primitive callback responses
+
+- **WHEN** a controller returns a primitive body (e.g. WeCom callback's plain-text
+  `echostr` acknowledgement)
+- **THEN** the `@ApiResponse` uses `schema: { type: 'string' }` rather than a DTO class
+
+### Requirement: Swagger contract regression test
+
+The system MUST include a test that fails CI if any controller handler drops its
+OpenAPI response declaration or any DTO property loses its `@ApiProperty()` annotation.
+
+#### Scenario: Every handler has ApiOperation
+
+- **WHEN** the test reflects over every controller method in `admin/`, `media/`,
+  `wecom/`, `health/`
+- **THEN** each method MUST be decorated with `@ApiOperation()`
+
+#### Scenario: Every 2xx response is declared
+
+- **WHEN** the test enumerates `@ApiResponse` metadata on each handler
+- **THEN** every status code in the 2xx range MUST carry a `type` or `schema` field
+
+#### Scenario: Referenced DTOs expose their fields
+
+- **WHEN** the test resolves each DTO class referenced by an `@ApiResponse`
+- **THEN** the DTO's own properties MUST each carry an `@ApiProperty()` annotation
+
+### Requirement: OpenAPI document is served at runtime
+
+The system MUST serve the OpenAPI document and a Swagger UI when `SWAGGER_ENABLED=true`,
+and MUST publish the raw OpenAPI JSON at a path that does not collide with the
+SwaggerModule's internal `/docs-json` route.
+
+#### Scenario: Swagger UI mounted when enabled
+
+- **WHEN** the bootstrap reads `SWAGGER_ENABLED=true` from config
+- **THEN** `SwaggerModule.setup` is called with the configured UI path
+  (default `/docs`) and the generated document
+
+#### Scenario: OpenAPI JSON exposed separately
+
+- **WHEN** a client requests the configured OpenAPI JSON path
+  (default `/docs/openapi.json`)
+- **THEN** the response is the raw OpenAPI document (not HTML, not wrapped)
+  and the path is a sibling of the UI path so both share a common prefix

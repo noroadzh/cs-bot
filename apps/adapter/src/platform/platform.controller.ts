@@ -1,0 +1,219 @@
+/**
+ * PlatformController — M11 控制面 HTTP 端点
+ *
+ * 所有路由挂 AdminGuard（Basic Auth + IP whitelist）与 PlatformEnabledGuard（PLATFORM_ENABLED=false 时整体 404）。
+ */
+import {
+  Body,
+  Controller,
+  Get,
+  Injectable,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+  NotFoundException,
+} from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
+import { AdminGuard } from '../admin/admin.guard.js';
+import { ConfigService } from '../config/config.service.js';
+import { CanActivate, ExecutionContext } from '@nestjs/common';
+import {
+  TenantService,
+} from './tenant.service.js';
+import {
+  TenantQuotaService,
+  type QuotaConsumeInput,
+  type QuotaKind,
+} from './tenant-quota.service.js';
+import { PlatformAuditService } from './platform-audit.service.js';
+import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
+import { TenantUsageService } from './tenant-usage.service.js';
+
+/** PLATFORM_ENABLED=false 时所有 /platform 路由 404 */
+@Injectable()
+export class PlatformEnabledGuard implements CanActivate {
+  canActivate(_ctx: ExecutionContext): boolean {
+    if (!ConfigService.instance.PLATFORM_ENABLED) {
+      throw new NotFoundException({ errCode: 'PLATFORM_DISABLED', detail: 'platform control-plane is disabled' });
+    }
+    return true;
+  }
+}
+
+@Controller('platform')
+@ApiBearerAuth()
+@ApiTags('platform')
+@UseGuards(PlatformEnabledGuard, AdminGuard)
+export class PlatformController {
+  constructor(
+    private readonly tenants: TenantService,
+    private readonly quota: TenantQuotaService,
+    private readonly audit: PlatformAuditService,
+    private readonly sweep: TenantExpirySweepService,
+    private readonly usageService: TenantUsageService,
+  ) {}
+
+  private actor(req: Request): string {
+    // Basic Auth 已由 AdminGuard 校验；用 user 名作为 actor
+    const auth = (req.headers?.authorization ?? '') as string;
+    try {
+      const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8');
+      return decoded.split(':')[0] || 'admin';
+    } catch {
+      return 'admin';
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tenant CRUD + lifecycle
+  // -----------------------------------------------------------------------
+
+  @Post('tenants')
+  @ApiOperation({ summary: '创建租户' })
+  async create(@Body() body: Record<string, unknown>, @Req() req: Request) {
+    return this.tenants.create(
+      {
+        name: String(body.name ?? ''),
+        contact: body.contact === undefined ? undefined : String(body.contact),
+        plan: body.plan === undefined ? undefined : String(body.plan),
+        subscriptionExpiresAt:
+          body.subscriptionExpiresAt === undefined ? undefined : String(body.subscriptionExpiresAt),
+      },
+      this.actor(req),
+    );
+  }
+
+  @Get('tenants')
+  @ApiOperation({ summary: '租户列表（分页 + status 过滤）' })
+  async list(
+    @Query('status') status?: string,
+    @Query('limit') limitStr?: string,
+    @Query('offset') offsetStr?: string,
+  ) {
+    const limit = limitStr === undefined ? undefined : parseInt(limitStr, 10);
+    const offset = offsetStr === undefined ? undefined : parseInt(offsetStr, 10);
+    return this.tenants.list(status, limit, offset);
+  }
+
+  @Get('tenants/:id')
+  @ApiOperation({ summary: '租户详情（含配额与当日用量）' })
+  async detail(@Param('id') id: string) {
+    return this.tenants.getDetail(id);
+  }
+
+  @Post('tenants/:id/provision')
+  @ApiOperation({ summary: '编排开通租户实例（docker compose up + probe）' })
+  async provision(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.provision(id, this.actor(req));
+  }
+
+  @Post('tenants/:id/renew')
+  @ApiOperation({ summary: '续期订阅' })
+  async renew(@Param('id') id: string, @Body() body: Record<string, unknown>, @Req() req: Request) {
+    const days = Number(body.days ?? 0);
+    return this.tenants.renew(id, days, this.actor(req));
+  }
+
+  @Post('tenants/:id/suspend')
+  @ApiOperation({ summary: '暂停租户（compose stop + status paused）' })
+  async suspend(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.suspend(id, this.actor(req));
+  }
+
+  @Post('tenants/:id/resume')
+  @ApiOperation({ summary: '恢复租户（compose start + status active）' })
+  async resume(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.resume(id, this.actor(req));
+  }
+
+  @Post('tenants/:id/terminate')
+  @ApiOperation({ summary: '销毁租户（compose down -v + DROP DATABASE）' })
+  async terminate(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.terminate(id, this.actor(req));
+  }
+
+  // -----------------------------------------------------------------------
+  // Quota
+  // -----------------------------------------------------------------------
+
+  @Patch('tenants/:id/quota')
+  @ApiOperation({ summary: '更新配额（subset of 4 dims）' })
+  async setQuota(@Param('id') id: string, @Body() body: Record<string, unknown>, @Req() req: Request) {
+    return this.quota.setQuota(
+      id,
+      {
+        maxChats: body.maxChats === undefined ? undefined : Number(body.maxChats),
+        maxApiCalls: body.maxMsgsPerDay === undefined ? undefined : Number(body.maxMsgsPerDay),
+        maxStorageMb: body.maxStorageMb === undefined ? undefined : Number(body.maxStorageMb),
+        maxUsers: body.maxConcurrentQa === undefined ? undefined : Number(body.maxConcurrentQa),
+      },
+      this.actor(req),
+    );
+  }
+
+  @Post('tenants/:id/quota/consume')
+  @ApiOperation({ summary: '消耗配额（原子扣减；用于内部或压测验证）' })
+  async consume(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const kind = String(body.kind ?? '');
+    const delta = body.delta === undefined ? 1 : Number(body.delta);
+    return this.quota.consume({ tenantId: id, kind: kind as QuotaConsumeInput['kind'], delta });
+  }
+
+  // -----------------------------------------------------------------------
+  // Usage
+  // -----------------------------------------------------------------------
+
+  @Get('tenants/:id/usage')
+  @ApiOperation({ summary: '区间用量查询' })
+  async usage(
+    @Param('id') id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.usageService.queryUsage(id, from, to);
+  }
+
+  // -----------------------------------------------------------------------
+  // Audit
+  // -----------------------------------------------------------------------
+
+  @Get('audit-log')
+  @ApiOperation({ summary: '审计日志查询（分页 + tenant_id/action/from/to 过滤）' })
+  async auditLog(
+    @Query('tenant_id') tenantId?: string,
+    @Query('action') action?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limitStr?: string,
+    @Query('offset') offsetStr?: string,
+  ) {
+    return this.audit.list({
+      tenantId,
+      action,
+      from,
+      to,
+      limit: limitStr === undefined ? undefined : parseInt(limitStr, 10),
+      offset: offsetStr === undefined ? undefined : parseInt(offsetStr, 10),
+    });
+  }
+
+  @Get('audit-log/verify')
+  @ApiOperation({ summary: '审计链完整性校验' })
+  async auditVerify() {
+    return this.audit.verifyChain();
+  }
+
+  // -----------------------------------------------------------------------
+  // Sweep (debug/manual trigger)
+  // -----------------------------------------------------------------------
+
+  @Post('sweep')
+  @ApiOperation({ summary: '手动触发过期扫描' })
+  async triggerSweep() {
+    return this.sweep.sweep();
+  }
+}

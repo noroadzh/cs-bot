@@ -78,7 +78,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, 'echo-cipher', {}, {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce, echostr: 'echo-cipher' }, {}, {} as any, res);
 
       expect(res.statusCode).toBe(200);
       expect(res.send).toHaveBeenCalledWith('echo-plain');
@@ -91,7 +91,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, 'echo-cipher', {}, {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce, echostr: 'echo-cipher' }, {}, {} as any, res);
 
       expect(res.statusCode).toBe(401);
       expect(res.json).toHaveBeenCalledWith({ errCode: expect.any(Number) });
@@ -105,7 +105,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'raw-cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'raw-cipher', {} as any, res);
 
       expect(crypto.decryptMsg).toHaveBeenCalledWith('sig-abc', '1700000000', 'nonce-xyz', 'raw-cipher');
       expect(res.statusCode).toBe(200);
@@ -117,7 +117,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, { Encrypt: 'obj-cipher' }, {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, { Encrypt: 'obj-cipher' }, {} as any, res);
 
       expect(crypto.decryptMsg).toHaveBeenCalledWith('sig-abc', '1700000000', 'nonce-xyz', 'obj-cipher');
       expect(res.statusCode).toBe(200);
@@ -128,7 +128,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, { Other: 'x' }, {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, { Other: 'x' }, {} as any, res);
 
       expect(crypto.decryptMsg).toHaveBeenCalledWith('sig-abc', '1700000000', 'nonce-xyz', '');
       expect(res.statusCode).toBe(401);
@@ -139,7 +139,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'bad-cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'bad-cipher', {} as any, res);
 
       expect(res.statusCode).toBe(401);
       expect(res.json).toHaveBeenCalledWith({ errCode: expect.any(Number) });
@@ -152,7 +152,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, makeRouting());
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(res.statusCode).toBe(400);
       expect(res.json).toHaveBeenCalledWith({ errCode: expect.any(Number) });
@@ -166,7 +166,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(res.statusCode).toBe(200);
       expect(res.send).toHaveBeenCalledWith('');
@@ -180,7 +180,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(res.statusCode).toBe(200);
       expect(res.send).toHaveBeenCalledWith('');
@@ -192,7 +192,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       const callArgs = (routing.dispatch as any).mock.calls[0];
       expect(typeof callArgs[1]).toBe('string');
@@ -212,7 +212,7 @@ describe('WecomController.callback', () => {
       controller.__client.downloadMedia.mockResolvedValue(Buffer.from('fake-jpeg'));
       controller.__recognize.recognizeImage.mockResolvedValue('a cat sitting on a bench');
 
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(controller.__client.downloadMedia).toHaveBeenCalledWith('media-123');
       expect(controller.__recognize.recognizeImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/jpeg');
@@ -232,7 +232,7 @@ describe('WecomController.callback', () => {
       controller.__client.downloadMedia.mockResolvedValue(Buffer.from('fake-jpeg'));
       controller.__recognize.recognizeImage.mockResolvedValue(null);
 
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
       expect(routing.dispatch).not.toHaveBeenCalled(); // PRD FR-9 规则 2: 跳过 routing
@@ -249,7 +249,7 @@ describe('WecomController.callback', () => {
       const res = makeRes();
       controller.__client.downloadMedia.mockRejectedValue(new Error('network error'));
 
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
       expect(routing.dispatch).not.toHaveBeenCalled(); // PRD FR-9 规则 2: 跳过 routing
@@ -264,7 +264,7 @@ describe('WecomController.callback', () => {
       const { controller } = makeController(crypto, routing);
 
       const res = makeRes();
-      await controller.callback(BASE_ARGS.msgSignature, BASE_ARGS.timestamp, BASE_ARGS.nonce, undefined, 'cipher', {} as any, res);
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('messagesReceived');
       const imageCalls = (controller.__usage.increment as any).mock.calls.filter((c: any[]) => c[0].startsWith('image'));

@@ -1,9 +1,12 @@
 /** GET /admin/miss-records */
 import { Controller, Get, Query, UseGuards, Res } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { AdminGuard } from './admin.guard.js';
 import { MissExportService } from '../miss/miss-export.service.js';
+import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
+import { MissExportDto } from './dto/miss-export.dto.js';
+import { MissRecordsQueryDto } from './dto/miss-records-query.dto.js';
 
 @Controller('admin')
 @ApiBearerAuth()
@@ -14,14 +17,14 @@ export class MissController {
 
   @Get('miss-records')
   @ApiOperation({ summary: '导出未识别消息记录' })
-  @ApiQuery({ name: 'format', required: false, enum: ['json', 'xlsx'] })
-  @ApiQuery({ name: 'days', required: false, description: '回溯天数，默认 90' })
-  @ApiResponse({ status: 200, description: '文件下载' })
+  @ApiResponse({ status: 200, type: MissExportDto, description: 'JSON 导出结果' })
+  @ApiResponse({ status: 400, type: ErrorResponseDto, description: 'days 参数非正整数或 format 无效' })
   async list(
-    @Query('format') format: string | undefined,
-    @Query('days') days: string | undefined,
+    @Query() query: MissRecordsQueryDto,
     @Res() res: Response,
   ): Promise<void> {
+    const format = query.format;
+    const days = query.days;
     const daysNum = parseInt(days ?? '90', 10);
     if ((format ?? 'json').toLowerCase() === 'xlsx') {
       await this.exportService.exportXlsx(daysNum, res as unknown as NodeJS.WritableStream & { setHeader?: (k: string, v: string) => void });

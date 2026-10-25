@@ -31,3 +31,8 @@ Thumbs.db
 # Coverage
 coverage/
 apps/adapter/coverage/
+# Ruflo / claude-flow 本地状态
+.claude-flow/
+
+# 运行时数据（导入落盘、用量快照）
+apps/adapter/data/

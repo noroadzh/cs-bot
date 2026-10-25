@@ -4,6 +4,7 @@
  */
 import { Controller, Post, Query, Body, Req, Res, HttpCode, HttpStatus } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WecomCrypto } from './wecom-crypto.js';
 import { WecomClient } from './wecom-client.js';
 import { RoutingService } from '../routing/routing.service.js';
@@ -13,7 +14,10 @@ import { LicenseGateService } from '../license/license-gate.service.js';
 import { LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT } from '../license/license-gate.service.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
+import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
+import { WecomCallbackQueryDto, WecomCallbackBodyDto } from './dto/wecom-callback.dto.js';
 
+@ApiTags('wecom')
 @Controller('wecom')
 export class WecomController {
   private readonly logger = new AppLogger('WecomController');
@@ -29,15 +33,30 @@ export class WecomController {
 
   @Post('callback')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '企微消息回调：URL 握手验证 + 加密消息接收' })
+  @ApiBody({
+    description: '企微加密消息体（application/json 或 xml 明文）',
+    schema: {
+      oneOf: [
+        { $ref: '#/components/schemas/WecomCallbackBodyDto' },
+        { type: 'string' },
+      ],
+    },
+  })
+  @ApiResponse({
+    status: 200,
+    description: '握手返回明文 echostr（text）；消息接收成功返回空串 ack',
+    schema: { oneOf: [{ type: 'string' }, { type: 'object', properties: { errCode: { type: 'number' } } }] },
+  })
+  @ApiResponse({ status: 400, type: ErrorResponseDto, description: 'XML 解析失败' })
+  @ApiResponse({ status: 401, type: ErrorResponseDto, description: '签名校验失败 / 解密失败' })
   async callback(
-    @Query('msg_signature') msgSignature: string,
-    @Query('timestamp') timestamp: string,
-    @Query('nonce') nonce: string,
-    @Query('echostr') echostr: string | undefined,
-    @Body() body: { Encrypt?: string } | string,
+    @Query() q: WecomCallbackQueryDto,
+    @Body() body: WecomCallbackBodyDto | string,
     @Req() req: Request,
     @Res() res: Response,
   ) {
+    const { msg_signature: msgSignature, timestamp, nonce, echostr } = q;
     const traceId = crypto.randomUUID();
     this.logger.log({ traceId, msgSignature, timestamp });
 

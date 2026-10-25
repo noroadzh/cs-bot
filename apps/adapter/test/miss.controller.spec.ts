@@ -45,7 +45,7 @@ describe('MissController.list', () => {
   describe('分支: days 参数', () => {
     it('days 为空 → 默认 90 天', async () => {
       const res = makeRes();
-      await controller.list(undefined, undefined, res as unknown as Response);
+      await controller.list({}, res as unknown as Response);
 
       expect(exportService.queryRecords).toHaveBeenCalledWith(90);
       expect(res.headers['Content-Type']).toBe('application/json');
@@ -54,14 +54,14 @@ describe('MissController.list', () => {
 
     it('days=7 → parseInt 得 7', async () => {
       const res = makeRes();
-      await controller.list(undefined, '7', res as unknown as Response);
+      await controller.list({ days: '7' }, res as unknown as Response);
 
       expect(exportService.queryRecords).toHaveBeenCalledWith(7);
     });
 
     it('days=30 → parseInt 得 30', async () => {
       const res = makeRes();
-      await controller.list(undefined, '30', res as unknown as Response);
+      await controller.list({ days: '30' }, res as unknown as Response);
 
       expect(exportService.queryRecords).toHaveBeenCalledWith(30);
     });
@@ -70,7 +70,7 @@ describe('MissController.list', () => {
   describe('分支: format 参数', () => {
     it('format 为空 → 走 JSON 分支', async () => {
       const res = makeRes();
-      await controller.list(undefined, '90', res as unknown as Response);
+      await controller.list({ days: '90' }, res as unknown as Response);
 
       expect(exportService.exportXlsx).not.toHaveBeenCalled();
       expect(exportService.queryRecords).toHaveBeenCalled();
@@ -78,7 +78,7 @@ describe('MissController.list', () => {
 
     it('format=json → 走 JSON 分支', async () => {
       const res = makeRes();
-      await controller.list('json', '90', res as unknown as Response);
+      await controller.list({ format: 'json', days: '90' }, res as unknown as Response);
 
       expect(exportService.exportXlsx).not.toHaveBeenCalled();
       expect(exportService.queryRecords).toHaveBeenCalled();
@@ -86,7 +86,7 @@ describe('MissController.list', () => {
 
     it('format=JSON（大写）→ 大小写不敏感，仍走 JSON 分支', async () => {
       const res = makeRes();
-      await controller.list('JSON', '90', res as unknown as Response);
+      await controller.list({ format: 'JSON', days: '90' }, res as unknown as Response);
 
       expect(exportService.exportXlsx).not.toHaveBeenCalled();
       expect(exportService.queryRecords).toHaveBeenCalled();
@@ -94,7 +94,7 @@ describe('MissController.list', () => {
 
     it('format=csv → 非 xlsx，走 JSON 分支', async () => {
       const res = makeRes();
-      await controller.list('csv', '90', res as unknown as Response);
+      await controller.list({ format: 'csv', days: '90' }, res as unknown as Response);
 
       expect(exportService.exportXlsx).not.toHaveBeenCalled();
       expect(exportService.queryRecords).toHaveBeenCalled();
@@ -102,7 +102,7 @@ describe('MissController.list', () => {
 
     it('format=xlsx → 走 exportXlsx 且提前 return（不查记录、不写 JSON）', async () => {
       const res = makeRes();
-      await controller.list('xlsx', '7', res as unknown as Response);
+      await controller.list({ format: 'xlsx', days: '7' }, res as unknown as Response);
 
       expect(exportService.exportXlsx).toHaveBeenCalledWith(7, expect.any(Object));
       expect(exportService.queryRecords).not.toHaveBeenCalled();
@@ -115,7 +115,7 @@ describe('MissController.list', () => {
     it('queryRecords 返回空数组 → total=0, rows=[]', async () => {
       exportService.queryRecords.mockResolvedValue([]);
       const res = makeRes();
-      await controller.list(undefined, undefined, res as unknown as Response);
+      await controller.list({}, res as unknown as Response);
 
       expect(res.payload).toEqual({ total: 0, rows: [] });
     });

@@ -1,0 +1,512 @@
+/**
+ * TenantService — M11 租户生命周期编排（spec tenant-registry, design D1/D2）
+ *
+ * Endpoints: create, provision, renew, suspend, resume, terminate, list, getDetail
+ * Each success writes one audit entry per the spec's action vocabulary.
+ */
+
+import {
+  Injectable,
+  HttpException,
+  HttpStatus,
+  ConflictException,
+  NotFoundException,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
+import { Pool, types } from 'pg';
+import { randomUUID } from 'crypto';
+import { ConfigService } from '../config/config.service.js';
+import { AppLogger } from '../common/logger.js';
+import { PlatformAuditService } from './platform-audit.service.js';
+import { TenantQuotaService, DEFAULT_QUOTA } from './tenant-quota.service.js';
+import { TenantUsageService } from './tenant-usage.service.js';
+import { TenantStateMachine } from './tenant.state-machine.js';
+import type { TenantProvisioner } from './provisioner/provisioner.js';
+import { ShellProvisioner } from './provisioner/shell-provisioner.js';
+import type {
+  Tenant,
+  TenantCreateInput,
+  TenantDetail,
+  TenantListResult,
+  TenantQuota,
+} from './tenant.entity.js';
+
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+
+@Injectable()
+export class TenantService {
+  private readonly logger = new AppLogger('TenantService');
+  private readonly pool: Pool;
+  private provisioner: TenantProvisioner;
+
+  constructor(
+    private readonly audit: PlatformAuditService,
+    private readonly quota: TenantQuotaService,
+    private readonly usage: TenantUsageService,
+    _config: ConfigService,
+  ) {
+    this.pool = new Pool({
+      connectionString: ConfigService.instance.DATABASE_URL,
+      max: 5,
+    });
+    // Default: ShellProvisioner; tests can substitute
+    this.provisioner = new ShellProvisioner(ConfigService.instance);
+  }
+
+  // -------------------------------------------------------------------------
+  // Create
+  // -------------------------------------------------------------------------
+
+  async create(input: TenantCreateInput, actor = 'system'): Promise<Tenant> {
+    if (!input.name || input.name.trim() === '') {
+      throw new BadRequestException({
+        errCode: 'TENANT_NAME_EMPTY',
+        detail: 'name is required and must be non-empty',
+        field: 'name',
+      });
+    }
+
+    const trimmedName = input.name.trim();
+    // Check duplicate name among non-terminated tenants
+    const dupRes = await this.pool.query(
+      `SELECT id FROM tenant WHERE name = $1 AND status <> 'terminated' AND deleted_at IS NULL`,
+      [trimmedName],
+    );
+    if (dupRes.rows.length > 0) {
+      throw new ConflictException({
+        errCode: 'TENANT_NAME_DUPLICATE',
+        detail: `tenant name "${trimmedName}" already exists`,
+      });
+    }
+
+    const now = new Date();
+    const expiredAt = input.subscriptionExpiresAt
+      ? new Date(input.subscriptionExpiresAt).toISOString()
+      : new Date(now.getTime() + 365 * 86_400_000).toISOString();
+
+    const res = await this.pool.query(
+      `INSERT INTO tenant (id, name, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at)
+       VALUES ($1, $2, 'created', NULL, NULL, NULL, $3, $3, $4, NULL, NULL)
+       RETURNING id, name, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at`,
+      [randomUUID(), trimmedName, now.toISOString(), expiredAt],
+    );
+
+    const tenant = mapTenantRow(res.rows[0]);
+
+    // Default quota
+    await this.quota.ensureDefaultQuota(tenant.id);
+
+    // Audit tenant.create
+    await this.audit.append({
+      action: 'tenant.create',
+      actor,
+      tenantId: tenant.id,
+      payload: {
+        tenantId: tenant.id,
+        name: tenant.name,
+        plan: input.plan ?? null,
+        subscriptionExpiresAt: tenant.expiredAt,
+      },
+    });
+
+    return tenant;
+  }
+
+  // -------------------------------------------------------------------------
+  // Provision
+  // -------------------------------------------------------------------------
+
+  async provision(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+
+    // Assert created → provisioning
+    TenantStateMachine.assertTransition(tenant.status, 'provisioning');
+
+    // Update to provisioning in DB
+    await this.pool.query(
+      `UPDATE tenant SET status = 'provisioning', updated_at = NOW() WHERE id = $1`,
+      [tenantId],
+    );
+
+    try {
+      // Render compose file
+      await this.provisioner.render(tenant);
+      // Up
+      await this.provisioner.up(tenant);
+      // Probe
+      const timeoutMs = ConfigService.instance.PLATFORM_PROVISION_TIMEOUT_MS;
+      const healthy = await this.provisioner.probe(tenant, timeoutMs);
+
+      if (!healthy) {
+        // Probe timeout → down + provisioning_failed
+        try {
+          await this.provisioner.down(tenant, false);
+        } catch {
+          // best-effort cleanup; ignore
+        }
+        await this.pool.query(
+          `UPDATE tenant SET status = 'provisioning_failed', last_provision_log = 'probe timeout', updated_at = NOW()
+           WHERE id = $1`,
+          [tenantId],
+        );
+        await this.audit.append({
+          action: 'tenant.provision',
+          actor,
+          tenantId,
+          payload: { tenantId, error: 'probe timeout' },
+        });
+        throw new InternalServerErrorException({
+          errCode: 'TENANT_PROVISION_TIMEOUT',
+          detail: 'health probe timed out after ' + timeoutMs + 'ms',
+        });
+      }
+
+      // Success → active
+      await this.pool.query(
+        `UPDATE tenant SET status = 'active', host = $2, port = $3, database_url = $4, updated_at = NOW()
+         WHERE id = $1`,
+        [tenantId, tenant.host, tenant.port, tenant.databaseUrl],
+      );
+      await this.audit.append({
+        action: 'tenant.provision',
+        actor,
+        tenantId,
+        payload: { tenantId, instanceHost: tenant.host, instancePort: tenant.port, composeFilePath: provisionerPath(tenantId) },
+      });
+
+      return this.requireTenant(tenantId);
+    } catch (err) {
+      // On compose command failure → provisioning_failed
+      const errorMsg = (err as Error).message || 'unknown provision error';
+      // Best-effort down (do not drop volumes yet — provisioning may retry)
+      try {
+        await this.provisioner.down(tenant, false);
+      } catch {
+        // ignore
+      }
+      await this.pool.query(
+        `UPDATE tenant SET status = 'provisioning_failed', last_provision_log = $2, updated_at = NOW()
+         WHERE id = $1`,
+        [tenantId, errorMsg.slice(0, 5000)],
+      );
+      await this.audit.append({
+        action: 'tenant.provision',
+        actor,
+        tenantId,
+        payload: { tenantId, error: errorMsg.slice(0, 500) },
+      });
+      throw err;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Renew
+  // -------------------------------------------------------------------------
+
+  async renew(tenantId: string, days: number, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+
+    const fromStatus = tenant.status;
+    // Renew allowed from active or grace
+    if (fromStatus !== 'active' && fromStatus !== 'grace') {
+      throw new HttpException(
+        {
+          errCode: 'TENANT_RENEW_FORBIDDEN',
+          detail: `renew not allowed from status "${fromStatus}"`,
+          currentStatus: fromStatus,
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    if (!Number.isInteger(days) || days < 1) {
+      throw new BadRequestException({
+        errCode: 'TENANT_RENEW_INVALID',
+        detail: 'days must be a positive integer',
+      });
+    }
+
+    const beforeExpiresAt = tenant.expiredAt
+      ? new Date(tenant.expiredAt).toISOString()
+      : null;
+    // spec「Renewal extends subscription」：在现有 expired_at 基础上累加 days
+    // （例：10 天后到期 + renew 90 天 → 100 天后到期）；无 expired_at 时从 now 起算
+    const baseMs = beforeExpiresAt ? new Date(beforeExpiresAt).getTime() : Date.now();
+    const afterExpiresAt = new Date(
+      baseMs + days * 86_400_000,
+    ).toISOString();
+
+    // If grace → active, assert transition
+    const toStatus: string = fromStatus === 'grace' ? 'active' : fromStatus;
+    if (toStatus !== fromStatus) {
+      TenantStateMachine.assertTransition(fromStatus, toStatus as import('./tenant.entity.js').TenantStatus);
+    }
+
+    await this.pool.query(
+      `UPDATE tenant SET expired_at = $2, status = $3, updated_at = NOW() WHERE id = $1`,
+      [tenantId, afterExpiresAt, toStatus],
+    );
+
+    await this.audit.append({
+      action: 'tenant.renew',
+      actor,
+      tenantId,
+      payload: {
+        tenantId,
+        days,
+        beforeExpiresAt: beforeExpiresAt ?? null,
+        afterExpiresAt,
+      },
+    });
+
+    return this.requireTenant(tenantId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Suspend
+  // -------------------------------------------------------------------------
+
+  async suspend(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+
+    // Spec: suspend allowed from active or grace only; result status = paused
+    if (tenant.status !== 'active' && tenant.status !== 'grace') {
+      throw new HttpException(
+        {
+          errCode: 'TENANT_SUSPEND_FORBIDDEN',
+          detail: `suspend not allowed from status "${tenant.status}"`,
+          currentStatus: tenant.status,
+          action: 'suspend',
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    // Assert transition (state machine allows active|grace → paused)
+    TenantStateMachine.assertTransition(tenant.status, 'paused');
+
+    await this.pool.query(
+      `UPDATE tenant SET status = 'paused', updated_at = NOW() WHERE id = $1`,
+      [tenantId],
+    );
+
+    // docker compose stop (best-effort; if no compose dir yet, skip)
+    try {
+      await this.provisioner.stop(tenant);
+    } catch {
+      // ignore: compose dir may not exist for created tenants
+    }
+
+    await this.audit.append({
+      action: 'tenant.suspend',
+      actor,
+      tenantId,
+      payload: { tenantId },
+    });
+
+    return this.requireTenant(tenantId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Resume
+  // -------------------------------------------------------------------------
+
+  async resume(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+
+    // Spec: resume allowed only from paused
+    if (tenant.status !== 'paused') {
+      throw new HttpException(
+        {
+          errCode: 'TENANT_RESUME_FORBIDDEN',
+          detail: `resume not allowed from status "${tenant.status}"`,
+          currentStatus: tenant.status,
+          action: 'resume',
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+
+    TenantStateMachine.assertTransition('paused', 'active');
+
+    await this.pool.query(
+      `UPDATE tenant SET status = 'active', updated_at = NOW() WHERE id = $1`,
+      [tenantId],
+    );
+
+    try {
+      await this.provisioner.start(tenant);
+    } catch {
+      // ignore; instance may need re-provision
+    }
+
+    await this.audit.append({
+      action: 'tenant.resume',
+      actor,
+      tenantId,
+      payload: { tenantId },
+    });
+
+    return this.requireTenant(tenantId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Terminate
+  // -------------------------------------------------------------------------
+
+  async terminate(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+
+    // Idempotent: already terminated → return as-is
+    if (tenant.status === 'terminated') {
+      return tenant;
+    }
+
+    // Assert transition (state machine allows all non-terminal → terminated)
+    TenantStateMachine.assertTransition(tenant.status, 'terminated');
+
+    const droppedDatabase = !!tenant.databaseUrl;
+
+    // docker compose down -v (best-effort)
+    try {
+      await this.provisioner.down(tenant, true);
+    } catch {
+      // ignore
+    }
+
+    // DROP DATABASE (best-effort)
+    if (droppedDatabase) {
+      try {
+        const conn = await this.pool.connect();
+        await conn.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()');
+        await conn.query('DROP DATABASE IF EXISTS ' + tenant.databaseUrl);
+        conn.release();
+      } catch {
+        // ignore DROP DATABASE failures
+      }
+    }
+
+    await this.pool.query(
+      `UPDATE tenant SET status = 'terminated', deleted_at = NOW(), updated_at = NOW() WHERE id = $1`,
+      [tenantId],
+    );
+
+    await this.audit.append({
+      action: 'tenant.terminate',
+      actor,
+      tenantId,
+      payload: { tenantId, droppedDatabase },
+    });
+
+    return this.requireTenant(tenantId);
+  }
+
+  // -------------------------------------------------------------------------
+  // List
+  // -------------------------------------------------------------------------
+
+  async list(status?: string, limit = DEFAULT_LIMIT, offset = 0): Promise<TenantListResult> {
+    const cappedLimit = Math.min(Math.max(limit, 1), MAX_LIMIT);
+    const params: unknown[] = [];
+    const whereClauses: string[] = ['deleted_at IS NULL'];
+
+    if (status) {
+      whereClauses.push(`status = $${params.length + 1}`);
+      params.push(status);
+    }
+
+    const whereStr = whereClauses.join(' AND ');
+
+    const countRes = await this.pool.query(
+      `SELECT COUNT(*) AS cnt FROM tenant WHERE ${whereStr}`,
+      params,
+    );
+    const total = Number(countRes.rows[0].cnt);
+
+    const dataRes = await this.pool.query(
+      `SELECT id, name, status, host, port, database_url, created_at, updated_at,
+              expired_at, last_provision_log, deleted_at
+       FROM tenant WHERE ${whereStr}
+       ORDER BY created_at DESC
+       LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+      [...params, cappedLimit, offset],
+    );
+
+    return {
+      total,
+      limit: cappedLimit,
+      offset,
+      rows: dataRes.rows.map(mapTenantRow),
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // Get Detail (tenant + quota + today usage)
+  // -------------------------------------------------------------------------
+
+  async getDetail(tenantId: string): Promise<TenantDetail> {
+    const tenant = await this.requireTenant(tenantId);
+    const quota = await this.quota.getQuota(tenantId);
+    const usageToday = await this.usage.todaySummary(tenantId);
+    return { tenant, quota, usageToday };
+  }
+
+  // -------------------------------------------------------------------------
+  // Helpers
+  // -------------------------------------------------------------------------
+
+  async requireTenant(id: string): Promise<Tenant> {
+    const res = await this.pool.query(
+      `SELECT id, name, status, host, port, database_url, created_at, updated_at,
+              expired_at, last_provision_log, deleted_at
+       FROM tenant WHERE id = $1 AND deleted_at IS NULL`,
+      [id],
+    );
+    if (res.rows.length === 0) {
+      throw new NotFoundException({
+        errCode: 'TENANT_NOT_FOUND',
+        detail: `tenant ${id} not found`,
+      });
+    }
+    return mapTenantRow(res.rows[0]);
+  }
+
+  /** Allow tests to inject a custom provisioner */
+  setProvisioner(p: TenantProvisioner): void {
+    this.provisioner = p;
+  }
+}
+
+function mapTenantRow(row: Record<string, unknown>): Tenant {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    status: String(row.status) as Tenant['status'],
+    host: row.host === null || row.host === undefined ? null : String(row.host),
+    port: row.port === null || row.port === undefined ? null : Number(row.port),
+    databaseUrl:
+      row.database_url === null || row.database_url === undefined
+        ? null
+        : String(row.database_url),
+    createdAt: new Date(row.created_at as string).toISOString(),
+    updatedAt: new Date(row.updated_at as string).toISOString(),
+    expiredAt:
+      row.expired_at === null || row.expired_at === undefined
+        ? null
+        : new Date(row.expired_at as string).toISOString(),
+    lastProvisionLog:
+      row.last_provision_log === null || row.last_provision_log === undefined
+        ? null
+        : String(row.last_provision_log),
+    deletedAt:
+      row.deleted_at === null || row.deleted_at === undefined
+        ? null
+        : new Date(row.deleted_at as string).toISOString(),
+  };
+}
+
+function provisionerPath(tenantId: string): string {
+  return ConfigService.instance.PLATFORM_COMPOSE_DIR + '/' + tenantId + '/docker-compose.yml';
+}

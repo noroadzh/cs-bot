@@ -49,7 +49,7 @@ describe('AssetController', () => {
         file: { buffer: Buffer.from('abc'), originalname: 'demo.png', mimetype: 'image/png' },
       } as never;
 
-      const res = await controller.create(req);
+      const res = await controller.create((req as any).body, req);
 
       expect(res).toEqual({ success: true, asset: SAMPLE });
       expect(service.createFromFile).toHaveBeenCalledWith(
@@ -65,7 +65,7 @@ describe('AssetController', () => {
         body: {},
       } as never;
 
-      await expect(controller.create(req)).rejects.toMatchObject({
+      await expect(controller.create((req as any).body, req)).rejects.toMatchObject({
         status: HttpStatus.BAD_REQUEST,
       });
     });
@@ -73,13 +73,13 @@ describe('AssetController', () => {
     it('JSON 缺 url → 400', async () => {
       const req = makeReq({ 'content-type': 'application/json' }, { name: 'only-name' });
 
-      await expect(controller.create(req)).rejects.toThrow(HttpException);
+      await expect(controller.create((req as any).body, req)).rejects.toThrow(HttpException);
     });
 
     it('JSON 缺 name → 400', async () => {
       const req = makeReq({ 'content-type': 'application/json' }, { url: 'https://x/y.pdf' });
 
-      await expect(controller.create(req)).rejects.toThrow(HttpException);
+      await expect(controller.create((req as any).body, req)).rejects.toThrow(HttpException);
     });
 
     it('JSON 带 url+name → 创建 link 类型素材', async () => {
@@ -88,7 +88,7 @@ describe('AssetController', () => {
         { url: 'https://x/y.pdf', name: '手册.pdf' },
       );
 
-      const res = await controller.create(req);
+      const res = await controller.create((req as any).body, req);
 
       expect(res.success).toBe(true);
       expect((res as { asset: Asset }).asset.type).toBe('link');
@@ -109,7 +109,7 @@ describe('AssetController', () => {
         file: { buffer: Buffer.alloc(1), originalname: 'big.mp4', mimetype: 'video/mp4' },
       } as never;
 
-      await expect(controller.create(req)).rejects.toMatchObject({
+      await expect(controller.create((req as any).body, req)).rejects.toMatchObject({
         status: HttpStatus.PAYLOAD_TOO_LARGE,
       });
     });
@@ -128,7 +128,7 @@ describe('AssetController', () => {
         file: { buffer: Buffer.from('x'), originalname: 'a.exe', mimetype: 'application/x-msdownload' },
       } as never;
 
-      await expect(controller.create(req)).rejects.toMatchObject({
+      await expect(controller.create((req as any).body, req)).rejects.toMatchObject({
         status: HttpStatus.UNSUPPORTED_MEDIA_TYPE,
       });
     });
@@ -136,20 +136,20 @@ describe('AssetController', () => {
 
   describe('GET /admin/assets', () => {
     it('默认分页 50/0', async () => {
-      const res = await controller.list(undefined, undefined);
+      const res = await controller.list({});
 
       expect(res).toEqual({ success: true, total: 1, limit: 50, offset: 0, assets: [SAMPLE] });
       expect(service.findAll).toHaveBeenCalledWith({ limit: undefined, offset: undefined });
     });
 
     it('解析 limit/offset 字符串为整数', async () => {
-      await controller.list('20', '40');
+      await controller.list({ limit: '20', offset: '40' });
 
       expect(service.findAll).toHaveBeenCalledWith({ limit: 20, offset: 40 });
     });
 
     it('非法数字回退为 undefined（由 service 归一化）', async () => {
-      await controller.list('abc', 'xyz');
+      await controller.list({ limit: 'abc', offset: 'xyz' });
 
       expect(service.findAll).toHaveBeenCalledWith({ limit: undefined, offset: undefined });
     });

@@ -5,6 +5,7 @@ import { AdminGuard } from './admin.guard.js';
 import { ConfigService } from '../config/config.service.js';
 import { TriggerService } from '../routing/trigger.service.js';
 import { maskPII } from '@cs-bot/shared';
+import { ConfigCheckDto, ConfigReloadDto, KeywordsReloadDto } from './dto/admin-responses.dto.js';
 
 const SECRET_KEYS = [
   'WECHAT_AGENT_SECRET', 'WECHAT_TOKEN', 'WECHAT_ENCODING_AES_KEY',
@@ -30,7 +31,7 @@ export class ConfigController {
 
   @Get('config-check')
   @ApiOperation({ summary: '配置自检' })
-  @ApiResponse({ status: 200, description: '各配置项的存在性与掩码值' })
+  @ApiResponse({ status: 200, type: ConfigCheckDto, description: '各配置项的存在性与掩码值' })
   @ApiResponse({ status: 401, description: 'Basic Auth 认证失败' })
   check() {
     const check: Record<string, { present: boolean; masked?: string }> = {};
@@ -49,7 +50,7 @@ export class ConfigController {
 
   @Post('config/reload')
   @ApiOperation({ summary: '重载配置' })
-  @ApiResponse({ status: 201, description: '重载成功，返回关键词数量' })
+  @ApiResponse({ status: 201, type: ConfigReloadDto, description: '重载成功，返回关键词数量' })
   reload() {
     const count = this.trigger.reload();
     return { reloaded: true, keywords: count };
@@ -57,7 +58,7 @@ export class ConfigController {
 
   @Post('keywords/reload')
   @ApiOperation({ summary: '热重载关键词词典' })
-  @ApiResponse({ status: 201, description: '重载成功' })
+  @ApiResponse({ status: 201, type: KeywordsReloadDto, description: '重载成功' })
   reloadKeywords() {
     const count = this.trigger.reload();
     return { reloaded: true, count };

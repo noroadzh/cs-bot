@@ -6,10 +6,11 @@ import { FilterModule } from '../filter/filter.module.js';
 import { MissModule } from '../miss/miss.module.js';
 import { MediaModule } from '../media/media.module.js';
 import { WecomModule } from '../wecom/wecom.module.js';
+import { ApprovedQaService } from './approved-qa.service.js';
 
 @Module({
   imports: [QaEngineModule, ContextModule, FilterModule, MissModule, MediaModule, WecomModule],
-  providers: [QaOrchestrator],
+  providers: [QaOrchestrator, ApprovedQaService],
   exports: [QaOrchestrator],
 })
 export class QaModule {}

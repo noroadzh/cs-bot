@@ -23,6 +23,8 @@ export class ConfigService implements OnModuleInit {
   }
 
   onModuleInit() {
+    // 若 _instance 已由测试的 setConfig() 注入，跳过 process.env 读取
+    if (ConfigService._instance) return;
     const result = AppConfigSchema.safeParse(process.env);
     if (!result.success) {
       console.error('[ConfigService] 环境变量校验失败：');

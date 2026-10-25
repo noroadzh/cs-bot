@@ -90,6 +90,19 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // Bot user
   WECHAT_BOT_USER_ID: EnvString.optional().default(''),
+
+  // Swagger docs (production: disable via SWAGGER_ENABLED=false)
+  SWAGGER_ENABLED: EnvBool(true),
+
+  // Import (M10)
+  IMPORT_MAX_FILE_BYTES: EnvInt(10 * 1024 * 1024), // 10MB
+  IMPORT_MAX_FILE_BYTES_URL: EnvInt(10 * 1024 * 1024), // 10MB (URL fetch)
+  MOCK_REDACTION: EnvBool(false),
+
+  // Platform (M11) — PLATFORM_ENABLED=false 时 platform 路由整体关闭
+  PLATFORM_ENABLED: EnvBool(false),
+  PLATFORM_COMPOSE_DIR: EnvString.default('data/tenants'),
+  PLATFORM_PROVISION_TIMEOUT_MS: EnvInt(120000), // 120s
 }));
 
 export type AppConfigInput = z.infer<typeof AppConfigSchema>;

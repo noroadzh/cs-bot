@@ -19,6 +19,8 @@ import { MediaModule } from './media/media.module.js';
 import { UsageModule } from './usage/usage.module.js';
 import { AdminModule } from './admin/admin.module.js';
 import { HealthModule } from './health/health.module.js';
+import { ImportModule } from './import/import.module.js';
+import { PlatformModule } from './platform/platform.module.js';
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { HealthModule } from './health/health.module.js';
     UsageModule,
     AdminModule,
     HealthModule,
+    ImportModule,
+    PlatformModule.forRoot(),
   ],
 })
 export class AppModule implements OnModuleInit {

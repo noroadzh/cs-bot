@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'fs';
 import { Injectable } from '@nestjs/common';
 import { Ok, type IQAEngine, type AskReq, type AskResult, type AskResp } from '@cs-bot/shared';
 import { AppLogger } from '../common/logger.js';
+import { ApprovedQaService } from './approved-qa.service.js';
 
 interface MockPair { question: string; answer: string; keywords: string[]; score: number; }
 
@@ -12,9 +13,11 @@ export class MockQaEngine implements IQAEngine {
   private readonly logger = new AppLogger('MockQaEngine');
   private pairs: MockPair[] = [];
   private readonly file: string;
+  private readonly approvedQa: ApprovedQaService;
 
-  constructor(file?: string) {
+  constructor(file?: string, approvedQaService?: ApprovedQaService) {
     this.file = file ?? process.env.MOCK_QA_FILE ?? 'config/mock-qa.json';
+    this.approvedQa = approvedQaService ?? new ApprovedQaService();
     this.load();
   }
 
@@ -33,6 +36,13 @@ export class MockQaEngine implements IQAEngine {
   }
 
   async ask(req: AskReq): Promise<AskResult> {
+    // 优先级 1: approved_qa（已审核 QA 始终优先于 mock 数据）
+    const approved = await this.approvedQa.search(req.question);
+    if (approved) {
+      this.logger.log({ detail: 'approved-qa-hit', question: req.question.slice(0, 50) });
+      return new Ok({ answer: approved.answer, quotes: [], score: 1.0, source: 'primary' });
+    }
+
     const q = req.question.trim();
     let best: MockPair | null = null;
     let bestScore = 0;

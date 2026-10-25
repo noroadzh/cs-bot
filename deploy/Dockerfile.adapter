@@ -81,6 +81,11 @@ COPY --from=builder /app/packages/shared/dist/ /app/packages/shared/dist/
 COPY --from=assets /assets/packages/license-native/prebuilds/ /app/packages/license-native/prebuilds/
 COPY --from=builder /app/apps/adapter/src/miss/001-miss-record.sql /app/migrate/001-miss-record.sql
 COPY --from=builder /app/apps/adapter/src/media/002-asset.sql /app/migrate/002-asset.sql
+COPY --from=builder /app/apps/adapter/src/license/003-licensed-chat.sql /app/migrate/003-licensed-chat.sql
+COPY --from=builder /app/apps/adapter/src/import/004-import-job.sql /app/migrate/004-import-job.sql
+COPY --from=builder /app/apps/adapter/src/import/005-approved-qa.sql /app/migrate/005-approved-qa.sql
+COPY --from=builder /app/apps/adapter/src/import/006-import-job-stored-path.sql /app/migrate/006-import-job-stored-path.sql
+COPY --from=builder /app/apps/adapter/src/platform/007-tenant.sql /app/migrate/007-tenant.sql
 COPY --from=builder /app/config /app/config
 
 ENV NODE_ENV=production

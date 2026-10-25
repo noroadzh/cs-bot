@@ -171,4 +171,70 @@ describe('FastGPTQaEngine', () => {
     expect(url).toBe('/api/v1/chat/completions');
     expect(body.model).toBe('fastgpt');
   });
+
+  // --- approved_qa fallback 测试 ---
+  it('primary 返回低分 → fallback 到 approved_qa 命中', async () => {
+    // mock primary 返回低分
+    post.mockResolvedValueOnce({ data: { choices: [{ message: { content: 'low' } }], data: [{ score: 0.3 }] } });
+    // mock approved_qa 命中
+    const mockApprovedQa = {
+      search: jest.fn<() => Promise<{ question: string; answer: string } | null>>().mockResolvedValue({ question: '怎么退款', answer: '30天内可退' })
+    };
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const engine = new FastGPTQaEngine(ConfigService as any, mockApprovedQa as any);
+
+    const value = expectOk(await engine.ask(req({ question: '退款政策' })));
+
+    expect(value.answer).toBe('30天内可退');
+    expect(value.source).toBe('approved');
+    expect(value.score).toBe(1.0);
+  });
+
+  it('primary 失败 + fallback 失败 → fallback 到 approved_qa', async () => {
+    post
+      .mockRejectedValueOnce(new Error('ECONNREFUSED')) // primary
+      .mockRejectedValueOnce(new Error('ECONNREFUSED')); // fallback
+    const mockApprovedQa = {
+      search: jest.fn<() => Promise<{ question: string; answer: string } | null>>().mockResolvedValue({ question: '退款', answer: '请联系客服' })
+    };
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const engine = new FastGPTQaEngine(ConfigService as any, mockApprovedQa as any);
+
+    const value = expectOk(await engine.ask(req({ question: '退款' })));
+
+    expect(value.answer).toBe('请联系客服');
+    expect(value.source).toBe('approved');
+  });
+
+  it('primary 返回高分 → 仍走 approved_qa（但 approved_qa 无结果时才用 primary）', async () => {
+    post.mockResolvedValueOnce({ data: { choices: [{ message: { content: '高分答案' } }], data: [{ score: 0.9 }] } });
+    const mockApprovedQa = {
+      search: jest.fn<(question: string) => Promise<{ question: string; answer: string } | null>>().mockResolvedValue(null)
+    };
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const engine = new FastGPTQaEngine(ConfigService as any, mockApprovedQa as any);
+
+    const value = expectOk(await engine.ask(req({ question: '测试' })));
+
+    expect(mockApprovedQa.search).toHaveBeenCalledWith('测试');
+    expect(value.source).toBe('primary');
+  });
+
+  it('所有 LLM 和 approved_qa 都无结果 → 返回 primary 结果（即使是低分）', async () => {
+    post.mockResolvedValueOnce({ data: { choices: [{ message: { content: '空答案' } }], data: [{ score: 0.2 }] } });
+    const mockApprovedQa = {
+      search: jest.fn<() => Promise<{ question: string; answer: string } | null>>().mockResolvedValue(null)
+    };
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const engine = new FastGPTQaEngine(ConfigService as any, mockApprovedQa as any);
+
+    const value = expectOk(await engine.ask(req({ question: '测试' })));
+
+    expect(value.answer).toBe('空答案');
+    expect(value.source).toBe('primary');
+  });
 });

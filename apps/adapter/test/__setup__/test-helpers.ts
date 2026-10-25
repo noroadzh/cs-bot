@@ -47,6 +47,12 @@ export const MOCK_CONFIG = {
   KEYWORDS_FILE: '',
   WECHAT_BOT_USER_ID: '',
   LOG_LEVEL: 'info',
+  SWAGGER_ENABLED: true,
+  IMPORT_MAX_FILE_BYTES: 10 * 1024 * 1024,
+  IMPORT_MAX_FILE_BYTES_URL: 10 * 1024 * 1024,
+  PLATFORM_ENABLED: false,
+  PLATFORM_COMPOSE_DIR: 'data/tenants',
+  PLATFORM_PROVISION_TIMEOUT_MS: 120000,
 } satisfies Record<string, unknown>;
 
 export function setConfig(overrides: Partial<Record<string, unknown>> = {}): void {

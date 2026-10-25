@@ -6,11 +6,19 @@ import {
   Controller, Get, Post, Delete, Body, Param, Query,
   UseGuards, HttpException, HttpStatus, Req, ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { AdminGuard } from '../admin/admin.guard.js';
 import { AssetService } from './asset.service.js';
 import type { Asset, AssetListQuery } from './asset.entity.js';
+import {
+  AssetCreateResponseDto,
+  AssetListResponseDto,
+  AssetGetResponseDto,
+  AssetDeleteResponseDto,
+} from './dto/asset-response.dto.js';
+import { AssetListQueryDto } from './dto/asset-list-query.dto.js';
+import { AssetCreateFromLinkDto } from './dto/asset-create.dto.js';
 
 /** 解析分页参数：字符串→正整数，无效或非正数返回 undefined */
 function toPositiveInt(v?: string): number | undefined {
@@ -32,10 +40,27 @@ export class AssetController {
    */
   @Post()
   @ApiOperation({ summary: '创建素材（multipart 上传或 JSON url+name）' })
-  @ApiResponse({ status: 201, description: '创建成功，返回素材记录' })
-  @ApiResponse({ status: 400, description: '缺少文件或缺少 url/name 字段' })
+  @ApiConsumes('multipart/form-data', 'application/json')
+  @ApiBody({
+    description: 'multipart 上传（file 字段）或 JSON AssetCreateFromLinkDto',
+    schema: {
+      oneOf: [
+        {
+          type: 'object',
+          properties: { file: { type: 'string', format: 'binary' } },
+          required: ['file'],
+        },
+        { $ref: '#/components/schemas/AssetCreateFromLinkDto' },
+      ],
+    },
+  })
+  @ApiResponse({ status: 201, type: AssetCreateResponseDto, description: '创建成功，返回素材记录' })
+  @ApiResponse({ status: 400, description: '缺少文件或缺少 url/name 字段（errCode: NO_FILE / MISSING_REQUIRED_FIELDS）' })
   @ApiResponse({ status: 401, description: 'Basic Auth 认证失败' })
-  async create(@Req() req: Request) {
+  async create(
+    @Body() body: AssetCreateFromLinkDto,
+    @Req() req: Request,
+  ) {
     const contentType = req.headers['content-type'] ?? '';
 
     // Handle multipart file upload
@@ -54,7 +79,6 @@ export class AssetController {
     }
 
     // Handle JSON body (URL-based asset)
-    const body = req.body as { url?: string; name?: string };
     if (!body.url || !body.name) {
       throw new HttpException(
         { errCode: 'MISSING_REQUIRED_FIELDS', detail: 'url and name required' },
@@ -72,18 +96,17 @@ export class AssetController {
    */
   @Get()
   @ApiOperation({ summary: '分页列出素材' })
-  @ApiResponse({ status: 200, description: '返回 total/limit/offset/assets' })
+  @ApiResponse({ status: 200, type: AssetListResponseDto, description: '返回 total/limit/offset/assets' })
   @ApiResponse({ status: 401, description: 'Basic Auth 认证失败' })
   async list(
-    @Query('limit') limit?: string,
-    @Query('offset') offset?: string,
+    @Query() query: AssetListQueryDto,
   ) {
-    const query: AssetListQuery = {
-      limit: toPositiveInt(limit),
-      offset: toPositiveInt(offset),
+    const queryObj: AssetListQuery = {
+      limit: toPositiveInt(query.limit),
+      offset: toPositiveInt(query.offset),
     };
 
-    const result = await this.assetService.findAll(query);
+    const result = await this.assetService.findAll(queryObj);
     return {
       success: true,
       total: result.total,
@@ -99,7 +122,8 @@ export class AssetController {
    */
   @Get(':id')
   @ApiOperation({ summary: '按 id 查询素材' })
-  @ApiResponse({ status: 200, description: '返回素材' })
+  @ApiParam({ name: 'id', format: 'uuid', description: '素材 id' })
+  @ApiResponse({ status: 200, type: AssetGetResponseDto, description: '返回素材' })
   @ApiResponse({ status: 404, description: 'ASSET_NOT_FOUND' })
   @ApiResponse({ status: 401, description: 'Basic Auth 认证失败' })
   async get(@Param('id', ParseUUIDPipe) id: string) {
@@ -116,7 +140,8 @@ export class AssetController {
    */
   @Delete(':id')
   @ApiOperation({ summary: '按 id 删除素材' })
-  @ApiResponse({ status: 200, description: '删除成功' })
+  @ApiParam({ name: 'id', format: 'uuid', description: '素材 id' })
+  @ApiResponse({ status: 200, type: AssetDeleteResponseDto, description: '删除成功' })
   @ApiResponse({ status: 404, description: 'ASSET_NOT_FOUND' })
   @ApiResponse({ status: 401, description: 'Basic Auth 认证失败' })
   async delete(@Param('id', ParseUUIDPipe) id: string) {

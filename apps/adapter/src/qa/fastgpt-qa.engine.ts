@@ -2,7 +2,8 @@
 import axios, { AxiosInstance } from 'axios';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
-import { Err, ErrCode, type IQAEngine, type AskReq, type AskResult } from '@cs-bot/shared';
+import { Err, Ok, ErrCode, type IQAEngine, type AskReq, type AskResult } from '@cs-bot/shared';
+import { ApprovedQaService } from './approved-qa.service.js';
 
 export class FastGPTQaEngine implements IQAEngine {
   readonly mode: 'fastgpt' = 'fastgpt';
@@ -10,8 +11,9 @@ export class FastGPTQaEngine implements IQAEngine {
   private readonly fallback: AxiosInstance | null;
   private readonly logger = new AppLogger('FastGPTQaEngine');
   private readonly cfg = ConfigService.instance;
+  private readonly approvedQa: ApprovedQaService;
 
-  constructor(_config: ConfigService) {
+  constructor(_config: ConfigService, approvedQaService?: ApprovedQaService) {
     this.primary = axios.create({
       baseURL: this.cfg.FASTGPT_BASE_URL,
       timeout: this.cfg.LLM_TIMEOUT_MS,
@@ -29,18 +31,39 @@ export class FastGPTQaEngine implements IQAEngine {
     } else {
       this.fallback = null;
     }
+    // approved_qa fallback: FastGPT 检索无结果时查询本地已审核 QA
+    this.approvedQa = approvedQaService ?? new ApprovedQaService();
   }
 
   async ask(req: AskReq): Promise<AskResult> {
+    // 优先级 1: approved_qa（已审核 QA 始终优先于 LLM）
+    const approved = await this.approvedQa.search(req.question);
+    if (approved) {
+      this.logger.log({ detail: 'approved-qa-hit', question: req.question.slice(0, 50) });
+      return new Ok({ answer: approved.answer, quotes: [], score: 1.0, source: 'approved' });
+    }
+
+    // 优先级 2: primary LLM
     const primaryResp = await this.call(this.primary, req, 'primary');
+    if (primaryResp.ok && primaryResp.value.score >= this.cfg.CONFIDENCE_THRESHOLD) {
+      return primaryResp;
+    }
+
+    // 优先级 3: fallback LLM
+    if (this.fallback) {
+      const fallbackResp = await this.call(this.fallback, req, 'fallback');
+      if (fallbackResp.ok && fallbackResp.value.score >= this.cfg.CONFIDENCE_THRESHOLD) {
+        return fallbackResp;
+      }
+    }
+
+    // 兜底：返回任何可用的 LLM 结果（即使是低分）
     if (primaryResp.ok) return primaryResp;
-    if (!this.fallback) return primaryResp;
-    // ts-jest 跑的是非 strict 模式，`primaryResp.ok` 不会窄化类型。
-    // 显式断言到 Err 侧以读取 .error（与 Result 判别联合的运行时形状一致）。
-    const rawErr: unknown = (primaryResp as Err<{ code: number; message: string }>).error;
-    const errMsg = rawErr instanceof Error ? rawErr.message : String(rawErr);
-    this.logger.warn({ detail: 'fallback-trigger', primaryErr: errMsg });
-    return await this.call(this.fallback, req, 'fallback');
+    if (this.fallback) {
+      const fallbackResp = await this.call(this.fallback, req, 'fallback');
+      if (fallbackResp.ok) return fallbackResp;
+    }
+    return primaryResp;
   }
 
   private async call(client: AxiosInstance, req: AskReq, source: 'primary' | 'fallback'): Promise<AskResult> {

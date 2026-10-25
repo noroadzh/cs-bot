@@ -190,6 +190,12 @@ cp .env.template .env && chmod 600 .env && vim .env
 | MISS_RECORD_RETENTION_DAYS | | 90 | 未命中记录保留期 |
 | ASSET_MAX_FILE_MB / ASSET_MAX_VIDEO_MB | | 20 / 10 | 素材上限（增项 A） |
 | IMPORT_MAX_MSGS / IMPORT_MAX_FILE_MB | | 50000 / 200 | 导入上限（增项 B） |
+| IMPORT_MAX_FILE_BYTES | | 10485760 | 知识导入单文件大小上限（字节，默认 10MB）（M10） |
+| IMPORT_MAX_FILE_BYTES_URL | | 10485760 | 知识导入 URL 抓取大小上限（字节，默认 10MB）（M10） |
+| MOCK_REDACTION | | false | 脱敏 mock 开关（默认 false，命中仍写 flag 但不替换文本） |
+| PLATFORM_ENABLED | | false | 多租户控制面开关（默认 false，关闭后 /platform/* 路由整体 404）（M11） |
+| PLATFORM_COMPOSE_DIR | | data/tenants | 租户实例 compose 落盘目录（默认 data/tenants）（M11） |
+| PLATFORM_PROVISION_TIMEOUT_MS | | 120000 | 租户实例健康探测超时（毫秒，默认 120s）（M11） |
 | MODEL_MODE | | cloud | 模型通道：cloud（基线）/ hybrid（本地优先+云兑底）/ local（全本地）（增项 D） |
 | LOCAL_LLM_BASE_URL | | http://vllm:8000/v1 | 本地推理端点（增项 D） |
 | LOCAL_EMBEDDING_URL | | http://xinference:9997 | 本地 embedding 端点（增项 D） |
@@ -219,6 +225,22 @@ cp /path/license.lic license/ && chmod 600 license/license.lic
 docker compose up -d
 docker compose ps        # 期望 6 个容器全部 Up / healthy
 ```
+
+### 7.5.1 数据库迁移（追加式 SQL）
+
+数据库结构变更以「追加式编号 SQL」落地，按文件名升序执行，不再二次迁移历史文件：
+
+| 编号 | 文件 | 内容 | 适用版本 |
+|---|---|---|---|
+| 001 | `apps/adapter/src/miss/001-miss-record.sql` | 未命中记录表 | MVP 基线 |
+| 002 | `apps/adapter/src/media/002-asset.sql` | 素材表 | MVP 基线 |
+| 003 | `apps/adapter/src/license/003-licensed-chat.sql` | 授权会话表 | MVP 基线 |
+| 004 | `apps/adapter/src/import/004-import-job.sql` | 知识导入 `import_job` / `import_item` | M10 |
+| 005 | `apps/adapter/src/import/005-approved-qa.sql` | 审核通过 QA 语料表 | M10 |
+| 006 | `apps/adapter/src/import/006-import-job-stored-path.sql` | `import_job` 增加落盘路径列 | M10 |
+| 007 | `apps/adapter/src/platform/007-tenant.sql` | 租户 `tenant` / `tenant_quota` / `tenant_usage_daily` / `platform_audit_log` | M11 |
+
+> **应用方式**：全新安装时上述 SQL 已随 `docker compose` 挂载到 `pg` 容器的 `/docker-entrypoint-initdb.d/`，首启按编号自动执行；存量升级时 `docker exec -i pg psql -U <用户> -d <库>` 依次执行 `/app/migrate/*.sql`（镜像内按编号排序）。M10/M11 默认 `PLATFORM_ENABLED=false` 时不要求创建租户表，但建议随版本一并执行以保持结构一致。
 
 ### 7.6 初始化自检
 
@@ -382,6 +404,14 @@ CONTEXT_TTL_SEC=600
 LLM_TIMEOUT_MS=15000
 MISS_RECORD_RETENTION_DAYS=90
 USAGE_REPORT_ENABLED=false
+# ---- 知识导入（M10，默认即可）----
+IMPORT_MAX_FILE_BYTES=10485760
+IMPORT_MAX_FILE_BYTES_URL=10485760
+MOCK_REDACTION=false
+# ---- 多租户控制面（M11，默认关闭；SaaS 形态开启）----
+PLATFORM_ENABLED=false
+PLATFORM_COMPOSE_DIR=data/tenants
+PLATFORM_PROVISION_TIMEOUT_MS=120000
 # ---- 用量上报（SaaS 形态填；私有化留空）----
 USAGE_WEBHOOK_URL=
 USAGE_REPORT_INTERVAL_MS=86400000

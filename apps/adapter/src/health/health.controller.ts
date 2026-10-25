@@ -4,6 +4,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Redis } from 'ioredis';
 import type { Client as PgClient } from 'pg';
 import { LicenseService } from '../license/license.service.js';
+import { HealthResponseDto, HealthDegradedResponseDto } from '../common/dto/health-response.dto.js';
 
 @ApiTags('health')
 @Controller()
@@ -16,8 +17,8 @@ export class HealthController {
 
   @Get('healthz')
   @ApiOperation({ summary: '健康检查' })
-  @ApiResponse({ status: 200, description: '所有依赖正常' })
-  @ApiResponse({ status: 503, description: '服务降级，部分依赖不可用' })
+  @ApiResponse({ status: 200, type: HealthResponseDto, description: '所有依赖正常' })
+  @ApiResponse({ status: 503, type: HealthDegradedResponseDto, description: '服务降级，部分依赖不可用' })
   async check() {
     const deps: string[] = [];
     try {
