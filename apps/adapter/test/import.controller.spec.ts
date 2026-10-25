@@ -107,7 +107,26 @@ describe('ImportController', () => {
       expect(callArg.mimeType).toBe('text/csv');
       expect(Buffer.isBuffer(callArg.bytes)).toBe(true);
       expect(callArg.name).toBe('x');
-      expect(res.job.id).toBe('job-1');
+      expect(res.id).toBe('job-1');
+      // 内部字段不外泄
+      expect((res as any).storedPath).toBeUndefined();
+      expect((res as any).mimeType).toBeUndefined();
+    });
+
+    it('同源短路（reused）→ 409 IMPORT_SOURCE_DUPLICATE + existingJobId', async () => {
+      svc.createFromFile.mockResolvedValue({
+        job: { id: 'job-existing', name: 'a.csv', sourceFilename: 'a.csv', status: 'parsed', sourceHash: 'h', itemCount: 1, parseError: null, createdAt: '', updatedAt: '' },
+        reused: true,
+        storedPath: '',
+        mimeType: 'text/csv',
+      } as ImportJobCreated);
+      const err = (await ctrl
+        .createFromFile({} as any, file as any, 'x')
+        .catch((e: Error) => e)) as HttpException;
+      expect(err.getStatus()).toBe(HttpStatus.CONFLICT);
+      const body = err.getResponse() as { errCode: string; existingJobId: string };
+      expect(body.errCode).toBe('IMPORT_SOURCE_DUPLICATE');
+      expect(body.existingJobId).toBe('job-existing');
     });
   });
 
@@ -185,7 +204,7 @@ describe('ImportController', () => {
       } as ImportJobCreated);
       const res = await ctrl.createFromUrl({ url: 'https://example.com/a.csv', name: undefined });
       expect(svc.createFromUrl).toHaveBeenCalledWith('https://example.com/a.csv', undefined);
-      expect(res.job.id).toBe('j-url');
+      expect(res.id).toBe('j-url');
     });
   });
 

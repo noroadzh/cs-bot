@@ -53,6 +53,7 @@ export const MOCK_CONFIG = {
   PLATFORM_ENABLED: false,
   PLATFORM_COMPOSE_DIR: 'data/tenants',
   PLATFORM_PROVISION_TIMEOUT_MS: 120000,
+  TENANT_ID: '',
 } satisfies Record<string, unknown>;
 
 export function setConfig(overrides: Partial<Record<string, unknown>> = {}): void {

@@ -18,11 +18,11 @@
 import {
   Controller, Post, Get, Delete, Patch, Body, Param, Query,
   UseGuards, BadRequestException, HttpStatus, HttpCode, Req,
-  UploadedFile, UseInterceptors, NotFoundException,
+  UploadedFile, UseInterceptors, NotFoundException, ConflictException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
-import { ImportJobService } from './import-job.service.js';
+import { ImportJobService, type ImportJobCreated } from './import-job.service.js';
 import type {
   ImportJobListQuery,
   ImportItemListQuery,
@@ -59,12 +59,14 @@ export class ImportController {
     if (!file || !file.buffer) {
       throw new BadRequestException({ errCode: 'IMPORT_NO_FILE', detail: 'no file uploaded' });
     }
-    return this.service.createFromFile({
-      filename: file.originalname,
-      mimeType: file.mimetype,
-      bytes: file.buffer,
-      name,
-    });
+    return this.toCreatedResponse(
+      await this.service.createFromFile({
+        filename: file.originalname,
+        mimeType: file.mimetype,
+        bytes: file.buffer,
+        name,
+      }),
+    );
   }
 
   /** POST /admin/import-jobs/from-url — 远程抓取 */
@@ -75,7 +77,29 @@ export class ImportController {
     if (!body.url) {
       throw new BadRequestException({ errCode: 'IMPORT_URL_MISSING', detail: 'url is required' });
     }
-    return this.service.createFromUrl(body.url, body.name);
+    return this.toCreatedResponse(await this.service.createFromUrl(body.url, body.name));
+  }
+
+  /**
+   * 创建响应投影：只暴露 spec 约定的顶层字段，剥离内部字段
+   * （storedPath / mimeType 属内部解析用，泄露 = 任意文件读取面）。
+   * 同源短路（reused）按 spec 返回 409 + existingJobId。
+   */
+  private toCreatedResponse(result: ImportJobCreated): {
+    id: string;
+    name: string;
+    sourceFilename: string;
+    status: string;
+  } {
+    if (result.reused) {
+      throw new ConflictException({
+        errCode: 'IMPORT_SOURCE_DUPLICATE',
+        existingJobId: result.job.id,
+        detail: 'same source already imported',
+      });
+    }
+    const { id, name, sourceFilename, status } = result.job;
+    return { id, name, sourceFilename, status };
   }
 
   // -------------------------------------------------------------------------

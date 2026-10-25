@@ -453,9 +453,12 @@ describe('ImportController (supertest)', () => {
         .field('name', 'my-import')
         .attach('file', buf, { filename: 'qa.csv', contentType: 'text/csv' });
       expect(res.status).toBe(201);
-      expect(res.body.job.id).toBeDefined();
-      expect(res.body.job.status).toBe('uploaded');
-      expect(res.body.job.sourceFilename).toBe('qa.csv');
+      expect(res.body.id).toBeDefined();
+      expect(res.body.status).toBe('uploaded');
+      expect(res.body.sourceFilename).toBe('qa.csv');
+      // 内部字段不得出现在 API 响应（storedPath 泄露 = 任意文件读取面）
+      expect(res.body.storedPath).toBeUndefined();
+      expect(res.body.mimeType).toBeUndefined();
     });
 
     it('文件超过 IMPORT_MAX_FILE_BYTES → 413 IMPORT_FILE_TOO_LARGE，不落盘不建 job', async () => {
@@ -497,8 +500,8 @@ describe('ImportController (supertest)', () => {
           .set('Authorization', auth)
           .send({ url: 'https://example.com/qa.csv', name: 'url-import' });
         expect(res.status).toBe(201);
-        expect(res.body.job.id).toBeDefined();
-        expect(res.body.job.status).toBe('uploaded');
+        expect(res.body.id).toBeDefined();
+        expect(res.body.status).toBe('uploaded');
       } finally {
         global.fetch = origFetch;
       }

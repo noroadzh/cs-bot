@@ -103,6 +103,9 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_ENABLED: EnvBool(false),
   PLATFORM_COMPOSE_DIR: EnvString.default('data/tenants'),
   PLATFORM_PROVISION_TIMEOUT_MS: EnvInt(120000), // 120s
+
+  // 当前实例所属租户（形态 B：每租户一实例）。空 = 数据面不做 tenant 配额/状态准入。
+  TENANT_ID: EnvString.optional().default(''),
 }));
 
 export type AppConfigInput = z.infer<typeof AppConfigSchema>;

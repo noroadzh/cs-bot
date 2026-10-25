@@ -13,6 +13,7 @@ import { LicenseGuard } from './license.guard.js';
 import { LicenseAlertService } from './license-alert.service.js';
 import { LicensedChatService } from './licensed-chat.service.js';
 import { LicenseGateService } from './license-gate.service.js';
+import { TenantGateService } from './tenant-gate.service.js';
 import { LicenseRuntimeScheduler } from './license-runtime.scheduler.js';
 
 @Module({
@@ -22,6 +23,7 @@ import { LicenseRuntimeScheduler } from './license-runtime.scheduler.js';
     LicenseAlertService,
     LicensedChatService,
     LicenseGateService,
+    TenantGateService,
     LicenseRuntimeScheduler,
   ],
   exports: [

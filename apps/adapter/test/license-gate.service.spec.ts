@@ -27,8 +27,8 @@ function makeLicenseState(valid = true) {
   };
 }
 
-function makeDeps(over: { valid?: boolean; count?: number; maxChats?: number; ensureThrow?: Error } = {}) {
-  const { valid = true, count = 0, maxChats = 100, ensureThrow } = over;
+function makeDeps(over: { valid?: boolean; count?: number; maxChats?: number; ensureThrow?: Error; tenantReason?: string } = {}) {
+  const { valid = true, count = 0, maxChats = 100, ensureThrow, tenantReason } = over;
   const licenseService = {
     getState: () => makeLicenseState(valid),
   };
@@ -41,7 +41,19 @@ function makeDeps(over: { valid?: boolean; count?: number; maxChats?: number; en
     },
   };
   const alertService = { sendAlert: jest.fn(async (_detail: string) => true) };
-  const gate = new LicenseGateService(licenseService as any, licensedChats as any, alertService as any);
+  // M11 租户闸门：默认放行；tenantReason 时返回拒绝以验证 reason 传播
+  const tenantGate = {
+    check: async (_isNewChat: boolean) =>
+      tenantReason
+        ? ({ allowed: false, reason: tenantReason } as any)
+        : ({ allowed: true } as any),
+  };
+  const gate = new LicenseGateService(
+    licenseService as any,
+    licensedChats as any,
+    alertService as any,
+    tenantGate as any,
+  );
   return { gate, alertService };
 }
 
@@ -101,5 +113,13 @@ describe('LicenseGateService.check', () => {
     const d = await gate.check('chat-full', '');
     expect(d.allowed).toBe(false);
     expect((alertService.sendAlert as any).mock.calls.length).toBe(1);
+  });
+
+  it('M11 tenant gate 拒绝 → 原样传播 reason（且不触发 license 告警）', async () => {
+    const { gate, alertService } = makeDeps({ valid: true, tenantReason: 'tenant-inactive' });
+    const d = await gate.check('chat-new', '');
+    expect(d.allowed).toBe(false);
+    if (!d.allowed) expect((d as { reason: string }).reason).toBe('tenant-inactive');
+    expect((alertService.sendAlert as any).mock.calls.length).toBe(0);
   });
 });

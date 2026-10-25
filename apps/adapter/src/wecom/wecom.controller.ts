@@ -11,11 +11,26 @@ import { RoutingService } from '../routing/routing.service.js';
 import { MediaRecognizeService } from '../media/media-recognize.service.js';
 import { UsageService } from '../usage/usage.service.js';
 import { LicenseGateService } from '../license/license-gate.service.js';
-import { LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT } from '../license/license-gate.service.js';
+import {
+  LICENSE_INVALID_TEXT,
+  LICENSE_CHAT_LIMIT_TEXT,
+  TENANT_INACTIVE_TEXT,
+  TENANT_CHAT_LIMIT_TEXT,
+  TENANT_MSG_LIMIT_TEXT,
+} from '../license/license-gate.service.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
 import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
 import { WecomCallbackQueryDto, WecomCallbackBodyDto } from './dto/wecom-callback.dto.js';
+
+/** 准入拦截话术（webhook 只能 200，用话术表达 403/409/429 语义） */
+const GATE_TEXTS: Record<string, string> = {
+  'license-invalid': LICENSE_INVALID_TEXT,
+  'chat-limit': LICENSE_CHAT_LIMIT_TEXT,
+  'tenant-inactive': TENANT_INACTIVE_TEXT,
+  'tenant-chat-limit': TENANT_CHAT_LIMIT_TEXT,
+  'tenant-msg-limit': TENANT_MSG_LIMIT_TEXT,
+};
 
 @ApiTags('wecom')
 @Controller('wecom')
@@ -94,11 +109,11 @@ export class WecomController {
     let gateBlocked = false;
     if (gateChatId) {
       const decision = await this.licenseGate.check(gateChatId, '');
-      // TS 对非可辨识联合的控制流窄化不完美，用 'reason' in decision 安全访问
       if (!decision.allowed) {
         gateBlocked = true;
-        const isChatLimit = 'reason' in decision && decision.reason === 'chat-limit';
-        const text = isChatLimit ? LICENSE_CHAT_LIMIT_TEXT : LICENSE_INVALID_TEXT;
+        // 非 strict 下可辨识联合窄化不完美，显式取 reason
+        const reason = (decision as { reason: string }).reason;
+        const text = GATE_TEXTS[reason] ?? LICENSE_INVALID_TEXT;
         try {
           await this.wecomClient.sendText(gateChatId, text);
         } catch (err) {

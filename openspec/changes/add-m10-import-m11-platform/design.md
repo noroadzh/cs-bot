@@ -65,6 +65,16 @@ provisioning_failed → terminated (强制清理)
 
 > 备选：每请求前 SELECT count 校验。否决——SELECT/UPDATE 间存在 race，UPDATE WHERE 是唯一正确做法。
 
+**实现说明（数据面 tenantId 与 webhook 语义，apply 阶段补充）**：
+
+- 数据面是单租户实例（Non-Goal：不做数据面多租户路由），tenant 上下文由新增 env `TENANT_ID` 提供；为空时（私有化 / 未启用 M11）跳过 tenant 准入。
+- 数据面入口闸门是 `LicenseGateService.check`（wecom 每条消息调用），其内部串接 `TenantGateService`：
+  - 租户状态非 `active|grace` → 拒绝（对应 spec 的 403 语义）
+  - 新群首次授权消耗 `chat` 配额（对应 spec 的 409 语义）
+  - 每条消息消耗 `api_call` 配额（对应 spec 的 429 语义）
+- `TenantGateService` 自持 Pool 并复用 `consumeQuota` 纯函数，避免 `LicenseModule → PlatformModule` 循环依赖。
+- **webhook 必须返回 200**（否则企微重试），因此拒绝表现为「代发提示话术 + 200 ack」，而非 HTTP 409/403/429；HTTP 状态码仅适用于控制面/内部 API。
+
 ### D4: 用量日聚合
 
 `tenant_usage_daily` 表 + 唯一键 `(tenant_id, day)`，`ON CONFLICT (tenant_id, day) DO UPDATE SET count = count + EXCLUDED.count`。避免每天 1 行 UPDATE 与并发 INSERT 打架。

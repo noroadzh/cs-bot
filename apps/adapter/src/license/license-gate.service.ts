@@ -14,6 +14,7 @@ import { ConfigService } from '../config/config.service.js';
 import { LicenseService } from './license.service.js';
 import { LicensedChatService } from './licensed-chat.service.js';
 import { LicenseAlertService } from './license-alert.service.js';
+import { TenantGateService } from './tenant-gate.service.js';
 
 /** 群超限告警去重 TTL：48h 覆盖自然日边界 */
 const ALERT_DEDUP_TTL = 172_800;
@@ -22,10 +23,24 @@ export const LICENSE_INVALID_TEXT =
   '本机器人的授权已失效或过期，暂时无法为您服务，请联系管理员处理。';
 export const LICENSE_CHAT_LIMIT_TEXT =
   '本机器人的授权群数已达上限，暂时无法在新群中启用，请联系管理员扩容授权。';
+export const TENANT_INACTIVE_TEXT =
+  '本服务当前已暂停或未开通，暂时无法为您服务，请联系管理员处理。';
+export const TENANT_CHAT_LIMIT_TEXT =
+  '本租户的会话数已达套餐上限，暂时无法在新群中启用，请联系管理员升级套餐。';
+export const TENANT_MSG_LIMIT_TEXT =
+  '本租户今日的消息量已达套餐上限，请稍后再试或联系管理员升级套餐。';
 
 export type GateDecision =
   | { allowed: true }
-  | { allowed: false; reason: 'license-invalid' | 'chat-limit' };
+  | {
+      allowed: false;
+      reason:
+        | 'license-invalid'
+        | 'chat-limit'
+        | 'tenant-inactive'
+        | 'tenant-chat-limit'
+        | 'tenant-msg-limit';
+    };
 
 @Injectable()
 export class LicenseGateService implements OnModuleDestroy {
@@ -38,6 +53,7 @@ export class LicenseGateService implements OnModuleDestroy {
     private readonly licenseService: LicenseService,
     private readonly licensedChats: LicensedChatService,
     private readonly alertService: LicenseAlertService,
+    private readonly tenantGate: TenantGateService,
   ) {
     const cfg = ConfigService.instance;
     this.redis = new Redis({
@@ -65,6 +81,18 @@ export class LicenseGateService implements OnModuleDestroy {
     if (!state.valid) {
       this.logger.warn(`gate blocked (license ${state.reason}): chat=${chatId}`);
       return { allowed: false, reason: 'license-invalid' };
+    }
+
+    // M11 租户准入：状态 + 配额。isNewChat 必须在 ensureChat 注册前判断。
+    const isNewChat = !this.licensedChats.has(chatId);
+    const tenantDecision = await this.tenantGate.check(isNewChat);
+    if (!tenantDecision.allowed) {
+      // 非 strict 下可辨识联合窄化不完美，显式取 reason
+      const reason = (tenantDecision as {
+        reason: 'tenant-inactive' | 'tenant-chat-limit' | 'tenant-msg-limit';
+      }).reason;
+      this.logger.warn(`gate blocked (${reason}): chat=${chatId}`);
+      return { allowed: false, reason };
     }
 
     if (await this.licensedChats.ensureChat(chatId, chatName)) return { allowed: true };

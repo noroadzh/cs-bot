@@ -196,6 +196,7 @@ cp .env.template .env && chmod 600 .env && vim .env
 | PLATFORM_ENABLED | | false | 多租户控制面开关（默认 false，关闭后 /platform/* 路由整体 404）（M11） |
 | PLATFORM_COMPOSE_DIR | | data/tenants | 租户实例 compose 落盘目录（默认 data/tenants）（M11） |
 | PLATFORM_PROVISION_TIMEOUT_MS | | 120000 | 租户实例健康探测超时（毫秒，默认 120s）（M11） |
+| TENANT_ID | | （空） | 当前实例所属租户 ID；配置后数据面按该租户做配额/状态准入（留空 = 不校验，私有化/未启用 M11） |
 | MODEL_MODE | | cloud | 模型通道：cloud（基线）/ hybrid（本地优先+云兑底）/ local（全本地）（增项 D） |
 | LOCAL_LLM_BASE_URL | | http://vllm:8000/v1 | 本地推理端点（增项 D） |
 | LOCAL_EMBEDDING_URL | | http://xinference:9997 | 本地 embedding 端点（增项 D） |
@@ -412,6 +413,8 @@ MOCK_REDACTION=false
 PLATFORM_ENABLED=false
 PLATFORM_COMPOSE_DIR=data/tenants
 PLATFORM_PROVISION_TIMEOUT_MS=120000
+# 当前实例所属租户（SaaS 形态填；留空 = 数据面不做租户配额准入）
+TENANT_ID=
 # ---- 用量上报（SaaS 形态填；私有化留空）----
 USAGE_WEBHOOK_URL=
 USAGE_REPORT_INTERVAL_MS=86400000
