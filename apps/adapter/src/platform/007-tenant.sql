@@ -26,9 +26,13 @@ CREATE TABLE IF NOT EXISTS tenant_quota (
     max_storage_mb INTEGER NOT NULL DEFAULT 0,      -- 存储 MB 上限
     max_api_calls INTEGER NOT NULL DEFAULT 0,       -- API 调用次数上限
     max_users INTEGER NOT NULL DEFAULT 0,           -- 用户数上限
+    max_llm_tokens_per_month INTEGER NOT NULL DEFAULT 0, -- LLM token 月度上限（0=不限）
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 兼容旧表：补 LLM token 月度上限列
+ALTER TABLE tenant_quota ADD COLUMN IF NOT EXISTS max_llm_tokens_per_month INTEGER NOT NULL DEFAULT 0;
 
 -- 租户每日用量表
 CREATE TABLE IF NOT EXISTS tenant_usage_daily (

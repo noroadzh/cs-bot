@@ -32,6 +32,9 @@ import {
 import { PlatformAuditService } from './platform-audit.service.js';
 import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantUsageService } from './tenant-usage.service.js';
+import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
+import { PlatformMonitor } from './platform-monitor.js';
+import { TenantOffboarding } from './tenant-offboarding.js';
 
 /** PLATFORM_ENABLED=false 时所有 /platform 路由 404 */
 @Injectable()
@@ -55,6 +58,9 @@ export class PlatformController {
     private readonly audit: PlatformAuditService,
     private readonly sweep: TenantExpirySweepService,
     private readonly usageService: TenantUsageService,
+    private readonly upgrade: UpgradeOrchestrator,
+    private readonly monitor: PlatformMonitor,
+    private readonly offboarding: TenantOffboarding,
   ) {}
 
   private actor(req: Request): string {
@@ -150,6 +156,8 @@ export class PlatformController {
         maxApiCalls: body.maxMsgsPerDay === undefined ? undefined : Number(body.maxMsgsPerDay),
         maxStorageMb: body.maxStorageMb === undefined ? undefined : Number(body.maxStorageMb),
         maxUsers: body.maxConcurrentQa === undefined ? undefined : Number(body.maxConcurrentQa),
+        maxLlmTokensPerMonth:
+          body.maxLlmTokensPerMonth === undefined ? undefined : Number(body.maxLlmTokensPerMonth),
       },
       this.actor(req),
     );
@@ -215,5 +223,38 @@ export class PlatformController {
   @ApiOperation({ summary: '手动触发过期扫描' })
   async triggerSweep() {
     return this.sweep.sweep();
+  }
+
+  // -----------------------------------------------------------------------
+  // 升级 / 监控 / 注销
+  // -----------------------------------------------------------------------
+
+  @Post('upgrades')
+  @ApiOperation({ summary: '批量升级（金丝雀 + 批次 + 回滚）' })
+  async upgrades(@Body() body: Record<string, unknown>) {
+    const tenantIds = Array.isArray(body.tenantIds)
+      ? (body.tenantIds as string[])
+      : (await this.tenants.list()).rows.map((t) => t.id);
+    return this.upgrade.run(tenantIds, String(body.tag ?? 'latest'));
+  }
+
+  @Get('usage')
+  @ApiOperation({ summary: '平台总览（租户数/健康/异常实例）' })
+  async platformUsage() {
+    const ids = (await this.tenants.list()).rows.map((t) => t.id);
+    return this.monitor.collect(ids);
+  }
+
+  @Post('tenants/:id/export')
+  @ApiOperation({ summary: '导出租户数据加密包' })
+  async exportTenant(@Param('id') id: string) {
+    return { path: await this.offboarding.export(id) };
+  }
+
+  @Post('tenants/:id/destroy')
+  @ApiOperation({ summary: '注销租户（双签 + 删除）' })
+  async destroyTenant(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const approvals = Array.isArray(body.approvals) ? (body.approvals as string[]) : [];
+    return this.offboarding.destroy(id, approvals);
   }
 }

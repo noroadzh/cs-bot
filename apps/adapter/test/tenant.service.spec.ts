@@ -208,10 +208,42 @@ describe('TenantService', () => {
       });
       expect(prov.down).toHaveBeenCalled();
     });
-  });
 
-  // =====================================================================
-  // renew
+    it('TLS 证书签发失败 → 回滚并置 provisioning_failed', async () => {
+      const prov = fakeProvisioner();
+      const s = svc(auditAppend(), prov);
+      s.setCertificateProvider({
+        issue: async () => {
+          throw new Error('cert fail');
+        },
+      });
+      poolQuery
+        .mockResolvedValueOnce({ rows: [tenantRow({ status: 'created' })] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValue({ rows: [tenantRow({ status: 'provisioning_failed' })] });
+
+      await expect(s.provision('t1')).rejects.toThrow('cert fail');
+      expect(prov.down).toHaveBeenCalled();
+    });
+
+    it('provision 成功调用授权签发', async () => {
+      const prov = fakeProvisioner();
+      const s = svc(auditAppend(), prov);
+      const issued: string[] = [];
+      s.setLicenseIssuer({
+        issue: async (t) => {
+          issued.push(t.id);
+        },
+      });
+      poolQuery
+        .mockResolvedValueOnce({ rows: [tenantRow({ status: 'created' })] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [tenantRow({ status: 'active' })] });
+
+      await s.provision('t1');
+      expect(issued).toEqual(['t1']);
+    });
+  });
   // =====================================================================
   describe('renew', () => {
     it('happy path: 续期 + 审计', async () => {

@@ -16,6 +16,7 @@ import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { PlatformAuditService } from './platform-audit.service.js';
+import { NoopQuotaPusher, type QuotaPusher } from './quota-pusher.js';
 import type { TenantQuota, TenantQuotaPatch } from './tenant.entity.js';
 
 /** 平台默认配额（spec: max_chats 5 / max_msgs_per_day 5000 / max_storage_mb 2048 / max_concurrent_qa 2） */
@@ -24,6 +25,7 @@ export const DEFAULT_QUOTA = {
   maxStorageMb: 2048,
   maxApiCalls: 5000,
   maxUsers: 2,
+  maxLlmTokensPerMonth: 0,
 } as const;
 
 const QUOTA_COLUMNS = [
@@ -31,6 +33,7 @@ const QUOTA_COLUMNS = [
   { key: 'maxStorageMb', column: 'max_storage_mb' },
   { key: 'maxApiCalls', column: 'max_api_calls' },
   { key: 'maxUsers', column: 'max_users' },
+  { key: 'maxLlmTokensPerMonth', column: 'max_llm_tokens_per_month' },
 ] as const;
 
 export interface QuotaConsumeInput {
@@ -59,6 +62,13 @@ export class TenantQuotaService {
     _config: ConfigService,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
+  }
+
+  private pusher: QuotaPusher = new NoopQuotaPusher();
+
+  /** 注入配额下发通道（生产推实例 / 测试 fake） */
+  setQuotaPusher(p: QuotaPusher): void {
+    this.pusher = p;
   }
 
   // -------------------------------------------------------------------------
@@ -99,7 +109,7 @@ export class TenantQuotaService {
     const res = await this.pool.query(
       `UPDATE tenant_quota SET ${setClauses}, updated_at = NOW()
        WHERE tenant_id = $1
-       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, created_at, updated_at`,
+       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, created_at, updated_at`,
       params,
     );
     if (res.rows.length === 0) {
@@ -121,15 +131,20 @@ export class TenantQuotaService {
           maxStorageMb: before.maxStorageMb,
           maxApiCalls: before.maxApiCalls,
           maxUsers: before.maxUsers,
+          maxLlmTokensPerMonth: before.maxLlmTokensPerMonth,
         },
         after: {
           maxChats: after.maxChats,
           maxStorageMb: after.maxStorageMb,
           maxApiCalls: after.maxApiCalls,
           maxUsers: after.maxUsers,
+          maxLlmTokensPerMonth: after.maxLlmTokensPerMonth,
         },
       },
     });
+
+    // 即时下发（best-effort，不影响配额已落库）
+    await this.pusher.push(tenantId, after).catch(() => undefined);
 
     return after;
   }
@@ -140,7 +155,7 @@ export class TenantQuotaService {
 
   async getQuota(tenantId: string): Promise<TenantQuota | null> {
     const res = await this.pool.query(
-      `SELECT id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, created_at, updated_at
+      `SELECT id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, created_at, updated_at
        FROM tenant_quota WHERE tenant_id = $1`,
       [tenantId],
     );
@@ -154,16 +169,17 @@ export class TenantQuotaService {
   async ensureDefaultQuota(tenantId: string): Promise<TenantQuota> {
     const res = await this.pool.query(
       `INSERT INTO tenant_quota
-         (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users)
-       VALUES ($1, $2, $3, $4, $5)
+         (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (tenant_id) DO UPDATE SET updated_at = NOW()
-       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, created_at, updated_at`,
+       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, created_at, updated_at`,
       [
         tenantId,
         DEFAULT_QUOTA.maxChats,
         DEFAULT_QUOTA.maxStorageMb,
         DEFAULT_QUOTA.maxApiCalls,
         DEFAULT_QUOTA.maxUsers,
+        DEFAULT_QUOTA.maxLlmTokensPerMonth,
       ],
     );
     return mapQuota(res.rows[0]);
@@ -286,6 +302,7 @@ export function mapQuota(row: Record<string, unknown>): TenantQuota {
     maxStorageMb: Number(row.max_storage_mb),
     maxApiCalls: Number(row.max_api_calls),
     maxUsers: Number(row.max_users),
+    maxLlmTokensPerMonth: Number(row.max_llm_tokens_per_month ?? 0),
     createdAt: new Date(row.created_at as string).toISOString(),
     updatedAt: new Date(row.updated_at as string).toISOString(),
   };

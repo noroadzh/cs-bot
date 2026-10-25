@@ -1,7 +1,7 @@
 /** QaOrchestrator */
 import { Injectable, Inject } from '@nestjs/common';
-import { IQA_ENGINE, type IQAEngine } from '@cs-bot/shared';
-import { ErrCode } from '@cs-bot/shared';
+import { IQA_ENGINE, type IQAEngine, Ok, Err, ErrCode, type AskResult } from '@cs-bot/shared';
+import { ModelRouter } from './model-router.js';
 import { ContextService } from '../context/context.service.js';
 import { SensitiveFilterService } from '../filter/sensitive-filter.service.js';
 import { MissService } from '../miss/miss.service.js';
@@ -31,12 +31,41 @@ export class QaOrchestrator {
     @Inject(IMessageSender) private readonly sender: IMessageSender,
   ) {}
 
+  /** 增项 D：模型通道路由（null = 沿用 IQAEngine，即 cloud/未配置） */
+  private modelRouter: ModelRouter | null = null;
+
+  setModelRouter(r: ModelRouter | null): void {
+    this.modelRouter = r;
+  }
+
+  /** 通过 ModelRouter 直连 LLM（local/hybrid），绕过 RAG；失败按 LLM 超时处理 */
+  private async askViaRouter(question: string): Promise<AskResult> {
+    try {
+      const r = await this.modelRouter!.chat(question);
+      if (r.failover) {
+        this.usageService.increment('llmFailovers');
+        this.logger.warn({ detail: 'model-failover', source: r.source });
+      }
+      return new Ok({
+        answer: r.text,
+        score: 1,
+        source: r.source === 'local' ? 'primary' : 'fallback',
+      });
+    } catch (err) {
+      this.logger.warn({ detail: 'local-model-failed', err: (err as Error).message });
+      return new Err({ code: ErrCode.LLM_TIMEOUT, message: (err as Error).message });
+    }
+  }
+
   async handle(msg: InboundMsg, traceId: string, _triggerReason: 'mention' | 'keyword'): Promise<void> {
     const chatId = msg.ChatId ?? msg.FromUserName;
     const userId = msg.FromUserName;
     const question = msg.text ?? msg.Content ?? '';
     const history = await this.context.get(chatId, userId);
-    const result = await this.engine.ask({ question, history, traceId });
+    const result =
+      this.modelRouter && this.modelRouter.getMode() !== 'cloud'
+        ? await this.askViaRouter(question)
+        : await this.engine.ask({ question, history, traceId });
 
     // 12.1 usage: LLM 调用后按引擎模式与来源计 token 桶
     if (this.engine.mode !== 'mock') {

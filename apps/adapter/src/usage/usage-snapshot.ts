@@ -25,6 +25,8 @@ export interface UsageCounters {
    * 仅 trigger.evaluate() 命中后由 routing.dispatch 计数。
    */
   messagesTriggered: number;
+  /** 模型通道切云次数（hybrid 本地失败切云；增项 D） */
+  llmFailovers: number;
 }
 
 export function createEmptyCounters(): UsageCounters {
@@ -40,5 +42,6 @@ export function createEmptyCounters(): UsageCounters {
     imagesRecognized: 0,
     imagesSkipped: 0,
     messagesTriggered: 0,
+    llmFailovers: 0,
   };
 }

@@ -98,11 +98,24 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   IMPORT_MAX_FILE_BYTES: EnvInt(10 * 1024 * 1024), // 10MB
   IMPORT_MAX_FILE_BYTES_URL: EnvInt(10 * 1024 * 1024), // 10MB (URL fetch)
   MOCK_REDACTION: EnvBool(false),
+  IMPORT_RULES_FILE: EnvString.default('config/import-rules.yml'),
+  IMPORT_BLACKLIST_FILE: EnvString.default('config/import-blacklist.txt'),
+  IMPORT_PAIR_GAP_MINUTES: EnvInt(30),
+  IMPORT_MIN_ANSWER_CHARS: EnvInt(6),
 
   // Platform (M11) — PLATFORM_ENABLED=false 时 platform 路由整体关闭
   PLATFORM_ENABLED: EnvBool(false),
   PLATFORM_COMPOSE_DIR: EnvString.default('data/tenants'),
   PLATFORM_PROVISION_TIMEOUT_MS: EnvInt(120000), // 120s
+  PLATFORM_MASTER_KEY: EnvString.optional().default(''),
+  PLATFORM_TLS_PROVIDER: EnvString.default('fake'),
+  PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),
+
+  // 模型通道（增项 D）
+  MODEL_MODE: EnvString.default('cloud'),
+  LOCAL_LLM_BASE_URL: EnvString.optional().default(''),
+  LOCAL_EMBEDDING_URL: EnvString.optional().default(''),
+  LOCAL_LLM_MODEL: EnvString.optional().default(''),
 
   // 当前实例所属租户（形态 B：每租户一实例）。空 = 数据面不做 tenant 配额/状态准入。
   TENANT_ID: EnvString.optional().default(''),

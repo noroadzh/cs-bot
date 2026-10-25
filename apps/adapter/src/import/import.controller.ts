@@ -17,11 +17,11 @@
  */
 import {
   Controller, Post, Get, Delete, Patch, Body, Param, Query,
-  UseGuards, BadRequestException, HttpStatus, HttpCode, Req,
+  UseGuards, BadRequestException, HttpStatus, HttpCode, Req, Res,
   UploadedFile, UseInterceptors, NotFoundException, ConflictException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { ImportJobService, type ImportJobCreated } from './import-job.service.js';
 import type {
   ImportJobStatus,
@@ -203,5 +203,41 @@ export class ImportController {
   @Post(':id/approve-all')
   async approveAll(@Param('id') id: string) {
     return this.service.approveAll(id);
+  }
+
+  /** GET /admin/import-jobs/:id/review.xlsx — 审核清单（脱敏，30 天保留） */
+  @Get(':id/review.xlsx')
+  async reviewManifest(@Param('id') id: string, @Res() res: Response) {
+    const buf = await this.service.buildManifest(id);
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="review-${id}.xlsx"`);
+    res.send(buf);
+  }
+
+  /** POST /admin/import-jobs/:id/confirm — 提交审核结果并写入 FastGPT 数据集 */
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/confirm')
+  async confirm(
+    @Param('id') id: string,
+    @Body() body: { decisions?: { itemId: string; reviewStatus: 'approved' | 'rejected' }[] },
+  ) {
+    return this.service.confirm(id, body.decisions ?? []);
+  }
+
+  /** POST /admin/import-jobs/:id/rollback — 批次下线（删除数据集） */
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/rollback')
+  async rollback(@Param('id') id: string) {
+    return this.service.rollback(id);
+  }
+
+  /** POST /admin/import-jobs/:id/retry — 仅重试失败写入 */
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/retry')
+  async retry(@Param('id') id: string) {
+    return this.service.retry(id);
   }
 }

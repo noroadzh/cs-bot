@@ -1,0 +1,18 @@
+# M10 导入清洗规则（概设 §5 M10 步骤 3/4）
+# 热加载：文件变更后自动重建规则（fs.watch）
+cleaning:
+  # 剔除入群/退群/撤回等系统消息
+  dropSystemMessages: true
+  # 剔除占位消息（图片/语音/视频/文件/表情）
+  dropPlaceholders: true
+  # 剔除机器人自身消息
+  dropBotMessages: true
+  # 同发送方在窗口内重复内容仅留 1 条（秒）
+  repeatWindowSec: 60
+  # 有效字符下限（低于则视为无实义短消息）
+  minEffectiveChars: 4
+pairing:
+  # 会话切分窗口（分钟）：间隔超过则切分
+  windowGapMinutes: 30
+  # 客服回复为「实质回复」的最小字符数
+  minAnswerChars: 6

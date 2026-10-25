@@ -278,6 +278,7 @@ export const MIME_PARSERS: Readonly<Record<string, 'csv' | 'jsonl' | 'txt' | 'xl
   'text/csv': 'csv',
   'application/csv': 'csv',
   'text/plain': 'txt',
+  'application/json': 'jsonl',
   'application/jsonl': 'jsonl',
   'application/x-jsonlines': 'jsonl',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',

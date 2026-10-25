@@ -21,6 +21,13 @@ export interface ImportJob {
   status: ImportJobStatus;
   itemCount: number;
   parseError: string | null;
+  /** 阶段计数（re-pipeline） */
+  cleanedCount: number;
+  pairedCount: number;
+  unpairedCount: number;
+  /** approved 条目写入的 FastGPT 数据集名 */
+  datasetName: string | null;
+  sourceShape: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -46,6 +53,14 @@ export interface ImportItem {
   reviewStatus: ReviewStatus;
   reviewedAt: string | null;
   reviewerNote: string | null;
+  /** 写入 FastGPT 数据集后的 qa id */
+  importedQaId: string | null;
+  /** 命中入库黑名单，不可批量通过 */
+  autoBlocked: boolean;
+  /** 近似已有 QA 的 id（score ≥ 0.9） */
+  similarQaId: string | null;
+  /** keep / discard 建议 */
+  suggestAction: string | null;
   createdAt: string;
 }
 

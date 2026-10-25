@@ -11,11 +11,19 @@ CREATE TABLE IF NOT EXISTS import_job (
     status VARCHAR(20) NOT NULL DEFAULT 'uploaded',
     -- status: uploaded, parsing, parsed, failed, approved, partial, rejected
     item_count INTEGER NOT NULL DEFAULT 0,
-    error_message TEXT,
+    parse_error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMPTZ
 );
+
+-- 兼容旧表：error_message → parse_error（service 统一用 parse_error）
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'import_job' AND column_name = 'error_message')
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'import_job' AND column_name = 'parse_error') THEN
+    ALTER TABLE import_job RENAME COLUMN error_message TO parse_error;
+  END IF;
+END $$;
 
 -- 导入条目明细表
 CREATE TABLE IF NOT EXISTS import_item (

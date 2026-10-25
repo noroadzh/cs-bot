@@ -26,6 +26,23 @@ import {
   UnsupportedFormatError,
   MissingColumnError,
 } from './import-parser.js';
+import { ImportCleaner, type CleanMessage } from './import-cleaner.js';
+import { QaPairing } from './qa-pairing.js';
+import { ImportBlacklist } from './import-blacklist.js';
+import { sniffShape, UnrecognizedShapeError, type ImportShape } from './content-sniffer.js';
+import { parseConversation, readXlsxHeader } from './conversation-parser.js';
+import {
+  HttpFastGptDatasetClient,
+  InMemoryDatasetClient,
+  type DatasetClient,
+} from './fastgpt-dataset.client.js';
+import {
+  HttpFastGptSearchClient,
+  NoopSearchClient,
+  DEFAULT_SIMILAR_THRESHOLD,
+  type FastGptSearchClient,
+} from './near-duplicate.js';
+import { buildReviewManifest, type ManifestRow } from './review-manifest.js';
 import type {
   ImportJob,
   ImportJobRow,
@@ -175,6 +192,75 @@ export class ImportJobService {
     private readonly redactor: SensitiveRedactor,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
+  }
+
+  // --- 重管线依赖（惰性构建；测试可注入 dataset/search） ---
+  private _cleaner?: ImportCleaner;
+  private _pairing?: QaPairing;
+  private _blacklist?: ImportBlacklist;
+  private _dataset?: DatasetClient;
+  private _search?: FastGptSearchClient;
+
+  setDatasetClient(c: DatasetClient): void {
+    this._dataset = c;
+  }
+
+  setSearchClient(c: FastGptSearchClient): void {
+    this._search = c;
+  }
+
+  private getCleaner(): ImportCleaner {
+    if (!this._cleaner) {
+      const p = ConfigService.instance.IMPORT_RULES_FILE;
+      this._cleaner = p ? ImportCleaner.fromFile(p) : new ImportCleaner();
+    }
+    return this._cleaner;
+  }
+
+  private getPairing(): QaPairing {
+    if (!this._pairing) {
+      const gap = ConfigService.instance.IMPORT_PAIR_GAP_MINUTES ?? 30;
+      const min = ConfigService.instance.IMPORT_MIN_ANSWER_CHARS ?? 6;
+      this._pairing = new QaPairing(gap * 60_000, min);
+    }
+    return this._pairing;
+  }
+
+  private getBlacklist(): ImportBlacklist {
+    if (!this._blacklist) {
+      const p = ConfigService.instance.IMPORT_BLACKLIST_FILE;
+      this._blacklist = p ? ImportBlacklist.fromFile(p) : new ImportBlacklist();
+    }
+    return this._blacklist;
+  }
+
+  private getDatasetClient(): DatasetClient {
+    if (!this._dataset) {
+      const cfg = ConfigService.instance;
+      this._dataset =
+        cfg.FASTGPT_BASE_URL && cfg.FASTGPT_API_KEY
+          ? new HttpFastGptDatasetClient({
+              baseUrl: cfg.FASTGPT_BASE_URL,
+              apiKey: cfg.FASTGPT_API_KEY,
+            })
+          : new InMemoryDatasetClient();
+    }
+    return this._dataset;
+  }
+
+  private getSearchClient(): FastGptSearchClient {
+    if (!this._search) {
+      const cfg = ConfigService.instance;
+      this._search =
+        cfg.FASTGPT_BASE_URL && cfg.FASTGPT_API_KEY && cfg.FASTGPT_DATASET_IDS
+          ? new HttpFastGptSearchClient({
+              baseUrl: cfg.FASTGPT_BASE_URL,
+              apiKey: cfg.FASTGPT_API_KEY,
+              datasetIds: cfg.FASTGPT_DATASET_IDS.split(',').map((s) => s.trim()).filter(Boolean),
+            })
+          : new NoopSearchClient();
+    }
+    return this._search;
   }
 
   // -------------------------------------------------------------------------
@@ -364,6 +450,49 @@ export class ImportJobService {
       return this.failJob(jobId, `read failed: ${(err as Error).message}`);
     }
 
+    // 内容嗅探 → 会话形态走清洗+配对；其余保持直接成对
+    let xlsxHeader: string[] | undefined;
+    if (mimeType.includes('spreadsheetml')) {
+      xlsxHeader = await readXlsxHeader(bytes);
+    }
+    let shape: ImportShape;
+    try {
+      shape = await sniffShape(bytes, mimeType, xlsxHeader);
+    } catch (err) {
+      if (err instanceof UnrecognizedShapeError) return this.failJob(jobId, err.message);
+      return this.failJob(jobId, `sniff failed: ${(err as Error).message}`);
+    }
+    await this.pool.query('UPDATE import_job SET source_shape = $2 WHERE id = $1', [jobId, shape]);
+
+    if (shape === 'conversation-table' || shape === 'wecom-archive') {
+      let messages;
+      try {
+        messages = await parseConversation(bytes, mimeType, shape, jobId);
+      } catch (err) {
+        return this.failJob(jobId, `conversation parse failed: ${(err as Error).message}`);
+      }
+      const cleaned = this.getCleaner().clean(messages);
+      const { paired, unpaired } = this.getPairing().pair(cleaned);
+      try {
+        await this.persistItems(jobId, paired);
+        await this.persistUnpaired(jobId, unpaired);
+      } catch (err) {
+        return this.failJob(jobId, `persist failed: ${(err as Error).message}`);
+      }
+      await this.updateStageCounts(jobId, cleaned.length, paired.length, unpaired.length);
+      await this.updateStatus(jobId, 'parsed', paired.length);
+      this.logger.log({
+        detail: 'import-parsed',
+        jobId,
+        shape,
+        cleaned: cleaned.length,
+        paired: paired.length,
+        unpaired: unpaired.length,
+      });
+      return (await this.getJob(jobId))!;
+    }
+
+    // qa-pairs（直接成对）
     let rows;
     try {
       rows = await parseImport(mimeType, bytes);
@@ -384,7 +513,7 @@ export class ImportJobService {
     }
 
     await this.updateStatus(jobId, 'parsed', rows.length);
-    this.logger.log({ detail: 'import-parsed', jobId, items: rows.length });
+    this.logger.log({ detail: 'import-parsed', jobId, shape, items: rows.length });
     return (await this.getJob(jobId))!;
   }
 
@@ -898,19 +1027,52 @@ export class ImportJobService {
     jobId: string,
     rows: readonly { question: string; answer: string }[],
   ): Promise<void> {
+    const blacklist = this.getBlacklist();
+    const search = this.getSearchClient();
+
+    // 事务外先算黑名单 / 近似（检索可能慢，避免长事务）
+    const prepared: {
+      question: string;
+      answer: string;
+      redText: string;
+      flags: string[];
+      autoBlocked: boolean;
+      similarId: string | null;
+      suggest: string;
+    }[] = [];
+    for (const row of rows) {
+      const red = this.redactor.redact(row.answer);
+      const autoBlocked = blacklist.matches(`${row.question} ${row.answer}`);
+      let similarId: string | null = null;
+      if (!autoBlocked) {
+        const hit = await search.search(row.question);
+        if (hit && hit.score >= DEFAULT_SIMILAR_THRESHOLD) similarId = hit.id || null;
+      }
+      prepared.push({
+        question: row.question,
+        answer: row.answer,
+        redText: red.text,
+        flags: red.flags,
+        autoBlocked,
+        similarId,
+        suggest: similarId ? 'discard' : 'keep',
+      });
+    }
+
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       const now = new Date().toISOString();
-      for (const row of rows) {
-        const red = this.redactor.redact(row.answer);
+      for (const p of prepared) {
         await client.query(
           `INSERT INTO import_item
-             (id, job_id, question, answer_raw, answer_redacted, sensitive_flags, review_status, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,'pending',$7)`,
+             (id, job_id, question, answer_raw, answer_redacted, sensitive_flags,
+              review_status, auto_blocked, similar_qa_id, suggest_action, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10)`,
           [
-            randomUUID(), jobId, row.question, row.answer,
-            red.text, JSON.stringify(red.flags), now,
+            randomUUID(), jobId, p.question, p.answer,
+            p.redText, JSON.stringify(p.flags),
+            p.autoBlocked, p.similarId, p.suggest, now,
           ],
         );
       }
@@ -920,6 +1082,222 @@ export class ImportJobService {
       throw err;
     } finally {
       client.release();
+    }
+  }
+
+  private async persistUnpaired(jobId: string, messages: readonly CleanMessage[]): Promise<void> {
+    if (messages.length === 0) return;
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const m of messages) {
+        await client.query(
+          `INSERT INTO import_unpaired (id, job_id, conversation_id, sender_id, content, occurred_at)
+           VALUES ($1,$2,$3,$4,$5,$6)`,
+          [randomUUID(), jobId, m.conversationId, m.senderId, m.content, new Date(m.occurredAt).toISOString()],
+        );
+      }
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async updateStageCounts(
+    jobId: string,
+    cleaned: number,
+    paired: number,
+    unpaired: number,
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE import_job
+          SET cleaned_count = $2, paired_count = $3, unpaired_count = $4, updated_at = $5
+        WHERE id = $1`,
+      [jobId, cleaned, paired, unpaired, new Date().toISOString()],
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // 审核清单 / 提交 / 回滚 / 重试（重管线）
+  // -------------------------------------------------------------------------
+
+  /** 生成 review.xlsx（脱敏后） */
+  async buildManifest(jobId: string): Promise<Buffer> {
+    const job = await this.getJob(jobId);
+    if (job === null) {
+      throw new HttpException(
+        { errCode: 'IMPORT_JOB_NOT_FOUND', detail: `import job ${jobId} not found` },
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const res = await this.pool.query(
+      `SELECT * FROM import_item WHERE job_id = $1 ORDER BY created_at ASC, id ASC`,
+      [jobId],
+    );
+    const rows: ManifestRow[] = res.rows.map((r, i) => {
+      const flags = Array.isArray(r.sensitive_flags) ? r.sensitive_flags : [];
+      return {
+        index: i + 1,
+        conversationHash: String(r.job_id).slice(0, 12),
+        occurredAt: new Date(r.created_at as string).toISOString(),
+        question: String(r.question),
+        answer: String(r.answer_redacted ?? r.answer_raw ?? ''),
+        redacted: flags.length > 0,
+        sensitive: flags.length > 0,
+        similar: r.similar_qa_id != null,
+        suggestAction: (r.suggest_action as string) ?? 'keep',
+        reviewResult: r.review_status === 'pending' ? '' : String(r.review_status),
+      };
+    });
+    return buildReviewManifest(rows);
+  }
+
+  /**
+   * 提交审核结果并写入 FastGPT 数据集。
+   * decisions: [{ itemId, reviewStatus }]；approved 且非 auto_blocked 的 item 写入 `历史语料-<jobId>`。
+   */
+  async confirm(
+    jobId: string,
+    decisions: readonly { itemId: string; reviewStatus: ReviewStatus }[],
+  ): Promise<{ approved: number; written: number; dataset: string }> {
+    const job = await this.getJob(jobId);
+    if (job === null) {
+      throw new HttpException(
+        { errCode: 'IMPORT_JOB_NOT_FOUND', detail: `import job ${jobId} not found` },
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    for (const d of decisions) {
+      await this.pool.query(
+        `UPDATE import_item
+            SET review_status = $3, reviewed_at = $4, updated_at = $4
+          WHERE job_id = $1 AND id = $2`,
+        [jobId, d.itemId, d.reviewStatus, new Date().toISOString()],
+      );
+    }
+
+    const toImport = await this.pool.query(
+      `SELECT id, question, answer_redacted FROM import_item
+        WHERE job_id = $1 AND review_status = 'approved'
+          AND auto_blocked = false AND imported_qa_id IS NULL
+        ORDER BY created_at ASC`,
+      [jobId],
+    );
+
+    const datasetName = `历史语料-${jobId}`;
+    let written = 0;
+    if (toImport.rows.length > 0) {
+      const client = this.getDatasetClient();
+      const datasetId = await client.ensureDataset(datasetName);
+      const batchSize = 50;
+      for (let i = 0; i < toImport.rows.length; i += batchSize) {
+        const batch = toImport.rows.slice(i, i + batchSize);
+        const ids = await client.writeBatch(
+          datasetId,
+          batch.map((r) => ({ question: String(r.question), answer: String(r.answer_redacted ?? '') })),
+        );
+        for (let j = 0; j < batch.length; j++) {
+          await this.pool.query('UPDATE import_item SET imported_qa_id = $2 WHERE id = $1', [
+            batch[j].id,
+            ids[j] ?? null,
+          ]);
+        }
+        written += batch.length;
+      }
+      await this.pool.query('UPDATE import_job SET dataset_name = $2 WHERE id = $1', [jobId, datasetName]);
+    }
+
+    // 重算 job 终态
+    await this.recomputeJobStatus(jobId);
+    await this.cleanupSource(jobId);
+
+    return { approved: toImport.rows.length, written, dataset: datasetName };
+  }
+
+  /** 批次下线：删除数据集 collection，清空 imported_qa_id */
+  async rollback(jobId: string): Promise<{ rolledBack: boolean }> {
+    const job = await this.getJob(jobId);
+    if (job === null) {
+      throw new HttpException(
+        { errCode: 'IMPORT_JOB_NOT_FOUND', detail: `import job ${jobId} not found` },
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    const datasetName = job.datasetName ?? `历史语料-${jobId}`;
+    await this.getDatasetClient().deleteDataset(datasetName);
+    await this.pool.query(
+      `UPDATE import_item SET imported_qa_id = NULL WHERE job_id = $1 AND imported_qa_id IS NOT NULL`,
+      [jobId],
+    );
+    await this.pool.query('UPDATE import_job SET dataset_name = NULL WHERE id = $1', [jobId]);
+    return { rolledBack: true };
+  }
+
+  /** 仅重试失败写入（已 approved、未 imported、非 auto_blocked） */
+  async retry(jobId: string): Promise<{ retried: number }> {
+    const res = await this.pool.query(
+      `SELECT id, question, answer_redacted FROM import_item
+        WHERE job_id = $1 AND review_status = 'approved'
+          AND auto_blocked = false AND imported_qa_id IS NULL
+        ORDER BY created_at ASC`,
+      [jobId],
+    );
+    if (res.rows.length === 0) return { retried: 0 };
+
+    const datasetName = `历史语料-${jobId}`;
+    const client = this.getDatasetClient();
+    const datasetId = await client.ensureDataset(datasetName);
+    const ids = await client.writeBatch(
+      datasetId,
+      res.rows.map((r) => ({ question: String(r.question), answer: String(r.answer_redacted ?? '') })),
+    );
+    for (let i = 0; i < res.rows.length; i++) {
+      await this.pool.query('UPDATE import_item SET imported_qa_id = $2 WHERE id = $1', [
+        res.rows[i].id,
+        ids[i] ?? null,
+      ]);
+    }
+    await this.pool.query('UPDATE import_job SET dataset_name = $2 WHERE id = $1', [jobId, datasetName]);
+    return { retried: res.rows.length };
+  }
+
+  private async recomputeJobStatus(jobId: string): Promise<void> {
+    const res = await this.pool.query(
+      `SELECT review_status, COUNT(*)::int AS n FROM import_item WHERE job_id = $1 GROUP BY review_status`,
+      [jobId],
+    );
+    let approved = 0;
+    let rejected = 0;
+    let other = 0;
+    let total = 0;
+    for (const r of res.rows) {
+      const n = Number(r.n);
+      total += n;
+      if (r.review_status === 'approved') approved += n;
+      else if (r.review_status === 'rejected') rejected += n;
+      else other += n;
+    }
+    let status: ImportJobStatus = 'parsed';
+    if (total > 0) {
+      if (approved === total) status = 'approved';
+      else if (approved > 0) status = 'partial';
+      else if (rejected === total) status = 'rejected';
+      else if (approved === 0 && rejected > 0) status = 'rejected';
+    }
+    await this.updateStatus(jobId, status);
+    void other;
+  }
+
+  /** 清理上传源文件（任务结束） */
+  private async cleanupSource(jobId: string): Promise<void> {
+    try {
+      await fs.rm(join(process.cwd(), 'data', 'import', jobId), { recursive: true, force: true });
+    } catch {
+      /* best-effort */
     }
   }
 
@@ -984,6 +1362,11 @@ function mapJob(row: Record<string, unknown>): ImportJob {
     status: row.status as ImportJobStatus,
     itemCount: Number(row.item_count ?? 0),
     parseError: row.parse_error === null || row.parse_error === undefined ? null : String(row.parse_error),
+    cleanedCount: Number(row.cleaned_count ?? 0),
+    pairedCount: Number(row.paired_count ?? 0),
+    unpairedCount: Number(row.unpaired_count ?? 0),
+    datasetName: row.dataset_name == null ? null : String(row.dataset_name),
+    sourceShape: row.source_shape == null ? null : String(row.source_shape),
     createdAt: new Date(row.created_at as string).toISOString(),
     updatedAt: new Date(row.updated_at as string).toISOString(),
   };
@@ -1000,7 +1383,8 @@ function mapItem(row: Record<string, unknown> | undefined): ImportItem {
     return {
       id: '', jobId: '', question: '', answerRaw: '', answerRedacted: '',
       sensitiveFlags: [], reviewStatus: 'pending', reviewedAt: null,
-      reviewerNote: null, createdAt: '',
+      reviewerNote: null, importedQaId: null, autoBlocked: false,
+      similarQaId: null, suggestAction: null, createdAt: '',
     };
   }
   const flags = row.sensitive_flags;
@@ -1014,6 +1398,10 @@ function mapItem(row: Record<string, unknown> | undefined): ImportItem {
     reviewStatus: row.review_status as ImportItem['reviewStatus'],
     reviewedAt: row.reviewed_at == null ? null : new Date(row.reviewed_at as string).toISOString(),
     reviewerNote: row.reviewer_note == null ? null : String(row.reviewer_note),
+    importedQaId: row.imported_qa_id == null ? null : String(row.imported_qa_id),
+    autoBlocked: row.auto_blocked === true,
+    similarQaId: row.similar_qa_id == null ? null : String(row.similar_qa_id),
+    suggestAction: row.suggest_action == null ? null : String(row.suggest_action),
     createdAt: new Date(row.created_at as string).toISOString(),
   };
 }

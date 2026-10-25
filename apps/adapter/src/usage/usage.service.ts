@@ -19,6 +19,8 @@ export interface UsageCounters {
   imagesRecognized: number;
   imagesSkipped: number;
   messagesTriggered: number;
+  /** 模型通道切云次数（增项 D） */
+  llmFailovers: number;
 }
 
 export interface UsageSnapshot {
@@ -45,6 +47,7 @@ export class UsageService implements OnModuleInit {
     imagesRecognized: 0,
     imagesSkipped: 0,
     messagesTriggered: 0,
+    llmFailovers: 0,
   };
   private periodStart: Date;
   private currentPeriod: UsagePeriod;
@@ -141,6 +144,7 @@ export class UsageService implements OnModuleInit {
         imagesRecognized: 0,
         imagesSkipped: 0,
         messagesTriggered: 0,
+        llmFailovers: 0,
       };
       this.periodStart = now;
       this.currentPeriod = period;

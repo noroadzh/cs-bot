@@ -32,9 +32,11 @@ export class IllegalTenantTransition extends HttpException {
 
 const TRANSITIONS: Record<TenantStatus, readonly TenantStatus[]> = {
   created: ['provisioning'],
+  trialing: ['active', 'terminated'],
   provisioning: ['active', 'provisioning_failed'],
   active: ['grace', 'suspended', 'terminated', 'paused'],
   grace: ['active', 'suspended', 'paused', 'terminated'],
+  // suspended 与 paused 互为别名（概设用 suspended，旧数据用 paused）
   suspended: ['active', 'terminated'],
   paused: ['active', 'terminated'],
   terminated: [],

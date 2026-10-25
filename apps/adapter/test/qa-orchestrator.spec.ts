@@ -202,4 +202,52 @@ describe('QaOrchestrator', () => {
     expect(usage.increment).toHaveBeenCalledWith('messagesMissed');
     expect(usage.increment).toHaveBeenCalledWith('messagesRefused');
   });
+
+  it('D-3.1 local 模式经 ModelRouter 直连，不经 engine', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine();
+    const router = {
+      chat: jest.fn(async () => ({ text: 'local-answer', source: 'local' })),
+      getMode: () => 'local',
+    };
+    const orch = new QaOrchestrator(
+      engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
+      stubUsage(), makeSender() as any,
+    );
+    orch.setModelRouter(router as any);
+    await orch.handle(makeMsg(), 'trace-d1', 'keyword');
+    expect(router.chat).toHaveBeenCalled();
+    expect(engine.ask).not.toHaveBeenCalled();
+  });
+
+  it('D-3.2 hybrid 切云时计数 llmFailovers', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine();
+    const usage = stubUsage();
+    const router = {
+      chat: jest.fn(async () => ({ text: 'cloud-answer', source: 'cloud', failover: true })),
+      getMode: () => 'hybrid',
+    };
+    const orch = new QaOrchestrator(
+      engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
+      usage, makeSender() as any,
+    );
+    orch.setModelRouter(router as any);
+    await orch.handle(makeMsg(), 'trace-d2', 'keyword');
+    expect(usage.increment).toHaveBeenCalledWith('llmFailovers');
+  });
+
+  it('D-3.1 cloud 模式走 engine（不调用 router）', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine();
+    const router = { chat: jest.fn(), getMode: () => 'cloud' };
+    const orch = new QaOrchestrator(
+      engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
+      stubUsage(), makeSender() as any,
+    );
+    orch.setModelRouter(router as any);
+    await orch.handle(makeMsg(), 'trace-d3', 'keyword');
+    expect(engine.ask).toHaveBeenCalled();
+    expect(router.chat).not.toHaveBeenCalled();
+  });
 });

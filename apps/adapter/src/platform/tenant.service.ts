@@ -24,6 +24,11 @@ import { TenantUsageService } from './tenant-usage.service.js';
 import { TenantStateMachine } from './tenant.state-machine.js';
 import type { TenantProvisioner } from './provisioner/provisioner.js';
 import { ShellProvisioner } from './provisioner/shell-provisioner.js';
+import {
+  type CertificateProvider,
+  type LicenseIssuer,
+  NoopLicenseIssuer,
+} from './certificate-provider.js';
 import type {
   Tenant,
   TenantCreateInput,
@@ -53,6 +58,19 @@ export class TenantService {
     });
     // Default: ShellProvisioner; tests can substitute
     this.provisioner = new ShellProvisioner(ConfigService.instance);
+  }
+
+  private certProvider: CertificateProvider = {
+    issue: async (domain: string) => ({ cert: `CERT:${domain}`, key: `KEY:${domain}` }),
+  };
+  private licenseIssuer: LicenseIssuer = new NoopLicenseIssuer();
+
+  setCertificateProvider(p: CertificateProvider): void {
+    this.certProvider = p;
+  }
+
+  setLicenseIssuer(p: LicenseIssuer): void {
+    this.licenseIssuer = p;
   }
 
   // -------------------------------------------------------------------------
@@ -133,6 +151,8 @@ export class TenantService {
     try {
       // Render compose file
       await this.provisioner.render(tenant);
+      // TLS 证书（失败 → 回滚 + provisioning_failed）
+      await this.certProvider.issue(tenant.host ?? tenant.id);
       // Up
       await this.provisioner.up(tenant);
       // Probe
@@ -162,6 +182,9 @@ export class TenantService {
           detail: 'health probe timed out after ' + timeoutMs + 'ms',
         });
       }
+
+      // 订阅期授权签发（绑定指纹）
+      await this.licenseIssuer.issue({ id: tenant.id, host: tenant.host });
 
       // Success → active
       await this.pool.query(

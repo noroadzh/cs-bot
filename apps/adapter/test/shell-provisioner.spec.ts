@@ -199,5 +199,13 @@ describe('ShellProvisioner.render', () => {
     expect(content).toContain('name: csbot-t-' + t.id);
     expect(content).toContain('TENANT_ID=' + t.id);
     expect(content).toContain('"18001:3000"');
+    // 资源隔离（概设 M11）
+    const net = 'csbot-t-' + t.id + '-net';
+    expect(content).toContain(net);
+    expect(content).toContain('POSTGRES_DB=tenant_' + t.id.replace(/-/g, '_'));
+    expect(content).toContain('  redis:');
+    expect(content).toContain('  mongo:');
+    expect(content).toContain('networks:');
+    expect(content).toContain('/pg:');
   });
 });

@@ -5,6 +5,7 @@
 
 export type TenantStatus =
   | 'created'
+  | 'trialing'
   | 'provisioning'
   | 'active'
   | 'grace'
@@ -43,6 +44,8 @@ export interface TenantQuota {
   maxApiCalls: number;
   /** 对应 spec 的 max_concurrent_qa（DB 列 max_users） */
   maxUsers: number;
+  /** LLM token 月度上限（0 = 不限） */
+  maxLlmTokensPerMonth: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -104,6 +107,7 @@ export interface TenantQuotaPatch {
   maxStorageMb?: number;
   maxApiCalls?: number;
   maxUsers?: number;
+  maxLlmTokensPerMonth?: number;
 }
 
 export interface QuotaConsumeKind {

@@ -40,6 +40,7 @@ function quotaRow(over: Record<string, unknown> = {}) {
     max_storage_mb: 2048,
     max_api_calls: 5000,
     max_users: 2,
+    max_llm_tokens_per_month: 0,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-02T00:00:00.000Z',
     ...over,
@@ -112,12 +113,14 @@ describe('TenantQuotaService', () => {
         maxStorageMb: 2048,
         maxApiCalls: 5000,
         maxUsers: 2,
+        maxLlmTokensPerMonth: 0,
       });
       expect(arg.payload.after).toEqual({
         maxChats: 10,
         maxStorageMb: 2048,
         maxApiCalls: 5000,
         maxUsers: 2,
+        maxLlmTokensPerMonth: 0,
       });
     });
 
@@ -130,6 +133,17 @@ describe('TenantQuotaService', () => {
       const sql = poolQuery.mock.calls[1][0] as string;
       expect(sql).toContain('max_users = $2');
       expect(sql).not.toContain('max_chats = $');
+    });
+
+    it('setQuota 后向配额下发通道推送新配额', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [quotaRow()] });
+      poolQuery.mockResolvedValueOnce({ rows: [quotaRow({ max_chats: 10 })] });
+      const push = jest.fn(async (_id: string, _q: any) => undefined);
+      const s = svc();
+      s.setQuotaPusher({ push });
+      await s.setQuota('t1', { maxChats: 10 });
+      expect(push).toHaveBeenCalledTimes(1);
+      expect((push as any).mock.calls[0][1].maxChats).toBe(10);
     });
   });
 
@@ -164,6 +178,7 @@ describe('TenantQuotaService', () => {
         DEFAULT_QUOTA.maxStorageMb,
         DEFAULT_QUOTA.maxApiCalls,
         DEFAULT_QUOTA.maxUsers,
+        DEFAULT_QUOTA.maxLlmTokensPerMonth,
       ]);
       expect(result.tenantId).toBe('t1');
     });
