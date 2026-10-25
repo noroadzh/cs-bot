@@ -39,7 +39,9 @@ export interface TenantQuota {
   tenantId: string;
   maxChats: number;
   maxStorageMb: number;
+  /** 对应 spec 的 max_msgs_per_day（DB 列 max_api_calls） */
   maxApiCalls: number;
+  /** 对应 spec 的 max_concurrent_qa（DB 列 max_users） */
   maxUsers: number;
   createdAt: string;
   updatedAt: string;

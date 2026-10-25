@@ -24,8 +24,6 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request } from 'express';
 import { ImportJobService, type ImportJobCreated } from './import-job.service.js';
 import type {
-  ImportJobListQuery,
-  ImportItemListQuery,
   ImportJobStatus,
   ReviewStatus,
 } from './import-job.entity.js';
@@ -36,6 +34,18 @@ export interface ImportControllerReq extends Request {
 }
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
+
+/** 分页 limit：默认 50，上限 200 */
+function clampLimit(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.floor(n), 200) : 50;
+}
+
+/** 分页 offset：默认 0 */
+function clampOffset(v: unknown): number {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
 
 @Controller('admin/import-jobs')
 @UseGuards(AdminGuard)
@@ -106,18 +116,14 @@ export class ImportController {
   // 查询
   // -------------------------------------------------------------------------
 
-  /** GET /admin/import-jobs — 分页 + 状态过滤 */
+  /** GET /admin/import-jobs — 分页（limit/offset）+ status 过滤 */
   @Get()
-  async listJobs(@Query() q: ImportJobListQuery) {
-    const { page = 1, pageSize = 50, status, ...rest } = q;
-    const limit = Math.min(Math.max(Number(pageSize) || 50, 1), 200);
-    const offset = (Number(page) || 1) > 0 ? (Number(page) - 1) * limit : 0;
-    const result = await this.service.listJobs({
-      status: status as ImportJobStatus | undefined,
-      limit,
-      offset,
+  async listJobs(@Query() q: Record<string, string | undefined>) {
+    return this.service.listJobs({
+      status: q.status as ImportJobStatus | undefined,
+      limit: clampLimit(q.limit),
+      offset: clampOffset(q.offset),
     });
-    return result;
   }
 
   /** GET /admin/import-jobs/counts — 各状态 job 计数 */
@@ -161,19 +167,21 @@ export class ImportController {
   // 条目审核
   // -------------------------------------------------------------------------
 
-  /** GET /admin/import-jobs/:id/items — 条目分页 */
+  /** GET /admin/import-jobs/:id/items — 条目分页（limit/offset + review_status/sensitive 过滤） */
   @Get(':id/items')
   async listItems(
     @Param('id') jobId: string,
-    @Query() q: ImportItemListQuery,
+    @Query() q: Record<string, string | undefined>,
   ) {
-    const { page = 1, pageSize = 50, status, ...rest } = q;
-    const limit = Math.min(Math.max(Number(pageSize) || 50, 1), 200);
-    const offset = (Number(page) || 1) > 0 ? (Number(page) - 1) * limit : 0;
+    const sensitiveRaw = q.sensitive;
     return this.service.listItems(jobId, {
-      reviewStatus: status as ReviewStatus | undefined,
-      limit,
-      offset,
+      reviewStatus: (q.review_status ?? q.status) as ReviewStatus | undefined,
+      sensitive:
+        sensitiveRaw === undefined
+          ? undefined
+          : sensitiveRaw === 'true' || sensitiveRaw === '1',
+      limit: clampLimit(q.limit),
+      offset: clampOffset(q.offset),
     });
   }
 

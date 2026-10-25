@@ -30,7 +30,7 @@
 
 ## 5. M11 配额与用量
 
-- [ ] 5.1 实现 `TenantQuotaService.setQuota`（PATCH 4 个限值 + 审计 before/after）与 `consume`（原子 `UPDATE ... WHERE count+Δ<=limit RETURNING`，0 行区分 429/404），spec 用真 PG 覆盖并发竞争（3 并发仅 1 成功）与超限语义
+- [x] 5.1 实现 `TenantQuotaService.setQuota`（PATCH 4 个限值 + 审计 before/after）与 `consume`（原子 `UPDATE ... WHERE count+Δ<=limit RETURNING`，0 行区分 429/404），spec 用真 PG 覆盖并发竞争（3 并发仅 1 成功）与超限语义
 - [x] 5.2 实现 `TenantUsageService` 日聚合 upsert（ON CONFLICT DO UPDATE）与 `GET usage?from=&to=` 区间查询，spec 覆盖跨天、同天累加、区间边界
 - [x] 5.3 实现 `TenantExpirySweep` cron：active→grace（到期前 7 天）、grace→paused（到期未续）、paused→terminated（暂停 30 天），每次转移写审计（tenant.expired-sweep / tenant.paused-sweep），spec 用假时钟覆盖三段转移与幂等
 
@@ -42,5 +42,5 @@
 ## 7. 端点挂载与集成验证
 
 - [x] 7.1 `admin.module.ts` 挂 import 控制器、`app.module.ts` 注册 ImportModule + PlatformModule，`PLATFORM_ENABLED=false` 时 platform 路由整体关闭；既有全套 jest 通过
-- [ ] 7.2 端到端演练：真实 PG + 假 docker 跑通 创建租户→provision→设配额→超限 429→suspend→resume→terminate→审计 verify=true 全链路；真实 docker compose 单租户 provision 一次冒烟
+- [x] 7.2 端到端演练：真实 PG + 假 docker 跑通 创建租户→provision→设配额→超限 429→suspend→resume→terminate→审计 verify=true 全链路；真实 docker compose 单租户 provision 一次冒烟
 - [x] 7.3 更新 `docs/03-交付实施/部署手册` 增补新 env 与 003/004 迁移说明；`openspec validate add-m10-import-m11-platform --strict` 通过

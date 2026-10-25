@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS import_item (
     question TEXT NOT NULL,
     answer_raw TEXT NOT NULL,
     answer_redacted TEXT,
-    sensitive_flags VARCHAR(100) DEFAULT '', -- comma-separated: phone,idcard,bankcard,email,url
+    sensitive_flags JSONB NOT NULL DEFAULT '[]'::jsonb, -- 命中类型数组：["phone","idcard",...]
     review_status VARCHAR(20) NOT NULL DEFAULT 'pending',
     -- review_status: pending, approved, rejected
     reviewer_note TEXT,
@@ -35,6 +35,23 @@ CREATE TABLE IF NOT EXISTS import_item (
     deleted_at TIMESTAMPTZ
 );
 
+-- 兼容旧表：sensitive_flags 由 VARCHAR 迁移为 JSONB（存 JSON 数组，供 jsonb_array_length / 过滤）
+-- 先删旧索引（其 WHERE 在 jsonb 下无法解析），再改类型
+DROP INDEX IF EXISTS idx_import_item_sensitive;
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'import_item' AND column_name = 'sensitive_flags'
+      AND data_type <> 'jsonb'
+  ) THEN
+    ALTER TABLE import_item ALTER COLUMN sensitive_flags DROP DEFAULT;
+    ALTER TABLE import_item ALTER COLUMN sensitive_flags TYPE JSONB
+      USING (CASE WHEN sensitive_flags IS NULL OR sensitive_flags::text = '' THEN '[]'::jsonb
+                  ELSE sensitive_flags::text::jsonb END);
+    ALTER TABLE import_item ALTER COLUMN sensitive_flags SET DEFAULT '[]'::jsonb;
+  END IF;
+END $$;
+
 -- 索引: import_job
 CREATE INDEX IF NOT EXISTS idx_import_job_status ON import_job(status);
 CREATE INDEX IF NOT EXISTS idx_import_job_created_at ON import_job(created_at DESC);
@@ -43,11 +60,15 @@ CREATE INDEX IF NOT EXISTS idx_import_job_source_hash ON import_job(source_hash)
 -- 索引: import_item
 CREATE INDEX IF NOT EXISTS idx_import_item_job_id ON import_item(job_id);
 CREATE INDEX IF NOT EXISTS idx_import_item_review_status ON import_item(review_status);
-CREATE INDEX IF NOT EXISTS idx_import_item_sensitive ON import_item(sensitive_flags) WHERE sensitive_flags <> '';
+CREATE INDEX IF NOT EXISTS idx_import_item_sensitive ON import_item(sensitive_flags) WHERE jsonb_array_length(sensitive_flags) > 0;
 
--- 状态 CHECK 约束
-ALTER TABLE import_job ADD CONSTRAINT chk_import_job_status
-    CHECK (status IN ('uploaded', 'parsing', 'parsed', 'failed', 'approved', 'partial', 'rejected'));
+-- 状态 CHECK 约束（幂等：重复执行自动跳过）
+DO $$ BEGIN
+    ALTER TABLE import_job ADD CONSTRAINT chk_import_job_status
+        CHECK (status IN ('uploaded', 'parsing', 'parsed', 'failed', 'approved', 'partial', 'rejected'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
-ALTER TABLE import_item ADD CONSTRAINT chk_import_item_review_status
-    CHECK (review_status IN ('pending', 'approved', 'rejected'));
+DO $$ BEGIN
+    ALTER TABLE import_item ADD CONSTRAINT chk_import_item_review_status
+        CHECK (review_status IN ('pending', 'approved', 'rejected'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

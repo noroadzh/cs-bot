@@ -32,7 +32,10 @@ import type {
   ImportJobStatus,
   ImportItem,
   ReviewStatus,
+  ImportJobListQuery,
+  ImportItemListQuery,
 } from './import-job.entity.js';
+export type { ImportJobListQuery, ImportItemListQuery };
 
 /** 命中即短路，不再重复解析的历史状态 */
 const REUSABLE_STATUSES: readonly ImportJobStatus[] = [
@@ -49,6 +52,14 @@ const DELETABLE_STATUSES: readonly ImportJobStatus[] = [
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 200;
+
+/** 允许的导入文件扩展名（spec: .txt/.md/.csv/.json/.xlsx，兼容 .jsonl） */
+const ALLOWED_EXT = new Set(['.txt', '.md', '.csv', '.json', '.jsonl', '.xlsx']);
+
+/** 文件名含路径分隔符或 .. → 视为路径穿越（spec: import storage path isolation） */
+function isUnsafeFilename(name: string): boolean {
+  return /[\\/]/.test(name) || name.includes('..');
+}
 
 /**
  * 逐条 PATCH 审核的状态机（见 reviewItem 注释）。
@@ -108,19 +119,6 @@ function emptyStatusCounts(): Record<ImportJobStatus, number> {
     uploaded: 0, parsing: 0, parsed: 0, failed: 0,
     approved: 0, partial: 0, rejected: 0,
   };
-}
-
-export interface ImportJobListQuery {
-  limit?: number;
-  offset?: number;
-  /** 省略 = 不按状态过滤 */
-  status?: ImportJobStatus;
-}
-
-export interface ImportItemListQuery {
-  limit?: number;
-  offset?: number;
-  reviewStatus?: ReviewStatus;
 }
 
 export interface ImportJobPage {
@@ -189,6 +187,26 @@ export class ImportJobService {
    * MIME 早拒让错误在建 job 前返回，不留 uploaded 孤儿行。
    */
   async createFromFile(input: CreateFromFileInput): Promise<ImportJobCreated> {
+    // 路径穿越 / 非法文件名 → 400（spec: import storage path isolation）
+    if (isUnsafeFilename(input.filename)) {
+      throw new HttpException(
+        { errCode: 'IMPORT_UNSAFE_FILENAME', detail: `unsafe filename: ${input.filename}` },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+    // 扩展名白名单（有扩展名时）→ 415（spec: upload extension validation）
+    const ext = extname(input.filename).toLowerCase();
+    if (ext && !ALLOWED_EXT.has(ext)) {
+      throw new HttpException(
+        {
+          errCode: 'UNSUPPORTED_EXTENSION',
+          detail: `unsupported extension: ${ext}`,
+          allowed: [...ALLOWED_EXT],
+        },
+        HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+      );
+    }
+
     const maxBytes = ConfigService.instance.IMPORT_MAX_FILE_BYTES;
     if (input.bytes.length > maxBytes) {
       throw new HttpException(
@@ -449,23 +467,33 @@ export class ImportJobService {
   ): Promise<ImportItemPage> {
     const limit = clamp(opts.limit ?? DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
     const offset = Math.max(0, opts.offset ?? 0);
-    const review = opts.reviewStatus ?? null;
 
-    const where = review === null ? 'WHERE job_id = $1' : 'WHERE job_id = $1 AND review_status = $4';
-    const params: unknown[] =
-      review === null ? [jobId, limit, offset] : [jobId, limit, offset, review];
+    const conds: string[] = ['job_id = $1'];
+    const filterParams: unknown[] = [jobId];
+    if (opts.reviewStatus) {
+      filterParams.push(opts.reviewStatus);
+      conds.push(`review_status = $${filterParams.length}`);
+    }
+    if (opts.sensitive === true) {
+      conds.push('jsonb_array_length(sensitive_flags) > 0');
+    } else if (opts.sensitive === false) {
+      conds.push('jsonb_array_length(sensitive_flags) = 0');
+    }
+    const where = 'WHERE ' + conds.join(' AND ');
+
+    const limitIdx = filterParams.length + 1;
+    const offsetIdx = filterParams.length + 2;
+    const pageParams = [...filterParams, limit, offset];
 
     const [page, count] = await Promise.all([
       this.pool.query(
         `SELECT * FROM import_item ${where}
-          ORDER BY created_at ASC, id ASC LIMIT $2 OFFSET $3`,
-        params,
+          ORDER BY created_at ASC, id ASC LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+        pageParams,
       ),
       this.pool.query(
-        review === null
-          ? 'SELECT COUNT(*)::int AS n FROM import_item WHERE job_id = $1'
-          : 'SELECT COUNT(*)::int AS n FROM import_item WHERE job_id = $1 AND review_status = $2',
-        review === null ? [jobId] : [jobId, review],
+        `SELECT COUNT(*)::int AS n FROM import_item ${where}`,
+        filterParams,
       ),
     ]);
 

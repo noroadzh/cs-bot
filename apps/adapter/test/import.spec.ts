@@ -472,6 +472,19 @@ describe('ImportController (supertest)', () => {
       expect(res.status).toBe(413);
       expect(res.body.errCode).toBe('IMPORT_FILE_TOO_LARGE');
     });
+
+    it('非法扩展名 .docx → 415 UNSUPPORTED_EXTENSION', async () => {
+      const res = await request(app.getHttpServer())
+        .post(baseURL)
+        .set('Authorization', auth)
+        .attach('file', Buffer.from('hello', 'utf8'), {
+          filename: 'faq.docx',
+          contentType:
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        });
+      expect(res.status).toBe(415);
+      expect(res.body.errCode).toBe('UNSUPPORTED_EXTENSION');
+    });
   });
 
   // ---- POST /admin/import-jobs/from-url ----
@@ -522,7 +535,7 @@ describe('ImportController (supertest)', () => {
           .set('Authorization', auth)
           .send({ url: 'https://example.com/data.xml', name: 'xml-import' });
         expect(res.status).toBe(415);
-        expect(res.body.errCode).toBe('UNSUPPORTED_MEDIA_TYPE');
+        expect(res.body.errCode).toBe('UNSUPPORTED_EXTENSION');
       } finally {
         global.fetch = origFetch;
       }

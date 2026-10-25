@@ -357,7 +357,8 @@ export class TenantService {
   // -------------------------------------------------------------------------
 
   async terminate(tenantId: string, actor = 'system'): Promise<Tenant> {
-    const tenant = await this.requireTenant(tenantId);
+    // includeDeleted：已终止的租户被软删后，二次 terminate 仍需幂等返回
+    const tenant = await this.requireTenant(tenantId, true);
 
     // Idempotent: already terminated → return as-is
     if (tenant.status === 'terminated') {
@@ -378,13 +379,23 @@ export class TenantService {
 
     // DROP DATABASE (best-effort)
     if (droppedDatabase) {
-      try {
-        const conn = await this.pool.connect();
-        await conn.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()');
-        await conn.query('DROP DATABASE IF EXISTS ' + tenant.databaseUrl);
-        conn.release();
-      } catch {
-        // ignore DROP DATABASE failures
+      const dbName = extractDbName(tenant.databaseUrl!);
+      const conn = await this.pool.connect().catch(() => null);
+      if (conn && dbName) {
+        try {
+          // 只终止该租户库的连接，绝不能动适配层自身库
+          await conn.query(
+            'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+            [dbName],
+          );
+          await conn.query(`DROP DATABASE IF EXISTS "${dbName.replace(/"/g, '""')}"`);
+        } catch {
+          // ignore DROP DATABASE failures
+        } finally {
+          conn.release();
+        }
+      } else {
+        conn?.release();
       }
     }
 
@@ -400,7 +411,8 @@ export class TenantService {
       payload: { tenantId, droppedDatabase },
     });
 
-    return this.requireTenant(tenantId);
+    // 已软删（deleted_at 非空），返回时需 includeDeleted
+    return this.requireTenant(tenantId, true);
   }
 
   // -------------------------------------------------------------------------
@@ -457,11 +469,11 @@ export class TenantService {
   // Helpers
   // -------------------------------------------------------------------------
 
-  async requireTenant(id: string): Promise<Tenant> {
+  async requireTenant(id: string, includeDeleted = false): Promise<Tenant> {
     const res = await this.pool.query(
       `SELECT id, name, status, host, port, database_url, created_at, updated_at,
               expired_at, last_provision_log, deleted_at
-       FROM tenant WHERE id = $1 AND deleted_at IS NULL`,
+       FROM tenant WHERE id = $1${includeDeleted ? '' : ' AND deleted_at IS NULL'}`,
       [id],
     );
     if (res.rows.length === 0) {
@@ -509,4 +521,19 @@ function mapTenantRow(row: Record<string, unknown>): Tenant {
 
 function provisionerPath(tenantId: string): string {
   return ConfigService.instance.PLATFORM_COMPOSE_DIR + '/' + tenantId + '/docker-compose.yml';
+}
+
+/**
+ * 从 database_url 解析库名：既兼容连接串（postgresql://.../dbname），
+ * 也兼容直接给库名的旧数据。
+ */
+function extractDbName(databaseUrl: string): string {
+  if (databaseUrl.includes('://')) {
+    try {
+      return new URL(databaseUrl).pathname.replace(/^\//, '');
+    } catch {
+      return '';
+    }
+  }
+  return databaseUrl;
 }

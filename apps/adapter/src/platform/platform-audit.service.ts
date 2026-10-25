@@ -66,9 +66,9 @@ export class PlatformAuditService {
     try {
       await client.query('BEGIN');
 
-      // FOR UPDATE 锁住最后一行（防止并发分叉）
+      // FOR UPDATE 锁住最后一行（防止并发分叉）；按 seq（插入顺序）而非随机 UUID
       const lastRes = await client.query(
-        'SELECT hash FROM platform_audit_log ORDER BY id DESC LIMIT 1 FOR UPDATE',
+        'SELECT hash FROM platform_audit_log ORDER BY seq DESC LIMIT 1 FOR UPDATE',
       );
       const prevHash = lastRes.rows.length > 0 ? String(lastRes.rows[0].hash) : '';
 
@@ -149,7 +149,7 @@ export class PlatformAuditService {
         `SELECT id, tenant_id, action, actor, payload, prev_hash, hash, created_at
          FROM platform_audit_log
          ${whereSql}
-         ORDER BY created_at DESC, id DESC
+         ORDER BY created_at DESC, seq DESC
          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
         [...params, limit, offset],
       ),
@@ -175,7 +175,7 @@ export class PlatformAuditService {
     const res = await this.pool.query(
       `SELECT id, tenant_id, action, actor, payload, prev_hash, hash, created_at
        FROM platform_audit_log
-       ORDER BY id ASC`,
+       ORDER BY seq ASC`,
     );
     const rows = res.rows;
     let prevHash = '';

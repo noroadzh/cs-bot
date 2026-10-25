@@ -123,10 +123,10 @@ describe('ImportJobService.createFromFile', () => {
       expect(poolQuery).not.toHaveBeenCalled();
     });
 
-    it('MIME 不支持 → 415，且在建 job 之前返回（不落 uploaded 孤儿行）', async () => {
+    it('MIME 不支持 → 415（扩展名合法但 MIME 未知）', async () => {
       await expect(
         svc.createFromFile({
-          filename: 'evil.exe',
+          filename: 'evil.csv',
           mimeType: 'application/x-msdownload',
           bytes: Buffer.from('x'),
         }),
@@ -239,21 +239,19 @@ describe('ImportJobService.createFromFile', () => {
       expect(poolQuery.mock.calls[1][1][1]).toBe('demo.csv');
     });
 
-    it('sourceHash 是文件字节的 sha256，扩展名超长时截断防路径穿越', async () => {
-      mockNoReuse();
-      const evil = '../../etc/passwd.csv';
-
-      const res = await svc.createFromFile({
-        filename: evil,
-        mimeType: 'text/csv',
-        bytes: CSV_BYTES,
+    it('路径穿越文件名 → 400（storage path isolation）', async () => {
+      await expect(
+        svc.createFromFile({
+          filename: '../../etc/passwd.csv',
+          mimeType: 'text/csv',
+          bytes: CSV_BYTES,
+        }),
+      ).rejects.toMatchObject({
+        status: HttpStatus.BAD_REQUEST,
+        response: { errCode: 'IMPORT_UNSAFE_FILENAME' },
       });
-
-      // 落盘路径由 jobId 决定，不含用户提供的目录部分
-      expect(res.storedPath).toMatch(/data[\\/]import[\\/][0-9a-f-]+[\\/]source\.csv$/);
-      expect(res.storedPath).not.toContain('..');
-      const hash = poolQuery.mock.calls[1][1][3] as string;
-      expect(hash).toMatch(/^[0-9a-f]{64}$/);
+      expect(fsWriteFile).not.toHaveBeenCalled();
+      expect(poolQuery).not.toHaveBeenCalled();
     });
   });
 });
@@ -500,10 +498,28 @@ describe('ImportJobService 查询/删除', () => {
 
       await svc.listItems('job-1', { reviewStatus: 'approved', limit: 5, offset: 2 });
 
-      expect(sqlOf(0)).toContain('WHERE job_id = $1 AND review_status = $4');
-      expect(poolQuery.mock.calls[0][1]).toEqual(['job-1', 5, 2, 'approved']);
+      expect(sqlOf(0)).toContain('WHERE job_id = $1 AND review_status = $2');
+      expect(poolQuery.mock.calls[0][1]).toEqual(['job-1', 'approved', 5, 2]);
       expect(sqlOf(1)).toContain('review_status = $2');
       expect(poolQuery.mock.calls[1][1]).toEqual(['job-1', 'approved']);
+    });
+
+    it('sensitive=true → WHERE jsonb_array_length(sensitive_flags) > 0', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [] });
+      poolQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
+
+      await svc.listItems('job-1', { sensitive: true, limit: 5 });
+
+      expect(sqlOf(0)).toContain('jsonb_array_length(sensitive_flags) > 0');
+    });
+
+    it('sensitive=false → WHERE jsonb_array_length(sensitive_flags) = 0', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [] });
+      poolQuery.mockResolvedValueOnce({ rows: [{ n: 0 }] });
+
+      await svc.listItems('job-1', { sensitive: false, limit: 5 });
+
+      expect(sqlOf(0)).toContain('jsonb_array_length(sensitive_flags) = 0');
     });
   });
 

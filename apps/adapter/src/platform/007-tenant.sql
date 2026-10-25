@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS tenant_usage_daily (
 -- 平台审计日志表 (链式)
 CREATE TABLE IF NOT EXISTS platform_audit_log (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    seq BIGSERIAL, -- 插入顺序（审计链按此串接；UUID 随机不可当顺序）
     tenant_id UUID REFERENCES tenant(id) ON DELETE SET NULL,
     action VARCHAR(100) NOT NULL,
     actor VARCHAR(255) NOT NULL, -- 操作者标识（IP、service account 等）
@@ -55,6 +56,10 @@ CREATE TABLE IF NOT EXISTS platform_audit_log (
     hash VARCHAR(64) NOT NULL, -- 本条记录的 hash = sha256(prev_hash + action + actor + payload + created_at)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- 兼容已建表：补自增序号列（旧表无 seq 时填充），并建唯一索引
+ALTER TABLE platform_audit_log ADD COLUMN IF NOT EXISTS seq BIGSERIAL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_platform_audit_log_seq ON platform_audit_log(seq);
 
 -- 索引: tenant
 CREATE INDEX IF NOT EXISTS idx_tenant_status ON tenant(status);
@@ -70,6 +75,8 @@ CREATE INDEX IF NOT EXISTS idx_platform_audit_log_action ON platform_audit_log(a
 CREATE INDEX IF NOT EXISTS idx_platform_audit_log_created_at ON platform_audit_log(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_platform_audit_log_hash ON platform_audit_log(hash);
 
--- 状态 CHECK 约束
-ALTER TABLE tenant ADD CONSTRAINT chk_tenant_status
-    CHECK (status IN ('created', 'provisioning', 'active', 'grace', 'suspended', 'paused', 'terminated', 'provisioning_failed'));
+-- 状态 CHECK 约束（幂等：重复执行自动跳过）
+DO $$ BEGIN
+    ALTER TABLE tenant ADD CONSTRAINT chk_tenant_status
+        CHECK (status IN ('created', 'provisioning', 'active', 'grace', 'suspended', 'paused', 'terminated', 'provisioning_failed'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;

@@ -138,7 +138,7 @@ describe('ImportController', () => {
         { id: 'j1', status: 'uploaded' } as ImportJob,
         { id: 'j2', status: 'parsed' } as ImportJob,
       ]);
-      const res = await ctrl.listJobs({ status: 'uploaded', page: 1, pageSize: 10 } as ImportJobListQuery);
+      const res = await ctrl.listJobs({ status: 'uploaded', limit: '10', offset: '0' });
       expect(svc.listJobs).toHaveBeenCalledWith({ status: 'uploaded', limit: 10, offset: 0 });
       expect(res).toHaveLength(2);
     });
@@ -233,9 +233,18 @@ describe('ImportController', () => {
         ],
         total: 2, limit: 20, offset: 0,
       });
-      const res = await ctrl.listItems('j1', { status: 'pending', page: 1, pageSize: 20 } as any);
-      expect(svc.listItems).toHaveBeenCalledWith('j1', { reviewStatus: 'pending', limit: 20, offset: 0 });
+      const res = await ctrl.listItems('j1', { review_status: 'pending', limit: '20', offset: '0' });
+      expect(svc.listItems).toHaveBeenCalledWith('j1', { reviewStatus: 'pending', sensitive: undefined, limit: 20, offset: 0 });
       expect(res.items).toHaveLength(2);
+    });
+
+    it('sensitive=true 透传给 service', async () => {
+      svc.listItems.mockResolvedValue({ items: [], total: 0, limit: 20, offset: 0 });
+      await ctrl.listItems('j1', { sensitive: 'true', limit: '20' });
+      expect(svc.listItems).toHaveBeenCalledWith(
+        'j1',
+        expect.objectContaining({ sensitive: true, limit: 20, offset: 0 }),
+      );
     });
   });
 

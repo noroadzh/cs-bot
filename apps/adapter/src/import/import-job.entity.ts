@@ -78,15 +78,18 @@ export interface ApproveAllInput {
  */
 export interface ImportJobListQuery {
   status?: ImportJobStatus;
-  page?: number;
-  pageSize?: number;
+  /** 默认 50，上限 200 */
+  limit?: number;
+  offset?: number;
 }
 
 /**
  * ImportItemListQuery - listItems query
  */
 export interface ImportItemListQuery {
-  status?: ReviewStatus;
-  page?: number;
-  pageSize?: number;
+  reviewStatus?: ReviewStatus;
+  /** true = 仅含敏感命中（sensitive_flags 非空）；false = 仅不含 */
+  sensitive?: boolean;
+  limit?: number;
+  offset?: number;
 }
