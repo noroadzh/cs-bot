@@ -4,7 +4,7 @@
 
 - [x] 1.1 写追加式迁移 `apps/adapter/src/import/007-import-pipeline.sql`：`import_job` 增阶段计数（cleaned/paired/unpaired）与 `dataset_name`；`import_item` 增 `imported_qa_id`、`auto_blocked`、`similar_qa_id`；新增 `import_unpaired` 表；索引；幂等 DDL
 - [x] 1.2 新增 `config/import-rules.yml`（清洗规则）与 `config/import-blacklist.txt`（黑名单）样例，进 `config.schema.ts` 路径配置
-- [ ] 1.3 流式解析改造：xlsx 用 exceljs stream、csv/txt 逐行、企微存档 JSON 流式；spec 校验峰值内存 < 200MB（大文件样本）
+- [x] 1.3 流式解析改造：xlsx 用 exceljs stream、csv/txt 逐行、企微存档 JSON 流式；spec 校验峰值内存 < 200MB（大文件样本）
 
 ## 2. 清洗与配对
 

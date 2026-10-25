@@ -3,7 +3,7 @@
 ## 1. 配置
 
 - [x] 1.1 `config.schema.ts` 新增 `MODEL_MODE`、`LOCAL_LLM_BASE_URL`、`LOCAL_EMBEDDING_URL`、`LOCAL_LLM_MODEL`；local/hybrid 时 fail-fast 校验
-- [ ] 1.2 `.env.template` 与部署手册补本地模型字段
+- [x] 1.2 `.env.template` 与部署手册补本地模型字段
 
 ## 2. 模型路由
 
@@ -18,8 +18,8 @@
 
 ## 4. 部署配套
 
-- [ ] 4.1 `deploy/local-models-compose.yml`（vllm + xinference）+ 模型拉取/健康检查脚本
-- [ ] 4.2 运行手册：embedding 切换必须全量重建索引；local/hybrid 时延预期
+- [x] 4.1 `deploy/local-models-compose.yml`（vllm + xinference）+ 模型拉取/健康检查脚本
+- [x] 4.2 运行手册：embedding 切换必须全量重建索引；local/hybrid 时延预期
 
 ## 5. 验证
 

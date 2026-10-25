@@ -43,5 +43,5 @@
 
 ## 8. 端到端验证
 
-- [ ] 8.1 真实 PG + 假 docker/cert provider 跑通：create → provision（隔离资源+证书+授权）→ quota push → upgrade canary → 回滚 → export → destroy 双签 → verify
+- [x] 8.1 真实 PG + 假 docker/cert provider 跑通：create → provision（隔离资源+证书+授权）→ quota push → upgrade canary → 回滚 → export → destroy 双签 → verify
 - [ ] 8.2 跨租户检索 0 命中抽测；`openspec validate complete-m11-control-plane --strict` 通过

@@ -1,0 +1,53 @@
+# 增项 D：本地模型推理栈（vllm 推理 + xinference embedding）
+# 用法：docker compose -f deploy/local-models-compose.yml up -d
+# 前置：GPU 驱动 + NVIDIA Container Toolkit；镜像名可按客户环境替换。
+services:
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: csbot-vllm
+    restart: unless-stopped
+    command:
+      - "--model"
+      - "${LOCAL_LLM_MODEL:-Qwen/Qwen2.5-7B-Instruct}"
+      - "--max-model-len"
+      - "8192"
+      - "--port"
+      - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - vllm-models:/root/.cache/huggingface
+    # 按需启用 GPU（无 GPU 兜底可用 CPU 镜像）
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+
+  xinference:
+    image: xprobe/xinference:latest
+    container_name: csbot-xinference
+    restart: unless-stopped
+    command: ["xinference-local", "--host", "0.0.0.0", "--port", "9997"]
+    ports:
+      - "127.0.0.1:9997:9997"
+    volumes:
+      - xinference-models:/root/.xinference
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9997/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+volumes:
+  vllm-models:
+  xinference-models:

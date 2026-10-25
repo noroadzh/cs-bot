@@ -200,6 +200,7 @@ cp .env.template .env && chmod 600 .env && vim .env
 | MODEL_MODE | | cloud | 模型通道：cloud（基线）/ hybrid（本地优先+云兑底）/ local（全本地）（增项 D） |
 | LOCAL_LLM_BASE_URL | | http://vllm:8000/v1 | 本地推理端点（增项 D） |
 | LOCAL_EMBEDDING_URL | | http://xinference:9997 | 本地 embedding 端点（增项 D） |
+| LOCAL_LLM_MODEL | | Qwen/Qwen2.5-7B-Instruct | 本地模型名称（增项 D） |
 | USAGE_REPORT_ENABLED | | false | 用量上报开关（私有化保持 false） |
 | USAGE_WEBHOOK_URL | | - | 用量上报 Webhook 地址（SaaS 形态填，私有化为空） |
 | USAGE_REPORT_INTERVAL_MS | | 86400000 | 快照周期（默认 24h，毫秒） |
@@ -403,6 +404,11 @@ CONFIDENCE_THRESHOLD=0.75
 CONTEXT_ROUNDS=5
 CONTEXT_TTL_SEC=600
 LLM_TIMEOUT_MS=15000
+# ---- 模型通道（增项 D：默认 cloud；本地档填 LOCAL_*）----
+MODEL_MODE=cloud
+LOCAL_LLM_BASE_URL=
+LOCAL_EMBEDDING_URL=
+LOCAL_LLM_MODEL=
 MISS_RECORD_RETENTION_DAYS=90
 USAGE_REPORT_ENABLED=false
 # ---- 知识导入（M10，默认即可）----
@@ -441,11 +447,10 @@ MAX_ASSET_REFS=2
 **D.2 部署步骤**
 
 ```bash
-# 1) 拉起推理与 embedding 服务（部署包含 local-models-compose.yml）
-docker compose -f local-models-compose.yml up -d     # vllm + xinference
-# 2) 拉模型（首次 ~15G 下载）
-docker exec vllm vllm serve Qwen/Qwen2.5-7B-Instruct --max-model-len 8192
-docker exec xinference xinference launch --model bge-m3
+# 1) 拉起推理与 embedding 服务并健康检查（脚本封装 vllm + xinference + 拉 embedding）
+./deploy/local-models-up.sh
+# 2) 手动补拉 LLM 模型（首次 ~15G 下载；脚本只拉 embedding）
+docker exec csbot-vllm vllm serve Qwen/Qwen2.5-7B-Instruct --max-model-len 8192 || true
 # 3) FastGPT 后台配置渠道：
 #    新增模型渠道 → 地址 http://vllm:8000/v1 → 模型 Qwen2.5-7B-Instruct
 #    embedding 渠道 → 地址 http://xinference:9997 → 模型 bge-m3
@@ -455,7 +460,11 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
 
 **D.3 重要注意事项**
 
-- **embedding 切换必须全量重建向量索引**：云/本地 embedding 向量空间不兼容；在 FastGPT 后台对全部知识库发起重新向量化（5 千 QA 约 0.5–2 小时，选业务低峰）。LLM 通道切换无此限制，可热切。
+- **embedding 切换必须全量重建向量索引**（云 ↔ 本地向量空间不兼容）：
+  1. 切换 embedding 渠道**之前**，在 FastGPT 后台对全部知识库发起「重新向量化」；
+  2. 等待索引任务完成（5 千 QA 约 0.5–2 小时，选业务低峰）；
+  3. 抽查检索命中正常后，再改 `MODEL_MODE` 并 `docker compose restart adapter`；
+  未重建即切换会导致检索召回骤降。LLM 通道切换无此限制，可热切。
 - 本地档时延预期：P95 ≤15s（低于云档 8s，属数据不出域的预期取舍）；`LLM_TIMEOUT_MS` 建议调到 20000–30000。
 - 出站防火墙：`local` 模式可完全关闭 LLM 云端出站（仅保留企微域名）。
 - GPU 驱动 + NVIDIA Container Toolkit 需提前安装（不在部署包内）。
