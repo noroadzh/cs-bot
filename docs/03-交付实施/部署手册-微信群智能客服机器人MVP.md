@@ -337,6 +337,17 @@ curl -X POST -u admin:<口令> https://<域名>/admin/license/reload
 
 ## 10. 常见故障排查
 
+### 10.1 日志排查（无 SSH 场景）
+
+服务器不可 SSH 时，通过以下方式定位问题：
+
+- **实时日志**：`docker compose logs -f --tail=200 adapter`
+- **按 traceId 追踪一次请求**：访问日志与响应头回写 `X-Request-Id`（=traceId）；`docker compose logs adapter | grep <traceId>` 可还原该请求经 controller→routing→qa→sender 的全链路
+- **落盘日志（可选）**：`.env` 设 `LOG_FILE=/app/logs/adapter.log`（挂载目录），由 `logrotate` 按天/100M 轮转保留 7 天；`docker compose logs` 仍可用
+- **级别与慢日志**：`LOG_LEVEL=debug` 临时提级；`SLOW_LOG_MS=2000` 让超阈值请求/外部调用记 `slow` 日志（含 costMs）
+- **关键字段**：`level/time/traceId/module/errCode/costMs/chatHash/userHash`；消息正文、answer、密钥、token、手机号等已脱敏
+- **未处理异常**：全局异常过滤器记 `ExceptionFilter` error（含 stack），对外响应不含堆栈；进程级 `uncaughtException/unhandledRejection` 记 `Bootstrap` fatal
+
 | 现象 | 可能原因 | 处置 |
 |---|---|---|
 | 企微后台保存回调提示失败 | ① 域名/DNS/证书问题 ② 443 未放行 ③ Token/AESKey 填错 | `curl -v https://<域名>/healthz`；核对 .env 四项；看 `docker compose logs adapter` 是否收到验证请求 |

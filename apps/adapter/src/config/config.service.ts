@@ -22,8 +22,11 @@ export class ConfigService implements OnModuleInit {
     return ConfigService._instance;
   }
 
-  onModuleInit() {
-    // 若 _instance 已由测试的 setConfig() 注入，跳过 process.env 读取
+  /**
+   * 同步初始化配置（幂等，可在 Nest 启动前调用）。
+   * 用于在 providers 构造前就绪——否则构造期读取 `ConfigService.instance` 会抛错。
+   */
+  static initialize(): void {
     if (ConfigService._instance) return;
     const result = AppConfigSchema.safeParse(process.env);
     if (!result.success) {
@@ -35,6 +38,10 @@ export class ConfigService implements OnModuleInit {
       process.exit(1);
     }
     ConfigService._instance = result.data;
-    this.logger.log({ phase: 'ready', detail: 'config', mock: result.data.USE_MOCK_LLM });
+  }
+
+  onModuleInit() {
+    ConfigService.initialize();
+    this.logger.log({ phase: 'ready', detail: 'config', mock: ConfigService._instance.USE_MOCK_LLM });
   }
 }

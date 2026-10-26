@@ -9,6 +9,7 @@ import { AssetSenderService } from '../media/asset-sender.service.js';
 import { AssetReferenceResolver } from '../media/asset-reference.resolver.js';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
+import { hashId } from '../common/request-context.js';
 import { UsageService } from '../usage/usage.service.js';
 import type { InboundMsg } from '../wecom/wecom-crypto.js';
 import { IMessageSender } from './message-sender.port.js';
@@ -61,11 +62,22 @@ export class QaOrchestrator {
     const chatId = msg.ChatId ?? msg.FromUserName;
     const userId = msg.FromUserName;
     const question = msg.text ?? msg.Content ?? '';
+    this.logger.log({ detail: 'qa-start', chatHash: hashId(chatId), userHash: hashId(userId), trigger: _triggerReason });
     const history = await this.context.get(chatId, userId);
+    const engineStart = Date.now();
     const result =
       this.modelRouter && this.modelRouter.getMode() !== 'cloud'
         ? await this.askViaRouter(question)
         : await this.engine.ask({ question, history, traceId });
+    this.logger.timing(
+      {
+        detail: 'engine',
+        engine: this.engine.mode,
+        ok: result.ok,
+        score: result.ok ? result.value.score : undefined,
+      },
+      Date.now() - engineStart,
+    );
 
     // 12.1 usage: LLM 调用后按引擎模式与来源计 token 桶
     if (this.engine.mode !== 'mock') {
@@ -111,6 +123,7 @@ export class QaOrchestrator {
         await this.sender.sendText(chatId, segments[i], msg.mentioned ? userId : undefined);
         if (i < segments.length - 1) await this.sleep(this.cfg.SEGMENT_GAP_MS);
       }
+      this.logger.log({ detail: 'sent', chatHash: hashId(chatId), segments: segments.length, answered });
       // 发送成功后才计 answered；refused 文本已发送也归入 refused
       if (answered) {
         this.usageService.increment('messagesAnswered');

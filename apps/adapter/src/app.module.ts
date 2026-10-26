@@ -3,7 +3,9 @@
  * 所有子模块在此汇聚；启动顺序逻辑见 main.ts
  */
 import { Module, OnModuleInit } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
+import { AllExceptionsFilter } from './common/all-exceptions.filter.js';
 import { ConfigModule } from './config/config.module.js';
 import { ConfigService } from './config/config.service.js';
 import { LicenseModule } from './license/license.module.js';
@@ -41,6 +43,7 @@ import { PlatformModule } from './platform/platform.module.js';
     ImportModule,
     PlatformModule.forRoot(),
   ],
+  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })
 export class AppModule implements OnModuleInit {
   constructor(

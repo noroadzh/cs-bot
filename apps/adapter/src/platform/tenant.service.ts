@@ -129,6 +129,7 @@ export class TenantService {
       },
     });
 
+    this.logger.log({ detail: 'tenant-create', tenantId: tenant.id, plan: input.plan });
     return tenant;
   }
 
@@ -137,6 +138,7 @@ export class TenantService {
   // -------------------------------------------------------------------------
 
   async provision(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const provisionStart = Date.now();
     const tenant = await this.requireTenant(tenantId);
 
     // Assert created → provisioning
@@ -187,6 +189,7 @@ export class TenantService {
       await this.licenseIssuer.issue({ id: tenant.id, host: tenant.host });
 
       // Success → active
+      this.logger.timing({ detail: 'tenant-provision', tenantId, status: 'active' }, Date.now() - provisionStart);
       await this.pool.query(
         `UPDATE tenant SET status = 'active', host = $2, port = $3, database_url = $4, updated_at = NOW()
          WHERE id = $1`,
@@ -202,6 +205,7 @@ export class TenantService {
       return this.requireTenant(tenantId);
     } catch (err) {
       // On compose command failure → provisioning_failed
+      this.logger.error({ detail: 'tenant-provision-failed', tenantId, err: (err as Error).message });
       const errorMsg = (err as Error).message || 'unknown provision error';
       // Best-effort down (do not drop volumes yet — provisioning may retry)
       try {

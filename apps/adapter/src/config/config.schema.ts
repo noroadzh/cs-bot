@@ -119,6 +119,13 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // 当前实例所属租户（形态 B：每租户一实例）。空 = 数据面不做 tenant 配额/状态准入。
   TENANT_ID: EnvString.optional().default(''),
+
+  // 日志（可观测性，无 SSH 排查）
+  LOG_LEVEL: EnvString.default('info'),
+  LOG_FILE: EnvString.optional().default(''),
+  LOG_HTTP: EnvBool(true),
+  SLOW_LOG_MS: EnvInt(2000),
+  LOG_PRETTY: EnvBool(false),
 }));
 
 export type AppConfigInput = z.infer<typeof AppConfigSchema>;
