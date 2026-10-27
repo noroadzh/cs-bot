@@ -64,7 +64,7 @@ The system MUST reject a new import job whose content sha256 equals an existing 
 
 ### Requirement: Import job parsing into question-answer items
 
-The system MUST parse an `uploaded` job's stored bytes into question/answer items asynchronously, setting status `parsing` during work and `parsed` on success or `failed` on unrecoverable parse errors. Each parsed item MUST be stored as an `import_item` row with `review_status: "pending"`.
+The system MUST parse an `uploaded` job's stored bytes into question/answer items asynchronously. For directly-paired formats (`.txt` Q:/A:, `.csv`/`.xlsx` with `question,answer` header, `.json` array) it stores each pair as `pending`. For conversation shapes (wecom archive / three-column table) it MUST clean, then split and pair, before storing items. Status goes `parsing` → `parsed`, or `failed` on unrecoverable errors.
 
 #### Scenario: TXT Q/A block parsing
 
@@ -90,6 +90,16 @@ The system MUST parse an `uploaded` job's stored bytes into question/answer item
 
 - **WHEN** an uploaded `.json` file does not contain an array of objects
 - **THEN** the job becomes `failed`, stores a parse error message, and creates no items
+
+#### Scenario: Conversation shape cleaned and paired
+
+- **WHEN** an uploaded file is sniffed as a conversation shape (wecom archive or three-column table)
+- **THEN** the job transitions through cleaning and pairing before `parsed`, and only paired items are stored
+
+#### Scenario: Unpaired messages are not stored as items
+
+- **WHEN** cleaning and pairing yields unpaired messages
+- **THEN** those messages are recorded in the unpaired pool and create no import items
 
 ### Requirement: Import job listing and detail
 
@@ -151,3 +161,12 @@ The system MUST resolve every uploaded import file under the `data/imports/` dir
 
 - **WHEN** an operator uploads a file named `历史FAQ v3.txt`
 - **THEN** the system stores it under `data/imports/<generated-job-id>` and preserves the original name only as the `source_filename` column
+
+### Requirement: Import job stage counters
+
+The system MUST expose per-job stage counters (`parsed`, `cleaned`, `paired`, `unpaired`, `pendingReview`, `approved`, `imported`, `failed`) on the job detail so operators can track pipeline progress.
+
+#### Scenario: Detail shows stage counters
+
+- **WHEN** an operator calls `GET /admin/import-jobs/:id` for a conversation-shaped job
+- **THEN** the response includes the stage counters reflecting current progress

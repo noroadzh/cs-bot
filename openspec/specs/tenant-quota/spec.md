@@ -17,12 +17,12 @@ The system MUST create a `tenant_quota` row for every new tenant holding the pla
 
 ### Requirement: Quota update
 
-The system MUST provide `PATCH /platform/tenants/:id/quota` accepting a JSON body with any subset of `{maxChats, maxMsgsPerDay, maxStorageMb, maxConcurrentQa}` (all positive integers) that upserts the tenant's quota row and returns it. Each quota change MUST write an audit entry holding both the previous and the new values. A value below 1 or a non-integer MUST return HTTP 400.
+The system MUST provide `PATCH /platform/tenants/:id/quota` accepting any subset of `{maxChats, maxMsgsPerDay, maxStorageMb, maxConcurrentQa, maxLlmTokensPerMonth}` (positive integers) that upserts the quota row and returns it, writing an audit entry with before/after values. A value below 1 or a non-integer MUST return HTTP 400.
 
 #### Scenario: Raise one quota dimension
 
 - **WHEN** an operator sends `{maxChats: 50}` for a tenant whose quota is the default
-- **THEN** the response shows `maxChats: 50` with the other three dimensions unchanged, and an audit entry records old `5` → new `50`
+- **THEN** the response shows `maxChats: 50` with the other dimensions unchanged, and an audit entry records old `5` → new `50`
 
 #### Scenario: Invalid value rejected
 
@@ -33,6 +33,11 @@ The system MUST provide `PATCH /platform/tenants/:id/quota` accepting a JSON bod
 
 - **WHEN** an operator sends a quota update for a tenant id that does not exist
 - **THEN** the system returns HTTP 404
+
+#### Scenario: LLM token limit set
+
+- **WHEN** an operator sends `{maxLlmTokensPerMonth: 1000000}`
+- **THEN** the quota stores the monthly token limit
 
 ### Requirement: Daily usage aggregation
 
@@ -118,3 +123,12 @@ The system MUST include the tenant's quota row and current-day usage counters in
 
 - **WHEN** an operator calls `GET /platform/tenants/<id>` for a tenant with 320 messages processed today
 - **THEN** the response includes `quota` with all four dimensions and `usageToday.msgCount: 320`
+
+### Requirement: Quota push to instance
+
+The system MUST push quota changes to the tenant instance immediately (or on the next daily pull) so the instance's local enforcement uses current limits.
+
+#### Scenario: Quota pushed on change
+
+- **WHEN** a quota is updated
+- **THEN** the instance receives the new limits without a restart

@@ -69,3 +69,12 @@ The system MUST send the configured `SLOW_REPLY_TEXT` (default "系统繁忙，�
 #### Scenario: Both channels timeout
 - **WHEN** `LLM_TIMEOUT_MS` elapses on both primary and fallback channels
 - **THEN** the system sends `SLOW_REPLY_TEXT`, logs `ErrCode.LLM_ALL_FAILED`, and triggers the alert webhook
+
+### Requirement: Model mode aware QA routing
+
+The QA orchestration MUST select its LLM channel and degradation path according to `MODEL_MODE` (cloud / hybrid / local), delegating channel selection to the model-routing capability.
+
+#### Scenario: Routing follows model mode
+
+- **WHEN** `MODEL_MODE=hybrid`
+- **THEN** QA orchestration prefers local inference and falls over to cloud on failure

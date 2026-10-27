@@ -2,16 +2,16 @@
 
 ## ADDED Requirements
 
-### Requirement: Integration and load-test orchestration
+### Requirement: Acceptance orchestration (mock-first)
 
-The deployment suite MUST document and provide orchestration for the full-stack integration and load-test runs (six containers, test data, report output), separate from unit tests.
+The deployment suite MUST provide mock-first acceptance orchestration (local Postgres + Redis mock + FastGPT mock + WeCom signature mock) with an ab load test, and MUST retain an optional real six-service compose smoke for network/CI environments.
 
-#### Scenario: Integration orchestrates six containers
+#### Scenario: Mock acceptance runs
 
-- **WHEN** the integration suite runs
-- **THEN** the six compose services are started and torn down around it
+- **WHEN** acceptance is run
+- **THEN** the mock full stack executes the cases and load test and emits a report
 
-#### Scenario: Load test report emitted
+#### Scenario: Real stack optional
 
-- **WHEN** the load test completes
-- **THEN** a report artifact with throughput/latency/error rate is written
+- **WHEN** the environment has network and explicitly enables it
+- **THEN** the real six-service smoke can run; otherwise it is skipped

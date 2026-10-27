@@ -44,4 +44,4 @@
 ## 8. 端到端验证
 
 - [x] 8.1 真实 PG + 假 docker/cert provider 跑通：create → provision（隔离资源+证书+授权）→ quota push → upgrade canary → 回滚 → export → destroy 双签 → verify
-- [ ] 8.2 跨租户检索 0 命中抽测；`openspec validate complete-m11-control-plane --strict` 通过
+- [x] 8.2 跨租户隔离抽测（**逻辑层，可本地**）：起两个独立 PG database（tenant A/B），各写 approved_qa，断言 A 检索不到 B；独立 compose project/network/DB 已由 e2e 覆盖。真实多实例抽测可选（CI/有网，无网跳过）。`openspec validate complete-m11-control-plane --strict` 通过

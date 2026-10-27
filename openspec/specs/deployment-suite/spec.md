@@ -76,3 +76,17 @@ The deployment suite MUST support logs on stdout (queryable via `docker logs`) a
 
 - **WHEN** a log file exceeds the rotation threshold
 - **THEN** logrotate rotates it and keeps the configured retention
+
+### Requirement: Local model deployment
+
+The deployment suite MUST provide `local-models-compose.yml` (vllm + xinference), model pull and health-check scripts, and MUST document that switching embedding requires rebuilding the vector index.
+
+#### Scenario: Local models compose starts healthy
+
+- **WHEN** the local-model profile is deployed
+- **THEN** vllm and xinference start and pass their health checks
+
+#### Scenario: Embedding switch requires reindex
+
+- **WHEN** embedding is switched between cloud and local
+- **THEN** the runbook requires a full vector index rebuild before serving

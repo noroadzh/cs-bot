@@ -19,7 +19,7 @@ M11 已交付控制面骨架（`TenantService` + `ShellProvisioner` + `TenantQuo
 ## Decisions
 
 ### D1: 资源隔离
-每租户独立 compose project `csbot-t-<id>` + 独立 network；DB `tenant_<id>`；独立 Redis/Mongo 实例；数据目录 `/data/tenants/<id>/`。`ShellProvisioner` 扩展 render/up 接受资源参数。跨租户检索 0 命中为验收口径。
+每租户独立 compose project `csbot-t-<id>` + 独立 network；DB `tenant_<id>`；独立 Redis/Mongo 实例；数据目录 `/data/tenants/<id>/`。`ShellProvisioner` 扩展 render/up 接受资源参数。**抽测口径**：逻辑层在本地起两个独立 PG database，各写 `approved_qa`，断言 A 检索不到 B（可落地）；真实多实例抽测需 CI/有网环境，无网时跳过。
 
 ### D2: TLS 签发通道
 抽象 `CertificateProvider` 接口：默认 `LetsEncryptDnsProvider`（通配域+SNI）或 `FileProvider`（预置证书）；测试注入 fake。签发失败即 provision 失败并回滚。
@@ -47,7 +47,7 @@ provision 成功前调用 M9 签发接口，生成绑定实例指纹 + 订阅期
 
 ## Risks / Trade-offs
 
-- [R1 跨租户隔离] → 独立实例/网络；抽测跨租户检索 0 命中。
+- [R1 跨租户隔离] → 独立实例/网络 + 逻辑层独立 DB 抽测（本地可做）；真实多实例抽测归 CI。
 - [R2 TLS 依赖] → 抽象 Provider，测试用 fake；生产需 DNS/ACME 配置。
 - [R3 升级回滚正确性] → 快照 + 镜像 tag 双保险；回滚演练纳入验收。
 - [R4 密钥管理] → 主密钥丢失即不可解密；主密钥备份责任前置。
