@@ -19,7 +19,7 @@ import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { consumeQuota, type QuotaConsumeInput } from '../platform/tenant-quota.service.js';
 
-export type TenantGateReason = 'tenant-inactive' | 'tenant-chat-limit' | 'tenant-msg-limit';
+export type TenantGateReason = 'tenant-inactive' | 'tenant-readonly' | 'tenant-chat-limit' | 'tenant-msg-limit';
 
 export type TenantGateDecision =
   | { allowed: true }
@@ -59,6 +59,11 @@ export class TenantGateService {
     if (!SERVING_STATUSES.has(status)) {
       this.logger.warn({ detail: 'tenant-inactive', tenantId, status });
       return { allowed: false, reason: 'tenant-inactive' };
+    }
+    // grace = 只读：既有群问答可用，禁止新增群
+    if (status === 'grace' && isNewChat) {
+      this.logger.warn({ detail: 'tenant-readonly-new-chat', tenantId });
+      return { allowed: false, reason: 'tenant-readonly' };
     }
 
     // 2. 新群准入：消耗 chat 配额

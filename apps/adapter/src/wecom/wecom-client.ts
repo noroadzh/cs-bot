@@ -8,6 +8,7 @@ import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
 import type { IMessageSender } from '../qa/message-sender.port.js';
+import { wecomSemaphore } from '../common/semaphore.js';
 
 const TOKEN_TTL = 7000;
 const TOKEN_LOCK_TTL = 10;
@@ -52,9 +53,9 @@ export class WecomClient implements IMessageSender {
 
     const cfg = ConfigService.instance;
     try {
-      const resp = await this.api.get('/gettoken', {
+      const resp = await wecomSemaphore().run(() => this.api.get('/gettoken', {
         params: { corpid: cfg.WECHAT_CORP_ID, corpsecret: cfg.WECHAT_AGENT_SECRET },
-      });
+      }));
       const data = resp.data as { errcode: number; errmsg?: string; access_token?: string; expires_in?: number };
       if (data.errcode !== 0) throw new Error(data.errmsg ?? 'gettoken fail');
       const token = data.access_token!;
@@ -74,7 +75,9 @@ export class WecomClient implements IMessageSender {
       text: { content }, clientmsgid: crypto.randomUUID(),
     };
     if (atUser) (body as any).atuserlist = atUser;
-    const resp = await this.api.post('/appchat/send', body, { params: { access_token: token } });
+    const resp = await wecomSemaphore().run(() =>
+      this.api.post('/appchat/send', body, { params: { access_token: token } }),
+    );
     if ((resp.data as any).errcode !== 0) {
       throw Object.assign(new Error((resp.data as any).errmsg), { code: ErrCode.WECOM_SEND_FAIL });
     }
@@ -82,10 +85,12 @@ export class WecomClient implements IMessageSender {
 
   async sendFile(chatId: string, mediaId: string): Promise<void> {
     const token = await this.getAccessToken();
-    const resp = await this.api.post('/appchat/send', {
-      chatid: chatId, msgtype: 'file',
-      file: { media_id: mediaId }, clientmsgid: crypto.randomUUID(),
-    }, { params: { access_token: token } });
+    const resp = await wecomSemaphore().run(() =>
+      this.api.post('/appchat/send', {
+        chatid: chatId, msgtype: 'file',
+        file: { media_id: mediaId }, clientmsgid: crypto.randomUUID(),
+      }, { params: { access_token: token } }),
+    );
     if ((resp.data as any).errcode !== 0) {
       throw Object.assign(new Error((resp.data as any).errmsg), { code: ErrCode.WECOM_SEND_FAIL });
     }
@@ -93,11 +98,13 @@ export class WecomClient implements IMessageSender {
 
   async sendVideo(chatId: string, mediaId: string, title?: string): Promise<void> {
     const token = await this.getAccessToken();
-    const resp = await this.api.post('/appchat/send', {
-      chatid: chatId, msgtype: 'video',
-      video: { media_id: mediaId, title: title ?? '', description: title ?? '' },
-      clientmsgid: crypto.randomUUID(),
-    }, { params: { access_token: token } });
+    const resp = await wecomSemaphore().run(() =>
+      this.api.post('/appchat/send', {
+        chatid: chatId, msgtype: 'video',
+        video: { media_id: mediaId, title: title ?? '', description: title ?? '' },
+        clientmsgid: crypto.randomUUID(),
+      }, { params: { access_token: token } }),
+    );
     if ((resp.data as any).errcode !== 0) {
       throw Object.assign(new Error((resp.data as any).errmsg), { code: ErrCode.WECOM_SEND_FAIL });
     }
@@ -110,10 +117,10 @@ export class WecomClient implements IMessageSender {
       const fs = await import('fs');
       const form = new FormData();
       form.append('media', fs.createReadStream(filePath));
-      const resp = await this.api.post('/media/upload', form, {
+      const resp = await wecomSemaphore().run(() => this.api.post('/media/upload', form, {
         params: { access_token: token, type },
         headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      }));
       if ((resp.data as any).errcode !== 0) {
         throw Object.assign(new Error((resp.data as any).errmsg), { code: ErrCode.WECOM_UPLOAD_FAIL });
       }
@@ -124,10 +131,10 @@ export class WecomClient implements IMessageSender {
 
   async downloadMedia(mediaId: string): Promise<Buffer> {
     const token = await this.getAccessToken();
-    const resp = await this.api.get('/media/get', {
+    const resp = await wecomSemaphore().run(() => this.api.get('/media/get', {
       params: { access_token: token, media_id: mediaId },
       responseType: 'arraybuffer',
-    });
+    }));
     return Buffer.from(resp.data);
   }
 

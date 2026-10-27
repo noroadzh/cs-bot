@@ -9,6 +9,7 @@
  */
 
 import { Injectable } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { createHash } from 'crypto';
 import { ConfigService } from '../config/config.service.js';
@@ -51,6 +52,24 @@ export class PlatformAuditService {
 
   constructor(_config: ConfigService) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
+  }
+
+  /** 每日 03:50 清理 180 天前审计（链式校验以现存窗口为准） */
+  @Cron('50 3 * * *', { timeZone: 'Asia/Shanghai' })
+  async handleCleanup(): Promise<void> {
+    try {
+      const r = await this.cleanup();
+      if (r > 0) this.logger.log({ detail: 'audit-cleanup', deleted: r });
+    } catch (err) {
+      this.logger.warn({ detail: 'audit-cleanup-failed', err: (err as Error).message });
+    }
+  }
+
+  async cleanup(days = 180): Promise<number> {
+    const res = await this.pool.query(
+      `DELETE FROM platform_audit_log WHERE created_at < now() - interval '${days} days'`,
+    );
+    return res.rowCount ?? 0;
   }
 
   // -------------------------------------------------------------------------

@@ -71,6 +71,11 @@ services:
       - ../apps/adapter/src/import/005-approved-qa.sql:/docker-entrypoint-initdb.d/05-approved-qa.sql:ro
       - ../apps/adapter/src/import/006-import-job-stored-path.sql:/docker-entrypoint-initdb.d/06-import-job-stored-path.sql:ro
       - ../apps/adapter/src/platform/007-tenant.sql:/docker-entrypoint-initdb.d/07-tenant.sql:ro
+      - ../apps/adapter/src/import/007-import-pipeline.sql:/docker-entrypoint-initdb.d/08-import-pipeline.sql:ro
+      - ../apps/adapter/src/miss/009-miss-media-status.sql:/docker-entrypoint-initdb.d/10-miss-media-status.sql:ro
+      - ../apps/adapter/src/media/010-asset-md5.sql:/docker-entrypoint-initdb.d/11-asset-md5.sql:ro
+      - ../apps/adapter/src/platform/011-usage-counters.sql:/docker-entrypoint-initdb.d/12-usage-counters.sql:ro
+      - ../apps/adapter/src/platform/008-control-plane.sql:/docker-entrypoint-initdb.d/09-control-plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]
       interval: 10s

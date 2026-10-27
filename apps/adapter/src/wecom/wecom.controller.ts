@@ -10,11 +10,13 @@ import { WecomClient } from './wecom-client.js';
 import { RoutingService } from '../routing/routing.service.js';
 import { MediaRecognizeService } from '../media/media-recognize.service.js';
 import { UsageService } from '../usage/usage.service.js';
+import { MissService } from '../miss/miss.service.js';
 import { LicenseGateService } from '../license/license-gate.service.js';
 import {
   LICENSE_INVALID_TEXT,
   LICENSE_CHAT_LIMIT_TEXT,
   TENANT_INACTIVE_TEXT,
+  TENANT_READONLY_TEXT,
   TENANT_CHAT_LIMIT_TEXT,
   TENANT_MSG_LIMIT_TEXT,
 } from '../license/license-gate.service.js';
@@ -24,10 +26,15 @@ import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
 import { WecomCallbackQueryDto, WecomCallbackBodyDto } from './dto/wecom-callback.dto.js';
 
 /** 准入拦截话术（webhook 只能 200，用话术表达 403/409/429 语义） */
+/** 语音/视频/文件入站引导话术（FR-9 规则 3） */
+const MEDIA_GUIDANCE_TEXT =
+  '抱歉，我暂时无法直接查看语音、视频或文件，请用文字描述问题（可注明文件名），或 @人工客服 协助。';
+
 const GATE_TEXTS: Record<string, string> = {
   'license-invalid': LICENSE_INVALID_TEXT,
   'chat-limit': LICENSE_CHAT_LIMIT_TEXT,
   'tenant-inactive': TENANT_INACTIVE_TEXT,
+  'tenant-readonly': TENANT_READONLY_TEXT,
   'tenant-chat-limit': TENANT_CHAT_LIMIT_TEXT,
   'tenant-msg-limit': TENANT_MSG_LIMIT_TEXT,
 };
@@ -44,6 +51,7 @@ export class WecomController {
     private readonly recognizeService: MediaRecognizeService,
     private readonly wecomClient: WecomClient,
     private readonly licenseGate: LicenseGateService,
+    private readonly miss: MissService,
   ) {}
 
   @Post('callback')
@@ -122,6 +130,31 @@ export class WecomController {
       }
     }
     if (gateBlocked) {
+      res.status(HttpStatus.OK).send('');
+      return;
+    }
+
+    // FR-9 规则 3：@机器人的语音/视频/文件不解析，回引导话术 + 未命中落库（media_type）
+    const mediaMsg = msg as any;
+    if (mediaMsg.mentioned && ['voice', 'video', 'file'].includes(mediaMsg.MsgType)) {
+      const mediaChatId = mediaMsg.ChatId || mediaMsg.FromUserName;
+      if (mediaChatId) {
+        await this.miss.record({
+          traceId,
+          chatId: mediaChatId,
+          userId: mediaMsg.FromUserName,
+          question: mediaMsg.Content ?? `[${mediaMsg.MsgType}]`,
+          score: 0,
+          engine: 'media',
+          mediaType: mediaMsg.MsgType,
+          ts: new Date().toISOString(),
+        });
+        try {
+          await this.wecomClient.sendText(mediaChatId, MEDIA_GUIDANCE_TEXT);
+        } catch (err) {
+          this.logger.warn({ traceId, detail: 'media-guidance-fail', err: (err as Error).message });
+        }
+      }
       res.status(HttpStatus.OK).send('');
       return;
     }

@@ -63,18 +63,21 @@ describe('AssetService', () => {
 
   describe('createFromFile', () => {
     it('成功：写文件 + INSERT + 返回映射后的 Asset', async () => {
-      poolQuery.mockResolvedValueOnce({ rows: [ROW] });
+      poolQuery
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [ROW] });
       const buf = Buffer.from('hello');
 
       const asset = await svc.createFromFile(buf, 'demo.png', 'image/png');
 
-      expect(fsWriteFile).toHaveBeenCalledWith(expect.stringMatching(/data[\\/]assets/), buf);
+      expect(fsWriteFile).toHaveBeenCalledWith(expect.stringMatching(/data[\\/]assets/), buf, { mode: 0o600 });
       expect(poolQuery).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO asset'), [
         expect.any(String),
         'file',
         'demo.png',
         expect.stringMatching(/^\/assets\//),
         5,
+        expect.any(String),
       ]);
       expect(asset).toEqual({
         id: ROW.id,
@@ -84,6 +87,23 @@ describe('AssetService', () => {
         size: 1024,
         createdAt: ROW.created_at,
       });
+    });
+
+    it('视频超过 10MB → 413 ASSET_TOO_LARGE', async () => {
+      const big = Buffer.alloc(10 * 1024 * 1024 + 1);
+      await expect(svc.createFromFile(big, 'v.mp4', 'video/mp4')).rejects.toMatchObject({
+        status: HttpStatus.PAYLOAD_TOO_LARGE,
+      });
+      expect(fsWriteFile).not.toHaveBeenCalled();
+      expect(poolQuery).not.toHaveBeenCalled();
+    });
+
+    it('相同 md5 重复上传 → 返回已有素材，不重复落盘', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [ROW] });
+      const asset = await svc.createFromFile(Buffer.from('hello'), 'demo.png', 'image/png');
+      expect(asset.id).toBe(ROW.id);
+      expect(fsWriteFile).not.toHaveBeenCalled();
+      expect(poolQuery).toHaveBeenCalledTimes(1);
     });
 
     it('超过 20MB → 413 ASSET_TOO_LARGE，不写文件不进库', async () => {

@@ -4,9 +4,10 @@ import { DedupService } from './dedup.service.js';
 import { RateLimiterService } from './rate-limiter.service.js';
 import { RoutingService } from './routing.service.js';
 import { QaModule } from '../qa/qa.module.js';
+import { WecomModule } from '../wecom/wecom.module.js';
 
 @Module({
-  imports: [QaModule],
+  imports: [QaModule, WecomModule],
   providers: [TriggerService, DedupService, RateLimiterService, RoutingService],
   exports: [RoutingService, TriggerService],
 })

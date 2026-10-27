@@ -35,6 +35,16 @@ export class RateLimiterService {
     this.userLimit = cfg.RATE_USER_PER_MIN;
   }
 
+  /** 群超限提示去重：同一群 5 分钟内最多提示一次 */
+  async shouldHint(chatId: string): Promise<boolean> {
+    try {
+      const r = await this.redis.set(`rate:hint:${chatId}`, '1', 'EX', 300, 'NX');
+      return r === 'OK';
+    } catch {
+      return true;
+    }
+  }
+
   async check(chatId: string, userId: string): Promise<{ allowed: boolean; scope?: 'group' | 'user' }> {
     const now = Math.floor(Date.now() / 1000);
     const minute = Math.floor(now / 60);

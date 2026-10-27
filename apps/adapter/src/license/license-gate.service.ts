@@ -27,6 +27,8 @@ export const TENANT_INACTIVE_TEXT =
   '本服务当前已暂停或未开通，暂时无法为您服务，请联系管理员处理。';
 export const TENANT_CHAT_LIMIT_TEXT =
   '本租户的会话数已达套餐上限，暂时无法在新群中启用，请联系管理员升级套餐。';
+export const TENANT_READONLY_TEXT =
+  '服务已到期，当前为只读模式，暂不能新增群；问答仍可用，请联系服务商续期。';
 export const TENANT_MSG_LIMIT_TEXT =
   '本租户今日的消息量已达套餐上限，请稍后再试或联系管理员升级套餐。';
 
@@ -38,6 +40,7 @@ export type GateDecision =
         | 'license-invalid'
         | 'chat-limit'
         | 'tenant-inactive'
+        | 'tenant-readonly'
         | 'tenant-chat-limit'
         | 'tenant-msg-limit';
     };

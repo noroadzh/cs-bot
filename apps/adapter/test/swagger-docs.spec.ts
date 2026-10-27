@@ -21,6 +21,7 @@ import { MissController } from '../src/admin/miss.controller.js';
 import { AssetController } from '../src/media/asset.controller.js';
 import { HealthController } from '../src/health/health.controller.js';
 import { WecomController } from '../src/wecom/wecom.controller.js';
+import { MissService } from '../src/miss/miss.service.js';
 // stub 注入用的 class 引用（Nest DI 按 design:paramtypes 的 class 匹配 provider）
 import { TriggerService } from '../src/routing/trigger.service.js';
 import { LicenseService } from '../src/license/license.service.js';
@@ -200,6 +201,7 @@ describe('swagger 文档产出：SWAGGER_ENABLED 闸门', () => {
       MediaRecognizeService,
       WecomClient,
       LicenseGateService,
+      MissService,
     ] as Type<unknown>[]).map((cls) => ({ provide: cls, useValue: {} })),
     { provide: 'HEALTH_REDIS', useValue: {} },
     { provide: 'HEALTH_PG', useValue: {} },

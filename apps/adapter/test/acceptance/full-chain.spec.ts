@@ -143,6 +143,7 @@ suite('验收：mock 全栈问答链路', () => {
       USE_MOCK_LICENSE: true,
       CONFIDENCE_THRESHOLD: 0.75,
       SEGMENT_GAP_MS: 0,
+      LLM_RETRY_DELAY_MS: 0,
       RATE_USER_PER_MIN: 5,
       RATE_GROUP_PER_MIN: 20,
       LOG_LEVEL: 'silent',
@@ -263,11 +264,13 @@ suite('验收：mock 全栈问答链路', () => {
       await post();
       await waitFor(() => ax().sendCalls === before + 1);
     }
-    const before6 = ax().sendCalls;
+    const chatBefore6 = ax().chatCalls;
     fakeState.msg = baseMsg({ ChatId: chat, FromUserName: user, MsgId: 'rate-u-6' });
     await post();
     await new Promise((r) => setTimeout(r, 200));
-    expect(ax().sendCalls).toBe(before6);
+    // 第 6 条不再进入 QA（限流提示话术不算作答）
+    expect(ax().chatCalls).toBe(chatBefore6);
+    expect(ax().sent.join('\n')).toContain('提问太频繁');
   });
 
   it('2.2d 限流：单群 20/min，第 21 条不再回复', async () => {
@@ -278,11 +281,49 @@ suite('验收：mock 全栈问答链路', () => {
       await post();
       await waitFor(() => ax().sendCalls === before + 1);
     }
-    const before21 = ax().sendCalls;
+    const chatBefore21 = ax().chatCalls;
     fakeState.msg = baseMsg({ ChatId: chat, FromUserName: 'group-user-21', MsgId: 'rate-g-21' });
     await post();
     await new Promise((r) => setTimeout(r, 200));
-    expect(ax().sendCalls).toBe(before21);
+    // 第 21 条不再进入 QA；群提示 5 分钟去重
+    expect(ax().chatCalls).toBe(chatBefore21);
+  });
+
+  it('2.2d2 语音/视频/文件：@机器人 → 引导话术 + miss_record(media_type)', async () => {
+    for (const mediaType of ['voice', 'video', 'file'] as const) {
+      const chatId = `chat-${mediaType}-${Date.now()}`;
+      const before = ax().sendCalls;
+      fakeState.msg = {
+        ToUserName: 'corp', FromUserName: `user-${mediaType}`, ChatId: chatId,
+        MsgType: mediaType, MediaId: `media-${mediaType}`, MsgId: `${mediaType}-1`,
+        CreateTime: Math.floor(Date.now() / 1000), mentioned: true,
+      };
+      expect((await post()).status).toBe(200);
+      await waitFor(() => ax().sendCalls === before + 1);
+      expect(ax().sent.join('\n')).toContain('无法直接查看');
+      await waitFor(async () => {
+        const r = await pool.query(
+          `SELECT count(*)::int AS n FROM miss_record WHERE chat_id = $1 AND media_type = $2`,
+          [chatId, mediaType],
+        );
+        return r.rows[0].n === 1;
+      });
+    }
+  });
+
+  it('2.2d3 未 @ 的视频：静默且不落库', async () => {
+    const chatId = `chat-quiet-${Date.now()}`;
+    const before = ax().sendCalls;
+    const missBefore = await missCount();
+    fakeState.msg = {
+      ToUserName: 'corp', FromUserName: 'user-quiet', ChatId: chatId,
+      MsgType: 'video', MediaId: 'media-quiet', MsgId: `quiet-${Date.now()}`,
+      CreateTime: Math.floor(Date.now() / 1000), mentioned: false,
+    };
+    expect((await post()).status).toBe(200);
+    await new Promise((r) => setTimeout(r, 250));
+    expect(ax().sendCalls).toBe(before);
+    expect(await missCount()).toBe(missBefore);
   });
 
   it('2.2e 授权受限：license 失效时不进 QA，回复授权提示话术', async () => {

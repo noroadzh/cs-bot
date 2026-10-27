@@ -7,6 +7,7 @@ import { readFileSync } from 'fs';
 import { load } from 'js-yaml';
 import { ConfigService } from '../config/config.service.js';
 import type { InboundMsg } from '../wecom/wecom-crypto.js';
+import { KeywordTrie } from './keyword-trie.js';
 
 export type TriggerResult =
   | { triggered: true; reason: 'mention' | 'keyword' }
@@ -14,8 +15,7 @@ export type TriggerResult =
 
 @Injectable()
 export class TriggerService {
-  private keywords: string[] = [];
-  private keywordCount = 0;
+  private trie: KeywordTrie = new KeywordTrie();
   private readonly botUserId: string;
   private readonly keywordsFile: string;
 
@@ -29,17 +29,17 @@ export class TriggerService {
   reload(): number {
     try {
       const yaml = load(readFileSync(this.keywordsFile, 'utf8')) as { keywords?: string[] };
-      const words = (yaml?.keywords ?? []).filter((w) => typeof w === 'string' && w.trim().length > 0);
-      this.keywords = words;
-      this.keywordCount = words.length;
-      return this.keywordCount;
+      const words = (yaml?.keywords ?? []).filter((w): w is string => typeof w === 'string' && w.trim().length > 0);
+      // 原子替换引用：进行中的 evaluate 继续用旧 trie
+      this.trie = new KeywordTrie(words);
+      return this.trie.size;
     } catch {
-      return this.keywordCount;
+      return this.trie.size;
     }
   }
 
   get count(): number {
-    return this.keywordCount;
+    return this.trie.size;
   }
 
   evaluate(msg: InboundMsg): TriggerResult {
@@ -61,9 +61,6 @@ export class TriggerService {
 
   private hasKeyword(text: string): boolean {
     if (!text) return false;
-    for (const w of this.keywords) {
-      if (text.startsWith(w)) return true;
-    }
-    return false;
+    return this.trie.match(text) !== '';
   }
 }

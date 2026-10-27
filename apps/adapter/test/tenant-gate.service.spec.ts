@@ -87,6 +87,21 @@ describe('TenantGateService.check', () => {
     expect(d).toEqual({ allowed: true });
   });
 
+  it('租户 grace + 新群 → tenant-readonly（禁止加群，不消耗配额）', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [{ status: 'grace' }] });
+    const d = await makeSvc().check(true);
+    expect(d).toEqual({ allowed: false, reason: 'tenant-readonly' });
+    expect(consumeMock).not.toHaveBeenCalled();
+  });
+
+  it('租户 grace + 既有群 → 问答放行（消耗 api_call）', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [{ status: 'grace' }] });
+    consumeMock.mockResolvedValueOnce({ allowed: true, limit: 5000, used: 1, limitColumn: 'max_api_calls' });
+    const d = await makeSvc().check(false);
+    expect(d).toEqual({ allowed: true });
+    expect(consumeMock).toHaveBeenCalledTimes(1);
+  });
+
   it('active + 非新群 + 配额充足 → 放行（只消耗 api_call）', async () => {
     poolQuery.mockResolvedValueOnce({ rows: [{ status: 'active' }] });
     consumeMock.mockResolvedValueOnce({ allowed: true, limit: 5000, used: 1, limitColumn: 'max_api_calls' });

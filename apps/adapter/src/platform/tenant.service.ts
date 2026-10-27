@@ -27,7 +27,10 @@ import { ShellProvisioner } from './provisioner/shell-provisioner.js';
 import {
   type CertificateProvider,
   type LicenseIssuer,
+  FakeCertificateProvider,
+  FileCertificateProvider,
   NoopLicenseIssuer,
+  ShellLicenseIssuer,
 } from './certificate-provider.js';
 import type {
   Tenant,
@@ -39,6 +42,30 @@ import type {
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+
+function selectCertificateProvider(cfg: typeof ConfigService.instance): CertificateProvider {
+  switch (cfg.PLATFORM_TLS_PROVIDER) {
+    case 'fake':
+      return new FakeCertificateProvider();
+    case 'file':
+      return new FileCertificateProvider(cfg.PLATFORM_CERT_DIR);
+    default:
+      throw new Error(
+        `unsupported PLATFORM_TLS_PROVIDER="${cfg.PLATFORM_TLS_PROVIDER}" (supported: file, fake)`,
+      );
+  }
+}
+
+function selectLicenseIssuer(cfg: typeof ConfigService.instance): LicenseIssuer {
+  switch (cfg.LICENSE_ISSUER) {
+    case 'noop':
+      return new NoopLicenseIssuer();
+    case 'shell':
+      return new ShellLicenseIssuer(cfg.LICENSE_ISSUER_BIN);
+    default:
+      throw new Error(`unsupported LICENSE_ISSUER="${cfg.LICENSE_ISSUER}" (supported: shell, noop)`);
+  }
+}
 
 @Injectable()
 export class TenantService {
@@ -58,12 +85,22 @@ export class TenantService {
     });
     // Default: ShellProvisioner; tests can substitute
     this.provisioner = new ShellProvisioner(ConfigService.instance);
+
+    const cfg = ConfigService.instance;
+    if (cfg.PLATFORM_ENABLED && process.env.NODE_ENV === 'production') {
+      if (cfg.PLATFORM_TLS_PROVIDER === 'fake') {
+        throw new Error('PLATFORM_TLS_PROVIDER=fake is not allowed when PLATFORM_ENABLED in production');
+      }
+      if (cfg.LICENSE_ISSUER === 'noop') {
+        throw new Error('LICENSE_ISSUER=noop is not allowed when PLATFORM_ENABLED in production');
+      }
+    }
+    this.certProvider = selectCertificateProvider(cfg);
+    this.licenseIssuer = selectLicenseIssuer(cfg);
   }
 
-  private certProvider: CertificateProvider = {
-    issue: async (domain: string) => ({ cert: `CERT:${domain}`, key: `KEY:${domain}` }),
-  };
-  private licenseIssuer: LicenseIssuer = new NoopLicenseIssuer();
+  private certProvider: CertificateProvider;
+  private licenseIssuer: LicenseIssuer;
 
   setCertificateProvider(p: CertificateProvider): void {
     this.certProvider = p;

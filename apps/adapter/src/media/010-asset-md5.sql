@@ -1,0 +1,3 @@
+-- asset 增补 md5（重复上传校验）
+ALTER TABLE asset ADD COLUMN IF NOT EXISTS md5 VARCHAR(32);
+CREATE INDEX IF NOT EXISTS idx_asset_md5 ON asset(md5) WHERE md5 IS NOT NULL;

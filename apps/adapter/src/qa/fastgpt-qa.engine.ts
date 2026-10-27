@@ -4,6 +4,7 @@ import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { Err, Ok, ErrCode, type IQAEngine, type AskReq, type AskResult } from '@cs-bot/shared';
 import { ApprovedQaService } from './approved-qa.service.js';
+import { llmSemaphore } from '../common/semaphore.js';
 
 export class FastGPTQaEngine implements IQAEngine {
   readonly mode: 'fastgpt' = 'fastgpt';
@@ -67,22 +68,53 @@ export class FastGPTQaEngine implements IQAEngine {
   }
 
   private async call(client: AxiosInstance, req: AskReq, source: 'primary' | 'fallback'): Promise<AskResult> {
-    try {
-      const resp = await client.post('/api/v1/chat/completions', {
-        model: 'fastgpt',
-        messages: [
-          ...(req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
-          { role: 'user', content: req.question },
-        ],
-        datasetIds: (req.datasetIds ?? (this.cfg.FASTGPT_DATASET_IDS ? [this.cfg.FASTGPT_DATASET_IDS] : [])),
-      });
-      const data = resp.data as { choices?: Array<{ message?: { content?: string } }>; data?: Array<{ score?: number; content?: string }> };
-      const answer = data?.choices?.[0]?.message?.content ?? data?.data?.[0]?.content ?? '';
-      const score = data?.data?.[0]?.score ?? 0.8;
-      return { ok: true, value: { answer, quotes: [], score, source } };
-    } catch (err) {
-      this.logger.error({ source, err: (err as Error).message });
-      return new Err({ code: ErrCode.LLM_TIMEOUT, message: (err as Error).message });
+    let lastErr: Error | null = null;
+    const retryDelay = this.cfg.LLM_RETRY_DELAY_MS ?? 1000;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const resp = await llmSemaphore().run(() => client.post('/api/v1/chat/completions', {
+          model: 'fastgpt',
+          messages: [
+            ...(req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
+            { role: 'user', content: req.question },
+          ],
+          datasetIds: (req.datasetIds ?? (this.cfg.FASTGPT_DATASET_IDS ? [this.cfg.FASTGPT_DATASET_IDS] : [])),
+        }));
+        return { ok: true, value: this.parseResponse(resp.data, source) };
+      } catch (err) {
+        lastErr = err as Error;
+        this.logger.warn({ source, attempt: attempt + 1, err: lastErr.message });
+        if (attempt === 0) await new Promise((r) => setTimeout(r, retryDelay));
+      }
     }
+    return new Err({ code: ErrCode.LLM_TIMEOUT, message: lastErr?.message ?? 'unknown LLM error' });
+  }
+
+  /** 解析 choices/data 与 responseData[].quoteList（来源引用） */
+  private parseResponse(raw: unknown, source: 'primary' | 'fallback') {
+    const data = raw as {
+      choices?: Array<{ message?: { content?: string } }>;
+      data?: Array<{ score?: number; content?: string }>;
+      responseData?: Array<{
+        quoteList?: Array<{
+          id?: string; content?: string; score?: number;
+          source?: string; datasetName?: string; title?: string;
+        }>;
+      }>;
+    };
+    const quotes = (data?.responseData ?? [])
+      .flatMap((m) => (Array.isArray(m?.quoteList) ? m.quoteList : []))
+      .map((q) => ({
+        id: String(q.id ?? q.source ?? ''),
+        content: String(q.content ?? ''),
+        score: Number(q.score ?? 0),
+        source: q.source ?? q.datasetName ?? q.title,
+      }))
+      .filter((q) => q.id !== '' || q.content !== '')
+      .sort((a, b) => b.score - a.score);
+    const answer =
+      data?.choices?.[0]?.message?.content ?? data?.data?.[0]?.content ?? '';
+    const score = quotes.length > 0 ? quotes[0].score : (data?.data?.[0]?.score ?? 0.8);
+    return { answer, quotes, score, source };
   }
 }

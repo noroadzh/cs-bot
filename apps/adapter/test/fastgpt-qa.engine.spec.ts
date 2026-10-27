@@ -148,9 +148,7 @@ describe('FastGPTQaEngine', () => {
   it('异常路径：axios 抛网络错 → 返回 Err(LLM_TIMEOUT) 而非向上抛', async () => {
     // config 默认配了 LLM_FALLBACK_*，primary 失败后 engine 会再打一次 fallback；
     // 两次都要 reject，否则第二次 post 拿到 undefined，错误信息就不是 ECONNREFUSED 了。
-    post
-      .mockRejectedValueOnce(new Error('ECONNREFUSED')) // primary
-      .mockRejectedValueOnce(new Error('ECONNREFUSED')); // fallback
+    post.mockRejectedValue(new Error('ECONNREFUSED')); // primary retry + fallback retry
     const engine = await buildEngine();
 
     const res = await engine.ask(req());
@@ -159,6 +157,36 @@ describe('FastGPTQaEngine', () => {
     const err = res as unknown as { error: { code: number; message: string } };
     expect(err.error.code).toBe(ErrCode.LLM_TIMEOUT);
     expect(err.error.message).toBe('ECONNREFUSED');
+  });
+
+  it('主通道重试一次：首次失败后重试成功，不再走 fallback', async () => {
+    post
+      .mockRejectedValueOnce(new Error('blip'))
+      .mockResolvedValueOnce({ data: { choices: [{ message: { content: '重试成功' } }] } });
+    const engine = await buildEngine();
+
+    const value = expectOk(await engine.ask(req()));
+
+    expect(value.answer).toBe('重试成功');
+    expect(value.source).toBe('primary');
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  it('解析 responseData[].quoteList：score 取最高分并带 source', async () => {
+    post.mockResolvedValueOnce({
+      data: {
+        choices: [{ message: { content: '带引用答案' } }],
+        responseData: [
+          { quoteList: [{ id: 'q1', content: 'a', score: 0.7, datasetName: '财务制度.pdf' }] },
+          { quoteList: [{ id: 'q2', content: 'b', score: 0.92, source: '报销流程.docx' }] },
+        ],
+      },
+    });
+    const engine = await buildEngine();
+    const value = expectOk(await engine.ask(req()));
+    expect(value.answer).toBe('带引用答案');
+    expect(value.score).toBeCloseTo(0.92);
+    expect(value.quotes?.map((q) => [q.score, q.source])).toEqual([[0.92, '报销流程.docx'], [0.7, '财务制度.pdf']]);
   });
 
   it('请求参数：URL 为 /api/v1/chat/completions，model 固定 fastgpt', async () => {
@@ -192,9 +220,7 @@ describe('FastGPTQaEngine', () => {
   });
 
   it('primary 失败 + fallback 失败 → fallback 到 approved_qa', async () => {
-    post
-      .mockRejectedValueOnce(new Error('ECONNREFUSED')) // primary
-      .mockRejectedValueOnce(new Error('ECONNREFUSED')); // fallback
+    post.mockRejectedValue(new Error('ECONNREFUSED')); // primary retry + fallback retry
     const mockApprovedQa = {
       search: jest.fn<() => Promise<{ question: string; answer: string } | null>>().mockResolvedValue({ question: '退款', answer: '请联系客服' })
     };

@@ -229,6 +229,23 @@ export class PlatformController {
   // 升级 / 监控 / 注销
   // -----------------------------------------------------------------------
 
+  @Post('report')
+  @ApiOperation({ summary: '适配层用量上报（仅计数，无正文）' })
+  async report(@Body() body: Record<string, unknown>) {
+    const tenantId = String(body.tenantId ?? '');
+    if (!tenantId) return { ok: false, error: 'tenantId required' };
+    const day = String(body.date ?? new Date().toISOString().slice(0, 10));
+    await this.usageService.upsertReport(tenantId, day, {
+      msgsIn: Number(body.msgsIn ?? 0),
+      triggered: Number(body.triggered ?? 0),
+      hit: Number(body.hit ?? 0),
+      miss: Number(body.miss ?? 0),
+      tokens: Number(body.tokens ?? 0),
+      activeChats: Number(body.activeChats ?? 0),
+    });
+    return { ok: true };
+  }
+
   @Post('upgrades')
   @ApiOperation({ summary: '批量升级（金丝雀 + 批次 + 回滚）' })
   async upgrades(@Body() body: Record<string, unknown>) {

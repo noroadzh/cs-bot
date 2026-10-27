@@ -52,4 +52,17 @@ describe('RateLimiterService', () => {
     const r = await svc.check('chat-1', 'user-1');
     expect(r.allowed).toBe(true);
   });
+
+  it('shouldHint：Redis 失败时放行提示（true）', async () => {
+    mockRedisInstance.set.mockRejectedValue(new Error('redis down'));
+    const svc = new RateLimiterService({} as any);
+    await expect(svc.shouldHint('chat-1')).resolves.toBe(true);
+  });
+
+  it('shouldHint：SET NX 成功才提示', async () => {
+    mockRedisInstance.set.mockResolvedValueOnce('OK').mockResolvedValueOnce(null);
+    const svc = new RateLimiterService({} as any);
+    await expect(svc.shouldHint('chat-1')).resolves.toBe(true);
+    await expect(svc.shouldHint('chat-1')).resolves.toBe(false);
+  });
 });

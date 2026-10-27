@@ -61,9 +61,10 @@ function makeController(crypto: any, routing: any, gateCheck?: jest.Mock) {
   const recognizeService = { recognizeImage: jest.fn() };
   const wecomClient = { sendText: jest.fn(), sendMedia: jest.fn(), downloadMedia: jest.fn() };
   const licenseGate = { check: gateCheck ?? jest.fn(async () => ({ allowed: true })) };
-  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate);
+  const miss = { record: jest.fn(async () => undefined) };
+  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate, miss);
   // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
-  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate });
+  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss });
   return { controller, wecomClient, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
 }
 
@@ -269,6 +270,69 @@ describe('WecomController.callback', () => {
       expect(controller.__usage.increment).toHaveBeenCalledWith('messagesReceived');
       const imageCalls = (controller.__usage.increment as any).mock.calls.filter((c: any[]) => c[0].startsWith('image'));
       expect(imageCalls.length).toBe(0);
+    });
+  });
+
+  describe('语音/视频/文件入站', () => {
+    const call = async (parseMsg: any, opts: { sendReject?: boolean; gate?: any } = {}) => {
+      const crypto = makeCrypto({ parseXml: jest.fn(() => Promise.resolve(parseMsg)) });
+      const routing = makeRouting();
+      const { controller } = makeController(crypto, routing, opts.gate);
+      if (opts.sendReject) controller.__client.sendText.mockRejectedValueOnce(new Error('wecom down'));
+      const res = makeRes();
+      await controller.callback(
+        { msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce },
+        'cipher', {} as any, res,
+      );
+      return { controller, routing, res };
+    };
+
+    it('@机器人 voice → 引导话术 + miss(mediaType=voice)，不进 routing', async () => {
+      const { controller, routing, res } = await call({
+        MsgType: 'voice', mentioned: true, ChatId: 'chat-v', FromUserName: 'u-v',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(controller.__miss.record).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'voice', chatId: 'chat-v' }));
+      expect(controller.__client.sendText).toHaveBeenCalledWith('chat-v', expect.stringContaining('无法直接查看'));
+      expect(routing.dispatch).not.toHaveBeenCalled();
+    });
+
+    it('@机器人 file → miss(mediaType=file)', async () => {
+      const { controller } = await call({
+        MsgType: 'file', mentioned: true, ChatId: 'chat-f', FromUserName: 'u-f',
+      });
+      expect(controller.__miss.record).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'file' }));
+    });
+
+    it('引导话术发送失败仍 ack 200', async () => {
+      const { res } = await call(
+        { MsgType: 'video', mentioned: true, ChatId: 'chat-x', FromUserName: 'u-x' },
+        { sendReject: true },
+      );
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('无 chatId → 不发送但仍 200', async () => {
+      const { controller, res } = await call({ MsgType: 'voice', mentioned: true });
+      expect(controller.__client.sendText).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe('租户只读闸门', () => {
+    it('tenant-readonly → 回复只读话术，不进 routing', async () => {
+      const crypto = makeCrypto({ parseXml: jest.fn(() => Promise.resolve({ MsgType: 'text', Content: 'hi', ChatId: 'c1' })) });
+      const routing = makeRouting();
+      const gate = jest.fn(async () => ({ allowed: false, reason: 'tenant-readonly' }));
+      const { controller } = makeController(crypto, routing, gate);
+      const res = makeRes();
+      await controller.callback(
+        { msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce },
+        'cipher', {} as any, res,
+      );
+      expect(controller.__client.sendText).toHaveBeenCalledWith('c1', expect.stringContaining('只读'));
+      expect(routing.dispatch).not.toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
     });
   });
 });

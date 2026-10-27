@@ -17,6 +17,11 @@ import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { PlatformAuditService } from './platform-audit.service.js';
 import { NoopQuotaPusher, type QuotaPusher } from './quota-pusher.js';
+import {
+  isQuotaWarning,
+  WebhookQuotaWarningNotifier,
+  type QuotaWarningNotifier,
+} from './quota-warning.js';
 import type { TenantQuota, TenantQuotaPatch } from './tenant.entity.js';
 
 /** 平台默认配额（spec: max_chats 5 / max_msgs_per_day 5000 / max_storage_mb 2048 / max_concurrent_qa 2） */
@@ -65,6 +70,15 @@ export class TenantQuotaService {
   }
 
   private pusher: QuotaPusher = new NoopQuotaPusher();
+  private notifier: QuotaWarningNotifier = new WebhookQuotaWarningNotifier(
+    ConfigService.instance.OPS_WEBHOOK_URL ?? '',
+  );
+  /** 租户+维度+自然日 → 已预警（每日最多一次） */
+  private readonly warned = new Set<string>();
+
+  setQuotaWarningNotifier(n: QuotaWarningNotifier): void {
+    this.notifier = n;
+  }
 
   /** 注入配额下发通道（生产推实例 / 测试 fake） */
   setQuotaPusher(p: QuotaPusher): void {
@@ -190,7 +204,24 @@ export class TenantQuotaService {
   // -------------------------------------------------------------------------
 
   async consume(input: QuotaConsumeInput): Promise<QuotaConsumeResult> {
-    return consumeQuota(this.pool, input);
+    const result = await consumeQuota(this.pool, input);
+    if (result.allowed) await this.maybeWarn(input.tenantId, input.kind, result.used, result.limit);
+    return result;
+  }
+
+  private async maybeWarn(tenantId: string, kind: string, used: number, limit: number): Promise<void> {
+    if (!isQuotaWarning(used, limit)) return;
+    const day = Math.floor(Date.now() / 86_400_000);
+    const key = `${tenantId}:${kind}:${day}`;
+    if (this.warned.has(key)) return;
+    this.warned.add(key);
+    // 防胀：只保留当天
+    for (const k of this.warned) if (!k.endsWith(`:${day}`)) this.warned.delete(k);
+    try {
+      await this.notifier.warn(tenantId, kind, used, limit);
+    } catch (err) {
+      this.logger.warn({ detail: 'quota-warning-fail', tenantId, kind, err: (err as Error).message });
+    }
   }
 }
 

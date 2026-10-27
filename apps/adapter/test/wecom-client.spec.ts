@@ -182,6 +182,26 @@ describe('WecomClient', () => {
     });
   });
 
+  describe('sendFile/sendVideo 错误分支', () => {
+    it('sendFile errcode≠0 → WECOM_SEND_FAIL', async () => {
+      const client = withToken(await newClient());
+      apiMock.post.mockResolvedValueOnce({ data: { errcode: 40008, errmsg: 'bad file' } });
+      await expect(client.sendFile('chat-1', 'mid')).rejects.toMatchObject({ code: 10003 });
+    });
+
+    it('sendVideo errcode≠0 → WECOM_SEND_FAIL', async () => {
+      const client = withToken(await newClient());
+      apiMock.post.mockResolvedValueOnce({ data: { errcode: 40008, errmsg: 'bad video' } });
+      await expect(client.sendVideo('chat-1', 'mid', 't')).rejects.toMatchObject({ code: 10003 });
+    });
+
+    it('uploadMedia errcode≠0 两次 → WECOM_UPLOAD_FAIL', async () => {
+      const client = withToken(await newClient());
+      apiMock.post.mockResolvedValue({ data: { errcode: 40009, errmsg: 'upload fail' } });
+      await expect(client.uploadMedia('file', '/tmp/fake.pdf')).rejects.toMatchObject({ code: 10004 });
+    });
+  });
+
   describe('uploadMedia / downloadMedia', () => {
     it('3.4.k uploadMedia：POST /media/upload 返回 media_id', async () => {
       apiMock.post.mockResolvedValueOnce({ data: { errcode: 0, media_id: 'uploaded-media-id' } });

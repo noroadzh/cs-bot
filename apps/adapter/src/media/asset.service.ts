@@ -4,14 +4,15 @@
  */
 import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
 import { Pool } from 'pg';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
 import { dirname, join } from 'path';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import type { Asset, AssetCreateInput, AssetListQuery, AssetListResult } from './asset.entity.js';
 
-const MAX_ASSET_BYTES = 20 * 1024 * 1024; // 20MB
+const MAX_ASSET_BYTES = 20 * 1024 * 1024; // 20MB（文件）
+const MAX_VIDEO_BYTES = 10 * 1024 * 1024; // 10MB（视频）
 const ALLOWED_MIME_TYPES = [
   'image/jpeg', 'image/png', 'image/gif', 'image/webp',
   'video/mp4', 'video/webm',
@@ -43,14 +44,13 @@ export class AssetService {
    * Create asset from uploaded file buffer
    */
   async createFromFile(buffer: Buffer, originalName: string, mimeType: string): Promise<Asset> {
-    // 2.4 超限 → 413 Payload Too Large（裸 Error 会被 Nest 翻成 500，语义错误）
-    if (buffer.length > MAX_ASSET_BYTES) {
+    const assetType: 'file' | 'video' = mimeType.startsWith('video/') ? 'video' : 'file';
+    const maxBytes = assetType === 'video' ? MAX_VIDEO_BYTES : MAX_ASSET_BYTES;
+
+    // 2.4 超限 → 413 Payload Too Large
+    if (buffer.length > maxBytes) {
       throw new HttpException(
-        {
-          errCode: 'ASSET_TOO_LARGE',
-          detail: `file exceeds max size of ${MAX_ASSET_BYTES} bytes`,
-          maxBytes: MAX_ASSET_BYTES,
-        },
+        { errCode: 'ASSET_TOO_LARGE', detail: `asset exceeds max size of ${maxBytes} bytes`, maxBytes },
         HttpStatus.PAYLOAD_TOO_LARGE,
       );
     }
@@ -67,20 +67,27 @@ export class AssetService {
       );
     }
 
+    const md5 = createHash('md5').update(buffer).digest('hex');
+    const existing = await this.pool.query(
+      `SELECT id, type, name, url, size, created_at FROM asset
+       WHERE md5 = $1 AND type = $2 LIMIT 1`,
+      [md5, assetType],
+    );
+    if (existing.rows.length > 0) return this.mapRowToAsset(existing.rows[0]);
+
     const id = randomUUID();
     const ext = this.getExtension(mimeType);
     const storedName = `${id}${ext}`;
     const filePath = join(DATA_DIR, storedName);
 
-    // Write file
-    await fs.writeFile(filePath, buffer);
+    // 落盘 0600（仅运行用户可读写）
+    await fs.writeFile(filePath, buffer, { mode: 0o600 });
 
-    // Insert record
     const result = await this.pool.query(
-      `INSERT INTO asset (id, type, name, url, size, created_at)
-       VALUES ($1, $2, $3, $4, $5, now())
+      `INSERT INTO asset (id, type, name, url, size, md5, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
        RETURNING id, type, name, url, size, created_at`,
-      [id, 'file', originalName, `/assets/${storedName}`, buffer.length],
+      [id, assetType, originalName, `/assets/${storedName}`, buffer.length, md5],
     );
 
     return this.mapRowToAsset(result.rows[0]);

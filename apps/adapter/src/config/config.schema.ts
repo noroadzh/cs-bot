@@ -24,6 +24,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LLM_FALLBACK_BASE_URL: EnvString.url(),
   LLM_FALLBACK_API_KEY: EnvString.min(8),
   LLM_TIMEOUT_MS: EnvInt(15000),
+  LLM_RETRY_DELAY_MS: EnvInt(1000),
+  LLM_PRIMARY_MODEL: EnvString.default('deepseek-chat'),
 
   // Admin
   ADMIN_USER: EnvString.default('admin'),
@@ -43,6 +45,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // 拒绝话术
   REFUSAL_TEXT: EnvString.default('暂时没有合适答案，已记录到工单。紧急问题请 @ 客服。'),
+  QUESTION_GUIDANCE_TEXT: EnvString.default('请用一句完整的话描述您想咨询的问题～'),
 
   // Redis
   REDIS_HOST: EnvString.default('127.0.0.1'),
@@ -61,6 +64,13 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   // 限流
   RATE_GROUP_PER_MIN: EnvInt(20),
   RATE_USER_PER_MIN: EnvInt(5),
+  RATE_HINT_TEXT: EnvString.default('提问太频繁，请稍后再试'),
+  ALLOWED_CHAT_IDS: EnvString.default(''),
+
+  // 出站并发上限
+  LLM_CONCURRENCY: EnvInt(4),
+  WECOM_CONCURRENCY: EnvInt(8),
+  VL_CONCURRENCY: EnvInt(2),
 
   // 长答案分段
   MAX_SEGMENT_BYTES: EnvInt(2048),
@@ -95,8 +105,10 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   SWAGGER_ENABLED: EnvBool(true),
 
   // Import (M10)
-  IMPORT_MAX_FILE_BYTES: EnvInt(10 * 1024 * 1024), // 10MB
-  IMPORT_MAX_FILE_BYTES_URL: EnvInt(10 * 1024 * 1024), // 10MB (URL fetch)
+  IMPORT_MAX_FILE_BYTES: EnvInt(200 * 1024 * 1024), // 200MB
+  IMPORT_MAX_FILE_BYTES_URL: EnvInt(200 * 1024 * 1024), // 200MB (URL fetch)
+  IMPORT_MAX_MESSAGES: EnvInt(50000),
+  IMPORT_MEMORY_LIMIT_MB: EnvInt(512),
   MOCK_REDACTION: EnvBool(false),
   IMPORT_RULES_FILE: EnvString.default('config/import-rules.yml'),
   IMPORT_BLACKLIST_FILE: EnvString.default('config/import-blacklist.txt'),
@@ -109,16 +121,26 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_PROVISION_TIMEOUT_MS: EnvInt(120000), // 120s
   PLATFORM_MASTER_KEY: EnvString.optional().default(''),
   PLATFORM_TLS_PROVIDER: EnvString.default('fake'),
+  PLATFORM_CERT_DIR: EnvString.default('data/tenants/certs'),
+  LICENSE_ISSUER: EnvString.default('noop'),
+  LICENSE_ISSUER_BIN: EnvString.default('tools/license-issuer/license-issuer'),
+  PLATFORM_HEALTH_URL_TEMPLATE: EnvString.default('http://{host}/healthz'),
+  PLATFORM_UPGRADE_SCRIPT: EnvString.default('scripts/tenant-upgrade.sh'),
+  PLATFORM_CANARY_OBSERVE_MS: EnvInt(0),
   PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),
 
   // 模型通道（增项 D）
-  MODEL_MODE: EnvString.default('cloud'),
+  MODEL_MODE: z.enum(['cloud', 'hybrid', 'local']).default('cloud'),
   LOCAL_LLM_BASE_URL: EnvString.optional().default(''),
-  LOCAL_EMBEDDING_URL: EnvString.optional().default(''),
+  LOCAL_LLM_API_KEY: EnvString.optional().default(''),
   LOCAL_LLM_MODEL: EnvString.optional().default(''),
+  LOCAL_LLM_TIMEOUT_MS: EnvInt(25000),
+  LOCAL_EMBEDDING_URL: EnvString.optional().default(''),
 
   // 当前实例所属租户（形态 B：每租户一实例）。空 = 数据面不做 tenant 配额/状态准入。
   TENANT_ID: EnvString.optional().default(''),
+  CONTROL_PLANE_URL: EnvString.optional().default(''),
+  CONTROL_PLANE_TOKEN: EnvString.optional().default(''),
 
   // 日志（可观测性，无 SSH 排查）
   LOG_LEVEL: EnvString.default('info'),
@@ -126,6 +148,22 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LOG_HTTP: EnvBool(true),
   SLOW_LOG_MS: EnvInt(2000),
   LOG_PRETTY: EnvBool(false),
+}).superRefine((cfg, ctx) => {
+  const needsLocal = cfg.MODEL_MODE === 'local' || cfg.MODEL_MODE === 'hybrid';
+  if (needsLocal && !cfg.LOCAL_LLM_BASE_URL) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['LOCAL_LLM_BASE_URL'],
+      message: 'LOCAL_LLM_BASE_URL is required when MODEL_MODE is local or hybrid',
+    });
+  }
+  if (needsLocal && cfg.LOCAL_LLM_BASE_URL && !/^https?:\/\//.test(cfg.LOCAL_LLM_BASE_URL)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['LOCAL_LLM_BASE_URL'],
+      message: 'LOCAL_LLM_BASE_URL must be an http(s) URL',
+    });
+  }
 }));
 
 export type AppConfigInput = z.infer<typeof AppConfigSchema>;

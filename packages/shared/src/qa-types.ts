@@ -11,7 +11,7 @@ export interface AskReq {
 
 export interface AskResp {
   answer: string;
-  quotes?: Array<{ id: string; content: string; score: number }>;
+  quotes?: Array<{ id: string; content: string; score: number; source?: string; title?: string }>;
   score: number;
   /** Which source served the answer. Omitted means unknown / mock. */
   source?: 'primary' | 'fallback' | 'approved';

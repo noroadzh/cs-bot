@@ -6,6 +6,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import axios, { AxiosInstance } from 'axios';
 import { ConfigService } from '../config/config.service.js';
+import { vlSemaphore } from '../common/semaphore.js';
 
 export const IRECOGNIZE_ENGINE = Symbol('IRecognizeEngine');
 
@@ -73,7 +74,7 @@ export class MediaRecognizeService {
     }
     try {
       const dataUrl = `data:${mimeType};base64,${buf.toString('base64')}`;
-      const resp = await this.api!.post(
+      const resp = await vlSemaphore().run(() => this.api!.post(
         '/v1/chat/completions',
         {
           model: 'qwen-vl-plus',
@@ -88,7 +89,7 @@ export class MediaRecognizeService {
           ],
           max_tokens: 256,
         },
-      );
+      ));
       const text = (resp.data as any)?.choices?.[0]?.message?.content ?? '';
       return typeof text === 'string' ? text : '';
     } catch (err) {

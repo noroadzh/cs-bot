@@ -52,6 +52,32 @@ describe('TriggerService', () => {
     expect(svc.evaluate(makeMsg({ text: '保修期内坏了' }))).toEqual({ triggered: true, reason: 'keyword' });
   });
 
+  it('关键词文件损坏 → reload 保留旧 trie 并返回旧数量', async () => {
+    const { TriggerService } = await import('../src/routing/trigger.service.js');
+    const svc = new TriggerService({} as any);
+    const before = svc.count;
+    writeFileSync(KEYWORDS_FILE, '::not yaml:: [', 'utf8');
+    expect(svc.reload()).toBe(before);
+    writeKeywords(['退货', '发票', '保修']);
+    svc.reload();
+  });
+
+  it('关键词表含非字符串/空项时过滤', async () => {
+    const { TriggerService } = await import('../src/routing/trigger.service.js');
+    writeFileSync(KEYWORDS_FILE, 'keywords:\n  - 42\n  - ""\n  - 退款\n', 'utf8');
+    const svc = new TriggerService({} as any);
+    expect(svc.count).toBe(1);
+    expect(svc.evaluate(makeMsg({ text: '退款' }))).toEqual({ triggered: true, reason: 'keyword' });
+    writeKeywords(['退货', '发票', '保修']);
+    svc.reload();
+  });
+
+  it('无文本消息 → 空文本分支不命中', async () => {
+    const { TriggerService } = await import('../src/routing/trigger.service.js');
+    const svc = new TriggerService({} as any);
+    expect(svc.evaluate(makeMsg({ text: undefined, Content: undefined }))).toEqual({ triggered: false, reason: 'no_match' });
+  });
+
   it('2.2.c 自发言（FromUserName === botUserId）：triggered=false, reason=self', async () => {
     const { TriggerService } = await import('../src/routing/trigger.service.js');
     const svc = new TriggerService({} as any);

@@ -60,7 +60,7 @@ export class SensitiveFilterService implements OnModuleInit, OnModuleDestroy {
     const hits = this.automaton.search(text);
     if (hits.length === 0) return text;
     const hitWords = [...new Set(hits.flatMap(([, matched]) => matched).filter(Boolean))];
-    this.logger.warn({ detail: 'filter-hit', count: hitWords.length });
+    this.logger.warn({ detail: 'filter-hit', count: hitWords.length, hitWords });
     let result = text;
     for (const word of hitWords) {
       result = result.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '[内容已过滤]');

@@ -13,7 +13,7 @@ import { maskPII } from '@cs-bot/shared';
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-const HEADER = ['traceId', 'chatId', 'userId', 'question', 'score', 'engine', 'createdAt'] as const;
+const HEADER = ['traceId', 'chatId', 'userId', 'question', 'score', 'engine', 'mediaType', 'status', 'createdAt'] as const;
 const EXPORT_LIMIT = 50000;
 const FETCH_BATCH = 2000;
 
@@ -25,7 +25,8 @@ export class MissExportService {
     const pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL });
     try {
       const result = await pool.query(
-        `SELECT trace_id, chat_id, user_id, question, score, engine, created_at
+        `SELECT trace_id, chat_id, user_id, question, score, engine,
+                media_type AS "mediaType", status, created_at
          FROM miss_record
          WHERE created_at >= now() - interval '${days} days'
          ORDER BY created_at DESC
@@ -61,7 +62,8 @@ export class MissExportService {
     try {
       client = await pool.connect();
       await client.query(`DECLARE cur CURSOR FOR
-        SELECT trace_id, chat_id, user_id, question, score, engine, created_at
+        SELECT trace_id, chat_id, user_id, question, score, engine,
+               media_type AS "mediaType", status, created_at
         FROM miss_record
         WHERE created_at >= now() - interval '${days} days'
         ORDER BY created_at DESC
@@ -78,6 +80,8 @@ export class MissExportService {
             row.question,
             row.score,
             row.engine,
+            row.mediaType ?? '',
+            row.status,
             row.created_at,
           ]);
         }

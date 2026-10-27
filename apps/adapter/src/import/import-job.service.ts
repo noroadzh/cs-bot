@@ -54,6 +54,11 @@ import type {
 } from './import-job.entity.js';
 export type { ImportJobListQuery, ImportItemListQuery };
 
+/** RSS 是否超过限额的 80%（纯函数，便于单测） */
+export function isMemoryHigh(rssBytes: number, limitMb: number): boolean {
+  return rssBytes > limitMb * 1024 * 1024 * 0.8;
+}
+
 /** 命中即短路，不再重复解析的历史状态 */
 const REUSABLE_STATUSES: readonly ImportJobStatus[] = [
   'parsed', 'approved', 'partial', 'rejected',
@@ -471,6 +476,9 @@ export class ImportJobService {
       } catch (err) {
         return this.failJob(jobId, `conversation parse failed: ${(err as Error).message}`);
       }
+      if (messages.length > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
+        return this.failJob(jobId, `too many messages: ${messages.length} > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
+      }
       const cleaned = this.getCleaner().clean(messages);
       const { paired, unpaired } = this.getPairing().pair(cleaned);
       try {
@@ -506,6 +514,9 @@ export class ImportJobService {
       return this.failJob(jobId, `parse failed: ${(err as Error).message}`);
     }
 
+    if (rows.length > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
+      return this.failJob(jobId, `too many messages: ${rows.length} > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
+    }
     try {
       await this.persistItems(jobId, rows);
     } catch (err) {
@@ -1022,6 +1033,19 @@ export class ImportJobService {
     return target;
   }
 
+  /** 导入内存保护：RSS 超过限额 80% 时暂停，恢复后继续（保留进度） */
+  private async guardMemory(): Promise<void> {
+    const limitMb = ConfigService.instance.IMPORT_MEMORY_LIMIT_MB ?? 512;
+    while (isMemoryHigh(process.memoryUsage().rss, limitMb)) {
+      this.logger.warn({
+        detail: 'import-memory-pause',
+        rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+        limitMb,
+      });
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+
   /** 单事务写 item：要么全写要么全不写 */
   private async persistItems(
     jobId: string,
@@ -1040,7 +1064,10 @@ export class ImportJobService {
       similarId: string | null;
       suggest: string;
     }[] = [];
+    let processed = 0;
     for (const row of rows) {
+      if (processed > 0 && processed % 2000 === 0) await this.guardMemory();
+      processed += 1;
       const red = this.redactor.redact(row.answer);
       const autoBlocked = blacklist.matches(`${row.question} ${row.answer}`);
       let similarId: string | null = null;
@@ -1152,7 +1179,16 @@ export class ImportJobService {
         reviewResult: r.review_status === 'pending' ? '' : String(r.review_status),
       };
     });
-    return buildReviewManifest(rows);
+    const buf = await buildReviewManifest(rows);
+    // 落盘保留（30 天后由清理任务删除）
+    try {
+      const dir = join(process.cwd(), 'data', 'import', jobId);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(join(dir, 'review.xlsx'), buf, { mode: 0o600 });
+    } catch (err) {
+      this.logger.warn({ detail: 'review-manifest-persist-failed', jobId, err: (err as Error).message });
+    }
+    return buf;
   }
 
   /**

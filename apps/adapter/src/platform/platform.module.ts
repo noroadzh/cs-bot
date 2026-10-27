@@ -6,6 +6,8 @@
  * `ConfigService.instance`——那一刻配置尚未初始化，会导致路由永远不挂载。
  */
 import { DynamicModule, Module } from '@nestjs/common';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import { AdminModule } from '../admin/admin.module.js';
 import { ConfigService } from '../config/config.service.js';
 import { PlatformController } from './platform.controller.js';
@@ -16,9 +18,11 @@ import { PlatformAuditService } from './platform-audit.service.js';
 import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantSecretStore } from './tenant-secret-store.js';
 import { ExportPackager } from './export-package.js';
-import { PlatformMonitor } from './platform-monitor.js';
+import { PlatformMonitor, HttpHealthSource } from './platform-monitor.js';
 import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
+import { ShellUpgradeDeps } from './upgrade-runner.js';
 import { TenantOffboarding } from './tenant-offboarding.js';
+import { SubscriptionReminder, WebhookNotifier } from './subscription-reminder.js';
 
 @Module({})
 export class PlatformModule {
@@ -34,6 +38,11 @@ export class PlatformModule {
         PlatformAuditService,
         TenantExpirySweepService,
         {
+          provide: SubscriptionReminder,
+          useFactory: () =>
+            new SubscriptionReminder(new WebhookNotifier(ConfigService.instance.OPS_WEBHOOK_URL ?? '')),
+        },
+        {
           provide: TenantSecretStore,
           useFactory: () =>
             new TenantSecretStore(
@@ -48,40 +57,54 @@ export class PlatformModule {
         {
           provide: PlatformMonitor,
           useFactory: () =>
-            new PlatformMonitor({
-              probe: async (id: string) => ({
-                tenantId: id,
-                healthy: true,
-                qaFailRate: 0,
-                llmFailRate: 0,
-              }),
-            }),
+            new PlatformMonitor(
+              new HttpHealthSource(
+                ConfigService.instance.DATABASE_URL,
+                ConfigService.instance.PLATFORM_HEALTH_URL_TEMPLATE,
+              ),
+            ),
         },
         {
           provide: UpgradeOrchestrator,
           useFactory: () =>
             new UpgradeOrchestrator(
-              {
-                snapshot: async () => undefined,
-                swapImage: async () => undefined,
-                health: async () => true,
-                rollback: async () => undefined,
-                observe: async () => true,
-              },
+              new ShellUpgradeDeps(
+                ConfigService.instance.PLATFORM_UPGRADE_SCRIPT,
+                120_000,
+                ConfigService.instance.PLATFORM_CANARY_OBSERVE_MS,
+              ),
               ConfigService.instance.PLATFORM_UPGRADE_CANARY_ID || undefined,
             ),
         },
         {
           provide: TenantOffboarding,
-          useFactory: (packager: ExportPackager) =>
+          useFactory: (packager: ExportPackager, tenants: TenantService) =>
             new TenantOffboarding({
               exportPackage: async (tenantId: string) => {
-                void packager;
-                return `data/tenants/${tenantId}/export.enc`;
+                const detail = await tenants.getDetail(tenantId);
+                const dir = join(ConfigService.instance.PLATFORM_COMPOSE_DIR, tenantId);
+                let assets: string[] = [];
+                try {
+                  assets = await fs.readdir(join(dir, 'assets'));
+                } catch {
+                  assets = [];
+                }
+                const pkg = packager.build({
+                  tenantId,
+                  knowledgeBase: '',
+                  assets,
+                  config: JSON.stringify(detail.tenant),
+                });
+                await fs.mkdir(dir, { recursive: true });
+                const out = join(dir, `export-${Date.now()}.enc`);
+                await fs.writeFile(out, pkg, { mode: 0o600 });
+                return out;
               },
-              deleteTenant: async () => undefined,
+              deleteTenant: async (tenantId: string) => {
+                await tenants.terminate(tenantId, 'system');
+              },
             }),
-          inject: [ExportPackager],
+          inject: [ExportPackager, TenantService],
         },
       ],
       exports: [TenantService, TenantQuotaService, PlatformAuditService],

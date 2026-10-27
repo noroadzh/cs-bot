@@ -11,6 +11,7 @@ import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { hashId } from '../common/request-context.js';
 import { UsageService } from '../usage/usage.service.js';
+import { isUnusableQuestion, loadTriggerPrefixes, normalizeQuestion } from './question-normalizer.js';
 import type { InboundMsg } from '../wecom/wecom-crypto.js';
 import { IMessageSender } from './message-sender.port.js';
 
@@ -61,7 +62,19 @@ export class QaOrchestrator {
   async handle(msg: InboundMsg, traceId: string, _triggerReason: 'mention' | 'keyword'): Promise<void> {
     const chatId = msg.ChatId ?? msg.FromUserName;
     const userId = msg.FromUserName;
-    const question = msg.text ?? msg.Content ?? '';
+    const question = normalizeQuestion(
+      msg.text ?? msg.Content ?? '',
+      loadTriggerPrefixes(this.cfg.KEYWORDS_FILE),
+    );
+    if (isUnusableQuestion(question)) {
+      this.logger.log({ detail: 'question-guarded', chatHash: hashId(chatId), length: question.length });
+      try {
+        await this.sender.sendText(chatId, this.cfg.QUESTION_GUIDANCE_TEXT, msg.mentioned ? userId : undefined);
+      } catch (err) {
+        this.logger.warn({ traceId, detail: 'guidance-send-fail', err: (err as Error).message });
+      }
+      return;
+    }
     this.logger.log({ detail: 'qa-start', chatHash: hashId(chatId), userHash: hashId(userId), trigger: _triggerReason });
     const history = await this.context.get(chatId, userId);
     const engineStart = Date.now();
@@ -105,7 +118,7 @@ export class QaOrchestrator {
         answer = this.cfg.REFUSAL_TEXT;
         this.usageService.increment('messagesMissed');
       } else {
-        answer = result.value.answer;
+        answer = result.value.answer + this.formatCitations(result.value.quotes);
         answered = true;
       }
     }
@@ -149,6 +162,19 @@ export class QaOrchestrator {
     } catch (err) {
       this.logger.error({ traceId, err: (err as Error).message, errCode: ErrCode.WECOM_SEND_FAIL });
     }
+  }
+
+  /** 来源引用：最多 2 条，格式 —— 来源：《文档名》 */
+  private formatCitations(quotes?: Array<{ source?: string; title?: string }>): string {
+    const names = [
+      ...new Set(
+        (quotes ?? [])
+          .map((q) => q.source ?? q.title)
+          .filter((s): s is string => typeof s === 'string' && s.trim().length > 0),
+      ),
+    ].slice(0, 2);
+    if (names.length === 0) return '';
+    return '\n' + names.map((n) => `—— 来源：《${n}》`).join('\n');
   }
 
   private segmentText(text: string): string[] {

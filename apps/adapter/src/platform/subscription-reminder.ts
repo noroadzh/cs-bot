@@ -3,8 +3,28 @@
  *
  * T-30/15/7 天提醒租户与运维；通知通道经 Notifier 注入（邮件/群 webhook 可替换）。
  */
+import axios from 'axios';
+
 export interface Notifier {
   send(target: string, subject: string, body: string): Promise<void>;
+}
+
+/** 生产：运维群 webhook；url 为空时仅记日志（开发/测试） */
+export class WebhookNotifier implements Notifier {
+  constructor(private readonly url: string, private readonly timeoutMs = 5000) {}
+
+  async send(target: string, subject: string, body: string): Promise<void> {
+    if (!this.url) return;
+    try {
+      await axios.post(
+        this.url,
+        { msgtype: 'text', text: { content: `[${target}] ${subject}\n${body}` } },
+        { timeout: this.timeoutMs },
+      );
+    } catch {
+      /* 提醒失败不影响主流程 */
+    }
+  }
 }
 
 export interface ReminderTenant {

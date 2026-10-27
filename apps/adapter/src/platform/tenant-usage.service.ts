@@ -85,6 +85,46 @@ export class TenantUsageService {
     return { rows, totals };
   }
 
+  /** D10：接收适配层日报（计数覆盖，不累加） */
+  async upsertReport(
+    tenantId: string,
+    day: string,
+    counters: {
+      msgsIn: number;
+      triggered: number;
+      hit: number;
+      miss: number;
+      tokens: number;
+      activeChats: number;
+    },
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO tenant_usage_daily
+         (id, tenant_id, day, api_call_count, chat_count, msgs_triggered, qa_hit, qa_miss, llm_tokens, active_chats, storage_bytes, user_count)
+       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, 0, 0)
+       ON CONFLICT (tenant_id, day) DO UPDATE SET
+         api_call_count = EXCLUDED.api_call_count,
+         chat_count = EXCLUDED.chat_count,
+         msgs_triggered = EXCLUDED.msgs_triggered,
+         qa_hit = EXCLUDED.qa_hit,
+         qa_miss = EXCLUDED.qa_miss,
+         llm_tokens = EXCLUDED.llm_tokens,
+         active_chats = EXCLUDED.active_chats,
+         updated_at = NOW()`,
+      [
+        tenantId,
+        day,
+        counters.msgsIn,
+        counters.activeChats,
+        counters.triggered,
+        counters.hit,
+        counters.miss,
+        counters.tokens,
+        counters.activeChats,
+      ],
+    );
+  }
+
   /** 读取当日汇总（供 getDetail 内联） */
   async todaySummary(tenantId: string): Promise<UsageDayRow> {
     const res = await this.pool.query(

@@ -12,7 +12,8 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:integration": "jest test/integration --runInBand",
-    "test:acceptance": "jest test/acceptance --runInBand --forceExit"
+    "test:acceptance": "jest test/acceptance --runInBand --forceExit",
+    "obfuscate": "npx --yes javascript-obfuscator@4.1.1 dist --output dist"
   },
   "dependencies": {
     "@cs-bot/license-native": "workspace:*",

@@ -10,11 +10,13 @@
  */
 
 import { Injectable } from '@nestjs/common';
-import { Interval } from '@nestjs/schedule';
+import { Cron, Interval } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { TenantStateMachine } from './tenant.state-machine.js';
+import { SubscriptionReminder } from './subscription-reminder.js';
+import { Optional } from '@nestjs/common';
 import { PlatformAuditService } from './platform-audit.service.js';
 import type { Tenant, TenantStatus } from './tenant.entity.js';
 
@@ -41,8 +43,31 @@ export class TenantExpirySweepService {
   constructor(
     private readonly audit: PlatformAuditService,
     _config: ConfigService,
+    @Optional() private readonly reminder?: SubscriptionReminder,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
+  }
+
+  /** 每日 09:00 订阅到期提醒（T-30/15/7） */
+  @Cron('0 9 * * *', { timeZone: 'Asia/Shanghai' })
+  async handleReminders(): Promise<void> {
+    if (!this.reminder) return;
+    try {
+      const res = await this.pool.query(
+        `SELECT id, name, expired_at FROM tenant
+         WHERE deleted_at IS NULL AND expired_at IS NOT NULL
+           AND status IN ('trialing', 'active', 'grace')`,
+      );
+      const tenants = res.rows.map((r) => ({
+        id: String(r.id),
+        name: String(r.name),
+        expiresAt: new Date(r.expired_at),
+      }));
+      const sent = await this.reminder.dispatch(tenants, new Date());
+      if (sent > 0) this.logger.log({ detail: 'subscription-reminders', sent });
+    } catch (err) {
+      this.logger.warn({ detail: 'subscription-reminder-failed', err: (err as Error).message });
+    }
   }
 
   /** 定时入口：每小时执行一次 */

@@ -61,11 +61,19 @@ COPY tsconfig.base.json ./
 RUN pnpm -C packages/shared build
 RUN pnpm -C apps/adapter build
 
-# ---- 交付前必须启用（安全基线：JS 全量混淆）----
-# 前置：apps/adapter devDependencies 加入 javascript-obfuscator，
-#       package.json scripts 加 "obfuscate": "obfuscator dist --output dist"
-# 启用后，交付镜像的指纹（docker images --no-trunc）随交付文档一并提供用户核对。
-# RUN pnpm -C apps/adapter obfuscate
+# ---- 交付加固（安全基线：JS 全量混淆 + 剔除 sourcemap）----
+# 版本固定，构建期通过 npx 获取，避免把混淆器打进运行时镜像。
+# 交付镜像的指纹（docker images --no-trunc）随交付文档一并提供用户核对。
+RUN npx --yes javascript-obfuscator@4.1.1 apps/adapter/dist \
+      --output apps/adapter/dist \
+      --compact true \
+      --control-flow-flattening true \
+      --dead-code-injection true \
+      --string-array true \
+      --string-array-rotate true \
+      --identifier-names-generator hexadecimal \
+      --self-defending true \
+    && find apps/adapter/dist -name '*.map' -delete
 
 # ----- Stage 2: assets -----
 # 把 native .node 汇齐（pubkey 已编入 .node 内部，无需单独拷）
@@ -86,6 +94,11 @@ COPY --from=builder /app/apps/adapter/src/import/004-import-job.sql /app/migrate
 COPY --from=builder /app/apps/adapter/src/import/005-approved-qa.sql /app/migrate/005-approved-qa.sql
 COPY --from=builder /app/apps/adapter/src/import/006-import-job-stored-path.sql /app/migrate/006-import-job-stored-path.sql
 COPY --from=builder /app/apps/adapter/src/platform/007-tenant.sql /app/migrate/007-tenant.sql
+COPY --from=builder /app/apps/adapter/src/import/007-import-pipeline.sql /app/migrate/008-import-pipeline.sql
+COPY --from=builder /app/apps/adapter/src/miss/009-miss-media-status.sql /app/migrate/010-miss-media-status.sql
+COPY --from=builder /app/apps/adapter/src/media/010-asset-md5.sql /app/migrate/011-asset-md5.sql
+COPY --from=builder /app/apps/adapter/src/platform/011-usage-counters.sql /app/migrate/012-usage-counters.sql
+COPY --from=builder /app/apps/adapter/src/platform/008-control-plane.sql /app/migrate/009-control-plane.sql
 COPY --from=builder /app/config /app/config
 
 ENV NODE_ENV=production
@@ -95,4 +108,4 @@ EXPOSE 3000
 
 USER nonroot
 
-CMD ["node", "--enable-source-maps", "apps/adapter/dist/main.js"]
+CMD ["node", "apps/adapter/dist/main.js"]

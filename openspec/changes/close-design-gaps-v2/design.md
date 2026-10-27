@@ -83,3 +83,11 @@
 - [PII 正则误伤] → 沿用导入脱敏的保守规则；只作用于日志白名单字段。
 - [50 并发 10 分钟耗时] → 默认跳过，nightly/手动开启，避免拖慢日常 CI。
 - [D10 上报增加耦合] → 失败只缓冲不阻塞问答；控制面不可达不影响数据面。
+
+## Known Limitations (2026-10-27)
+
+- 真实 6 容器 compose 冒烟与生产验证仍受网络/服务器可达性约束，仅在 `REAL_COMPOSE=1` 或 nightly 执行。
+- M11 真实适配器依赖外部 TLS 证书、签发私钥、docker/health 端点；CI 逻辑测试仍使用 fake/noop。
+- 控制面仍运行在 adapter 内（`PLATFORM_ENABLED` 开关），未拆分为独立 `apps/control-plane`（本变更非目标）。
+- 关键词热加载与提问归一化各自读取 `keywords.yml`，文件被外部修改时缓存按 mtime 刷新（秒级）。
+- JS 混淆步骤已写入 Dockerfile/`obfuscate` 脚本，但本机无外网无法执行 `javascript-obfuscator`；该验证留待 CI/release 构建（任务 8.5 保持未完成）。

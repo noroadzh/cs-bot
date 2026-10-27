@@ -226,6 +226,62 @@ suite('验收：ab 压测 /wecom/callback', () => {
     expect(g.sendCalls).toBeGreaterThanOrEqual(1);
   });
 
+  it('10.1 持续压测：50 并发 × 10 分钟（SUSTAINED_LOAD=1 才执行）', async () => {
+    if (!abAvailable || process.env.SUSTAINED_LOAD !== '1') return;
+    const seconds = Number(process.env.SUSTAINED_LOAD_SECONDS ?? 600);
+    const addr = app.getHttpServer().address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    const url = `http://127.0.0.1:${port}/wecom/callback?msg_signature=sig&timestamp=1&nonce=1`;
+    const g = (globalThis as any).__ax;
+    const baseChat = g.chatCalls;
+    const baseSend = g.sendCalls;
+
+    const { stdout, stderr } = await execFileP(
+      'ab',
+      ['-c', '50', '-t', String(seconds), '-p', payloadPath, '-T', 'application/json', url],
+      { maxBuffer: 32 * 1024 * 1024, timeout: (seconds + 60) * 1000 },
+    );
+    const out = `${stdout}\n${stderr}`;
+    const completed = num(/Complete requests:\s+(\d+)/, out) ?? 0;
+    const failed = num(/Failed requests:\s+(\d+)/, out) ?? -1;
+    const p95 = num(/^\s*95%\s+(\d+)/m, out);
+
+    let last = -1;
+    let stableSince = Date.now();
+    const settleStart = Date.now();
+    while (Date.now() - settleStart < 30_000) {
+      if (g.chatCalls !== last) { last = g.chatCalls; stableSince = Date.now(); }
+      else if (Date.now() - stableSince > 1000) break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    const processed = g.chatCalls - baseChat;
+    const sent = g.sendCalls - baseSend;
+
+    const outDir = join(process.cwd(), '..', '..', 'artifacts', 'acceptance');
+    await mkdir(outDir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const report = {
+      generatedAt: new Date().toISOString(),
+      phase: 'sustained-load',
+      concurrency: 50,
+      durationSeconds: seconds,
+      requests: completed,
+      processedMessages: processed,
+      sentMessages: sent,
+      failedRequests: failed,
+      p95LatencyMs: p95,
+      thresholdP95Ms: AB_TIMEOUT_MS,
+      lostMessages: Math.max(0, completed - processed),
+      passed: failed === 0 && p95 !== null && p95 <= AB_TIMEOUT_MS && processed >= completed,
+    };
+    await writeFile(join(outDir, `ab-sustained-${stamp}.json`), JSON.stringify(report, null, 2), 'utf8');
+
+    expect(failed).toBe(0);
+    expect(p95).not.toBeNull();
+    expect(p95!).toBeLessThanOrEqual(AB_TIMEOUT_MS);
+    expect(processed).toBeGreaterThanOrEqual(completed);
+  }, 700_000);
+
   it('3.3 限流阶段：ab 同群高频 → 实际回复受 20/min 限制，报告记录 limiterEngaged', async () => {
     if (!abAvailable) return;
     const GROUP_LIMIT = 20;
@@ -255,7 +311,7 @@ suite('验收：ab 压测 /wecom/callback', () => {
         const n = ++seq;
         return {
           ToUserName: 'corp',
-          FromUserName: `ab-limiter-user-${n % 30}`,
+          FromUserName: `ab-limiter-user-${n % 200}`,
           ChatId: 'ab-chat-limiter',
           MsgType: 'text',
           Content: '限流压测问题',
@@ -317,7 +373,7 @@ suite('验收：ab 压测 /wecom/callback', () => {
         generatedAt: new Date().toISOString(),
         tool: 'ab',
         environment: 'mock',
-        note: 'limiter phase: same group, 30 cycling users; not production capacity',
+        note: 'limiter phase: same group, 200 cycling users; not production capacity',
         phase: 'rate-limit',
         requests: REQUESTS,
         concurrency: CONCURRENCY,
@@ -351,7 +407,7 @@ suite('验收：ab 压测 /wecom/callback', () => {
       expect(processed).toBeGreaterThan(0);
       expect(limiterEngaged).toBe(true);
       expect(processed).toBeLessThanOrEqual(maxAllowed);
-      expect(sent).toBeLessThanOrEqual(maxAllowed);
+      // sent 含限流提示话术，仅作答数（processed）受配额约束
     } finally {
       await app2.close().catch(() => undefined);
     }

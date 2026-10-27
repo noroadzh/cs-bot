@@ -36,6 +36,15 @@ beforeAll(() => setConfig());
 afterEach(() => jest.useRealTimers());
 
 describe('MissService', () => {
+  it('onModuleDestroy 释放连接池', async () => {
+    const { MissService } = await import('../src/miss/miss.service.js');
+    const svc = new MissService({} as any);
+    const end = jest.fn(async () => undefined);
+    (svc as any).pool = { query: jest.fn(), end } as any;
+    await svc.onModuleDestroy();
+    expect(end).toHaveBeenCalled();
+  });
+
   it('3.5.a record 成功：pool.query 收到 INSERT 及参数，fifo 为空', async () => {
     const { MissService } = await import('../src/miss/miss.service.js');
     const svc = new MissService({} as any);
@@ -49,7 +58,7 @@ describe('MissService', () => {
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0] as [string, any[]];
     expect(sql).toContain(INSERT_SQL);
-    expect(params).toEqual(['t-1', 'chat-1', 'u-1', 'q1', 0.1, 'mock']);
+    expect(params).toEqual(['t-1', 'chat-1', 'u-1', 'q1', 0.1, 'mock', null]);
     expect((svc as any).fifo).toHaveLength(0);
   });
 
@@ -123,5 +132,39 @@ describe('MissService', () => {
     const ids: string[] = (svc as any).fifo.map((r: any) => r.traceId);
     expect(ids).not.toContain('t-0');    // 最老的被踢出
     expect(ids).toContain('t-1000');     // 最新写入的在队尾
+  });
+
+  it('retry 空队列直接返回', async () => {
+    const { MissService } = await import('../src/miss/miss.service.js');
+    const svc = new MissService({} as any);
+    (svc as any).pool = { query: jest.fn(), end: jest.fn(async () => undefined) };
+    await expect((svc as any).retry()).resolves.toBeUndefined();
+  });
+
+  it('retry 失败重新入队（15s 后再试）', async () => {
+    jest.useFakeTimers();
+    const { MissService } = await import('../src/miss/miss.service.js');
+    const svc = new MissService({} as any);
+    const query = jest.fn(async () => { throw new Error('PG down'); });
+    (svc as any).pool = { query, end: jest.fn(async () => undefined) };
+    (svc as any).fifo.push(makeRecord(1));
+    await (svc as any).retry();
+    expect((svc as any).fifo).toHaveLength(1);
+    jest.advanceTimersByTime(15000);
+  });
+
+  it('record 失败后 5s 自动重试成功并出队', async () => {
+    jest.useFakeTimers();
+    const { MissService } = await import('../src/miss/miss.service.js');
+    const svc = new MissService({} as any);
+    const query: any = jest.fn();
+    query.mockRejectedValueOnce(new Error('PG down')).mockResolvedValue({ rows: [] });
+    (svc as any).pool = { query, end: jest.fn(async () => undefined) };
+
+    await (svc as any).flushOne(makeRecord(1));
+    expect((svc as any).fifo).toHaveLength(1);
+
+    await jest.advanceTimersByTimeAsync(5000);
+    expect((svc as any).fifo).toHaveLength(0);
   });
 });

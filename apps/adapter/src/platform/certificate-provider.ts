@@ -4,6 +4,10 @@
  * 默认实现可替换：ACME/DNS、预置证书文件、测试 fake。
  */
 import { readFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileP = promisify(execFile);
 
 export interface IssuedCert {
   cert: string;
@@ -45,5 +49,18 @@ export interface LicenseIssuer {
 export class NoopLicenseIssuer implements LicenseIssuer {
   async issue(_tenant: { id: string; host: string | null }): Promise<void> {
     /* no-op */
+  }
+}
+
+/** 生产：调用交付侧签发 CLI（默认 tools/license-issuer/license-issuer） */
+export class ShellLicenseIssuer implements LicenseIssuer {
+  constructor(private readonly bin: string, private readonly timeoutMs = 60_000) {}
+
+  async issue(tenant: { id: string; host: string | null }): Promise<void> {
+    await execFileP(
+      this.bin,
+      ['issue', '--tenant', tenant.id, '--host', tenant.host ?? ''],
+      { timeout: this.timeoutMs },
+    );
   }
 }

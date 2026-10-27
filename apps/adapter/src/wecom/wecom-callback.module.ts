@@ -9,9 +9,10 @@ import { WecomModule } from './wecom.module.js';
 import { RoutingModule } from '../routing/routing.module.js';
 import { MediaModule } from '../media/media.module.js';
 import { LicenseModule } from '../license/license.module.js';
+import { MissModule } from '../miss/miss.module.js';
 
 @Module({
-  imports: [WecomModule, RoutingModule, MediaModule, LicenseModule],
+  imports: [WecomModule, RoutingModule, MediaModule, LicenseModule, MissModule],
   controllers: [WecomController],
 })
 export class WecomCallbackModule {}

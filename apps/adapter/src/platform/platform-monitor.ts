@@ -3,6 +3,8 @@
  *
  * 健康来源与重启动作经接口注入，便于单测。
  */
+import axios from 'axios';
+import { Pool } from 'pg';
 export interface InstanceHealth {
   tenantId: string;
   healthy: boolean;
@@ -63,5 +65,49 @@ export class PlatformMonitor {
       }
     }
     return restarted;
+  }
+}
+
+
+/**
+ * 生产健康源：按 tenant.host 探测 `PLATFORM_HEALTH_URL_TEMPLATE`（{host} 占位）。
+ * 失败（网络/非 200）视为不健康；实例指标无法从 healthz 获取时按 0 计。
+ */
+export class HttpHealthSource implements HealthSource {
+  private readonly pool: Pool;
+
+  constructor(
+    connectionString: string,
+    private readonly template: string,
+    private readonly timeoutMs = 5000,
+  ) {
+    this.pool = new Pool({ connectionString, max: 2 });
+  }
+
+  async probe(tenantId: string): Promise<InstanceHealth> {
+    try {
+      const row = await this.pool.query<{ host: string | null }>(
+        'SELECT host FROM tenant WHERE id = $1 AND deleted_at IS NULL',
+        [tenantId],
+      );
+      const host = row.rows[0]?.host;
+      if (!host) {
+        return { tenantId, healthy: false, qaFailRate: 0, llmFailRate: 0 };
+      }
+      const url = this.template.replace('{host}', host);
+      const resp = await axios.get(url, { timeout: this.timeoutMs });
+      return {
+        tenantId,
+        healthy: resp.status === 200,
+        qaFailRate: 0,
+        llmFailRate: 0,
+      };
+    } catch {
+      return { tenantId, healthy: false, qaFailRate: 0, llmFailRate: 0 };
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
   }
 }
