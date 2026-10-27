@@ -203,6 +203,7 @@ export class TenantService implements OnModuleDestroy {
         const portRes = await this.pool.query(`SELECT nextval('tenant_port_seq') AS port`);
         tenant.port = Number(portRes.rows[0]?.port ?? 30000);
       }
+      const quotaForSeed = await this.quota.getQuota(tenantId);
       // 密钥与 env（幂等）；渲染器只消费 tenant.env
       const secretsResult = await this.secrets?.ensure(tenantId);
       const missingSecrets = (await this.secrets?.missingRequired(tenantId)) ?? [];
@@ -216,11 +217,12 @@ export class TenantService implements OnModuleDestroy {
       const envFile = secretsResult?.envFile
         ?? `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenantId}/tenant.env`;
       await this.provisioner.render(tenant, envFile);
+      await this.writeTenantSeed(tenant, quotaForSeed);
       // TLS 证书（失败 → 回滚 + provisioning_failed），落盘供 nginx 使用
       const cert = await this.certProvider.issue(tenant.host ?? tenant.id);
       await this.writeCertFiles(tenantId, cert);
       // 订阅期授权（必须在实例启动前落盘，否则 production 启动强校验会退出）
-      const quota = await this.quota.getQuota(tenantId);
+      const quota = quotaForSeed;
       await this.licenseIssuer.issue({
         id: tenant.id,
         host: tenant.host,
@@ -586,6 +588,25 @@ export class TenantService implements OnModuleDestroy {
   /** Allow tests to inject a custom provisioner */
   setProvisioner(p: TenantProvisioner): void {
     this.provisioner = p;
+  }
+
+  /** 租户实例 DB 初始化种子：本租户状态与配额（供数据面 TenantGate 本地准入） */
+  private async writeTenantSeed(tenant: Tenant, quota: TenantQuota | null): Promise<void> {
+    const esc = (v: string | null | undefined) => (v ?? '').replace(/'/g, "''");
+    const dir = `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenant.id}/initdb`;
+    const sql = [
+      `INSERT INTO tenant (id, name, status, host, port, expired_at, created_at, updated_at)`,
+      `VALUES ('${tenant.id}', '${esc(tenant.name)}', 'active', '${esc(tenant.host)}', ${tenant.port ?? 0},`,
+      `        ${tenant.expiredAt ? `'${esc(tenant.expiredAt)}'` : 'NULL'}, NOW(), NOW())`,
+      `ON CONFLICT (id) DO NOTHING;`,
+      `INSERT INTO tenant_quota (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month)`,
+      `VALUES ('${tenant.id}', ${quota?.maxChats ?? 5}, ${quota?.maxStorageMb ?? 2048}, ${quota?.maxApiCalls ?? 5000}, ${quota?.maxUsers ?? 2}, ${quota?.maxLlmTokensPerMonth ?? 0})`,
+      `ON CONFLICT (tenant_id) DO NOTHING;`,
+      '',
+    ].join('\n');
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(`${dir}/99-tenant-seed.sql`, sql, { mode: 0o644 });
   }
 
   private async writeCertFiles(tenantId: string, cert: { cert: string; key: string }): Promise<void> {
