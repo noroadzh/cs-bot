@@ -227,3 +227,17 @@ Each adapter instance MUST report daily counters (messages in/triggered/hit/miss
 
 - **WHEN** the report request fails
 - **THEN** the payload is retained for retry for up to 7 days and QA service is unaffected
+
+### Requirement: Tenant reporting connectivity
+
+Provisioned tenant instances MUST receive a reachable control-plane reporting URL and token, and their network MUST allow outbound access to it. The control plane MUST accept the report through the dedicated token authentication.
+
+#### Scenario: Report reaches control plane
+
+- **WHEN** a tenant instance runs its daily usage report
+- **THEN** the control plane receives the counters over the shared network
+
+#### Scenario: Tenant restarts
+
+- **WHEN** a tenant container is recreated
+- **THEN** the reporting URL/token remain injected from the tenant environment

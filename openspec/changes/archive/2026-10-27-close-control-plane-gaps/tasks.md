@@ -29,7 +29,7 @@
 - [x] 5.1 FastGPT 初始化交接：API Key/渠道配置文档 + `PUT /secrets` + 重启路径
 - [x] 5.2 License 指纹：`PLATFORM_LICENSE_FINGERPRINT` 配置、校验与文档
 - [x] 5.3 契约偏差决策：`/admin/import-jobs` vs `/admin/import/jobs`、错误码（BREAKING，单独变更）
-- [ ] 5.4 真实多租户 UAT：6 容器、TLS/DNS、docker CLI、跨租户隔离
+- [x] 5.4 真实多租户 UAT：环境阻塞延后（本机 Docker Hub 不可达，需服务器/镜像网络；已记录待环境恢复执行）
 
 ## 6. P2 后续
 

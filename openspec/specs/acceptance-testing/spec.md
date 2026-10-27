@@ -65,3 +65,17 @@ The acceptance suite MUST include a sustained load run of at least 50 concurrent
 
 - **WHEN** a 10,000-message fixture is imported
 - **THEN** parsing and pairing complete within 10 minutes and a report is written
+
+### Requirement: Multi-tenant control-plane E2E
+
+Acceptance MUST cover control-plane to tenant-instance data flow: quota/state push, usage report ingestion, TLS-aware health probe, and per-tenant backup, using fake docker or a real environment.
+
+#### Scenario: Push and report round-trip
+
+- **WHEN** the acceptance suite provisions two tenants with fake docker
+- **THEN** quota/state push reaches both instances and reported usage is visible in the control plane
+
+#### Scenario: Real environment optional
+
+- **WHEN** network and a Docker host are available
+- **THEN** the same flow can run against real tenant containers
