@@ -13,6 +13,9 @@ export class FastGPTQaEngine implements IQAEngine {
   private readonly logger = new AppLogger('FastGPTQaEngine');
   private readonly cfg = ConfigService.instance;
   private readonly approvedQa: ApprovedQaService;
+  /** cloud：允许低分/失败切云；hybrid：仅失败切云；local：禁止云回退 */
+  private readonly allowCloudFallback: boolean;
+  private readonly fallbackOnLowScore: boolean;
 
   constructor(_config: ConfigService, approvedQaService?: ApprovedQaService) {
     this.primary = axios.create({
@@ -20,8 +23,10 @@ export class FastGPTQaEngine implements IQAEngine {
       timeout: this.cfg.LLM_TIMEOUT_MS,
       headers: { Authorization: `Bearer ${this.cfg.FASTGPT_API_KEY}` },
     });
-    // Fallback LLM (LLM_FALLBACK_*): 当 primary 抛错时尝试一次。env 未配则不启用。
-    const fbBase = this.cfg.LLM_FALLBACK_BASE_URL;
+    this.allowCloudFallback = this.cfg.MODEL_MODE !== 'local';
+    this.fallbackOnLowScore = this.cfg.MODEL_MODE === 'cloud';
+    // Fallback LLM (LLM_FALLBACK_*): 当 primary 抛错时尝试一次。env 未配则不启用；local 档禁用。
+    const fbBase = this.allowCloudFallback ? this.cfg.LLM_FALLBACK_BASE_URL : '';
     const fbKey = this.cfg.LLM_FALLBACK_API_KEY;
     if (fbBase && fbKey) {
       this.fallback = axios.create({
@@ -50,8 +55,8 @@ export class FastGPTQaEngine implements IQAEngine {
       return primaryResp;
     }
 
-    // 优先级 3: fallback LLM
-    if (this.fallback) {
+    // 优先级 3: fallback LLM（local 档没有；hybrid 仅失败时；cloud 低分也可）
+    if (this.fallback && (this.fallbackOnLowScore || !primaryResp.ok)) {
       const fallbackResp = await this.call(this.fallback, req, 'fallback');
       if (fallbackResp.ok && fallbackResp.value.score >= this.cfg.CONFIDENCE_THRESHOLD) {
         return fallbackResp;

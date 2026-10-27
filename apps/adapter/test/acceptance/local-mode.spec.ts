@@ -1,5 +1,6 @@
 /**
- * 验收：MODEL_MODE=local 时链路走本地通道，绝不调用 FastGPT 云端引擎
+ * 验收：MODEL_MODE=local 时仍走 FastGPT RAG（本地模型作为 FastGPT 渠道），
+ * 且 FastGPT 失败时不做云端直连回退。
  *
  * 依赖 TEST_PG_URL；未设置则 skip。
  */
@@ -25,18 +26,17 @@ jest.mock('ioredis', () => {
 
 jest.mock('axios', () => {
   const g = globalThis as any;
-  g.__ax = { localCalls: 0, fastgptCalls: 0, sendCalls: 0, sent: [] as string[], localFail: false };
+  g.__ax = { directLlmCalls: 0, fastgptCalls: 0, sendCalls: 0, sent: [] as string[], fastgptFail: false };
   const post = jest.fn(async (url: string, body?: any) => {
-    // axios.create 的 baseURL 不在参数里，用 URL 前缀判断通道
-    if (typeof url === 'string' && url.includes('/chat/completions') && !url.includes('/api/v1/chat/completions')) {
-      // 本地通道：相对路径 /v1/chat/completions 或 /chat/completions
-      if (g.__ax.localFail) throw new Error('local down');
-      g.__ax.localCalls += 1;
-      return { data: { choices: [{ message: { content: '本地答案' } }] } };
-    }
     if (typeof url === 'string' && url.includes('/api/v1/chat/completions')) {
+      if (g.__ax.fastgptFail) throw new Error('fastgpt down');
       g.__ax.fastgptCalls += 1;
-      return { data: { data: [{ score: 0.9, content: '云答案' }], choices: [{ message: { content: '云答案' } }] } };
+      return { data: { data: [{ score: 0.9, content: '本地RAG答案' }], choices: [{ message: { content: '本地RAG答案' } }] } };
+    }
+    // 直连 LLM（本地或云）——local 模式下一律不应出现
+    if (typeof url === 'string' && url.includes('/chat/completions')) {
+      g.__ax.directLlmCalls += 1;
+      return { data: { choices: [{ message: { content: '直连答案' } }] } };
     }
     if (typeof url === 'string' && url.includes('gettoken')) {
       return { data: { errcode: 0, access_token: 'mock-token', expires_in: 7200 } };
@@ -51,7 +51,7 @@ jest.mock('axios', () => {
   return { create: factory, default: { create: factory } };
 });
 
-suite('验收：local 模式不出站', () => {
+suite('验收：local 模式保留 RAG 且不出站', () => {
   let pool: Pool;
   let app: any;
   const state = { msg: null as any };
@@ -100,26 +100,26 @@ suite('验收：local 模式不出站', () => {
     resetConfig();
   });
 
-  it('local 成功：走本地通道，FastGPT 零调用', async () => {
+  it('local 成功：走 FastGPT RAG（本地渠道），无直连 LLM', async () => {
     const g = (globalThis as any).__ax;
-    g.localCalls = 0; g.fastgptCalls = 0; g.sendCalls = 0; g.sent = []; g.localFail = false;
+    g.directLlmCalls = 0; g.fastgptCalls = 0; g.sendCalls = 0; g.sent = []; g.fastgptFail = false;
     state.msg = msg(`local-ok-${Date.now()}`);
     expect((await post()).status).toBe(200);
     const start = Date.now();
     while (Date.now() - start < 3000 && g.sendCalls < 1) await new Promise((r) => setTimeout(r, 25));
-    expect(g.localCalls).toBeGreaterThanOrEqual(1);
-    expect(g.fastgptCalls).toBe(0);
-    expect(g.sent.join('\n')).toContain('本地答案');
+    expect(g.fastgptCalls).toBeGreaterThanOrEqual(1);
+    expect(g.directLlmCalls).toBe(0);
+    expect(g.sent.join('\n')).toContain('本地RAG答案');
   });
 
-  it('local 失败：繁忙话术，仍不调用云端', async () => {
+  it('local 下 FastGPT 失败：繁忙话术，不直连云', async () => {
     const g = (globalThis as any).__ax;
-    g.localCalls = 0; g.fastgptCalls = 0; g.sendCalls = 0; g.sent = []; g.localFail = true;
+    g.directLlmCalls = 0; g.fastgptCalls = 0; g.sendCalls = 0; g.sent = []; g.fastgptFail = true;
     state.msg = msg(`local-fail-${Date.now()}`);
     expect((await post()).status).toBe(200);
     const start = Date.now();
     while (Date.now() - start < 3000 && g.sendCalls < 1) await new Promise((r) => setTimeout(r, 25));
-    expect(g.fastgptCalls).toBe(0);
+    expect(g.directLlmCalls).toBe(0);
     expect(g.sent.join('\n')).toContain('系统繁忙');
   });
 });

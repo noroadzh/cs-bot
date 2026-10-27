@@ -203,51 +203,49 @@ describe('QaOrchestrator', () => {
     expect(usage.increment).toHaveBeenCalledWith('messagesRefused');
   });
 
-  it('D-3.1 local 模式经 ModelRouter 直连，不经 engine', async () => {
+  it('D-3.1 所有模式都调用 engine（保留 FastGPT RAG）', async () => {
     const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
-    const engine = stubEngine();
-    const router = {
-      chat: jest.fn(async () => ({ text: 'local-answer', source: 'local' })),
-      getMode: () => 'local',
-    };
-    const orch = new QaOrchestrator(
-      engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
-      stubUsage(), makeSender() as any,
-    );
-    orch.setModelRouter(router as any);
-    await orch.handle(makeMsg(), 'trace-d1', 'keyword');
-    expect(router.chat).toHaveBeenCalled();
-    expect(engine.ask).not.toHaveBeenCalled();
+    for (const mode of ['cloud', 'hybrid', 'local'] as const) {
+      ConfigService.instance.MODEL_MODE = mode;
+      const engine = stubEngine();
+      const orch = new QaOrchestrator(
+        engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
+        stubUsage(), makeSender() as any,
+      );
+      await orch.handle(makeMsg(), `trace-${mode}`, 'keyword');
+      expect(engine.ask).toHaveBeenCalled();
+    }
+    ConfigService.instance.MODEL_MODE = 'cloud';
   });
 
-  it('D-3.2 hybrid 切云时计数 llmFailovers', async () => {
+  it('D-3.2 engine 走 fallback 时计数 llmFailovers', async () => {
     const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
-    const engine = stubEngine();
+    const engine = stubEngine({
+      ask: jest.fn(async () => ({
+        ok: true,
+        value: { answer: 'fallback-answer', quotes: [], score: 0.9, source: 'fallback' },
+      })),
+    });
     const usage = stubUsage();
-    const router = {
-      chat: jest.fn(async () => ({ text: 'cloud-answer', source: 'cloud', failover: true })),
-      getMode: () => 'hybrid',
-    };
     const orch = new QaOrchestrator(
       engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
       usage, makeSender() as any,
     );
-    orch.setModelRouter(router as any);
     await orch.handle(makeMsg(), 'trace-d2', 'keyword');
     expect(usage.increment).toHaveBeenCalledWith('llmFailovers');
   });
 
-  it('D-3.1 cloud 模式走 engine（不调用 router）', async () => {
+  it('D-3.3 local 引擎失败 → busy 话术（不直连云）', async () => {
     const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
-    const engine = stubEngine();
-    const router = { chat: jest.fn(), getMode: () => 'cloud' };
+    const engine = stubEngine({
+      ask: jest.fn(async () => ({ ok: false, error: { code: -1, message: 'local down' } })),
+    });
+    const sender = makeSender();
     const orch = new QaOrchestrator(
       engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(),
-      stubUsage(), makeSender() as any,
+      stubUsage(), sender as any,
     );
-    orch.setModelRouter(router as any);
     await orch.handle(makeMsg(), 'trace-d3', 'keyword');
-    expect(engine.ask).toHaveBeenCalled();
-    expect(router.chat).not.toHaveBeenCalled();
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '系统繁忙，请稍后再试', undefined, 'trace-d3:0');
   });
 });

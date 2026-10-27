@@ -147,8 +147,12 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_CANARY_OBSERVE_MS: EnvInt(86_400_000),
   PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),
 
-  // 模型通道（增项 D）
+  // 模型通道（增项 D）：所有模式都走 FastGPT RAG
+  // cloud  = FastGPT（云端模型渠道），低分/失败可切直连云 fallback
+  // hybrid = FastGPT（本地渠道优先），FastGPT 故障时允许切直连云 fallback
+  // local  = FastGPT（本地渠道），禁止任何云回退
   MODEL_MODE: z.enum(['cloud', 'hybrid', 'local']).default('cloud'),
+  // FastGPT 本地模型渠道地址（部署参考；实际调用由 FastGPT 完成）
   LOCAL_LLM_BASE_URL: EnvString.optional().default(''),
   LOCAL_LLM_API_KEY: EnvString.optional().default(''),
   LOCAL_LLM_MODEL: EnvString.optional().default(''),

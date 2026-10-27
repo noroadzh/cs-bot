@@ -200,6 +200,38 @@ describe('FastGPTQaEngine', () => {
     expect(body.chatId).toBe('group:c1:u1');
   });
 
+  it('local 模式：低分不切云，直接返回低分结果', async () => {
+    setConfig({ MODEL_MODE: 'local', LOCAL_LLM_BASE_URL: 'http://local:8000/v1' });
+    post.mockResolvedValueOnce({ data: { choices: [{ message: { content: '本地低分' } }], data: [{ score: 0.2 }] } });
+    const engine = await buildEngine();
+    const value = expectOk(await engine.ask(req()));
+    expect(value.source).toBe('primary');
+    expect(value.score).toBeCloseTo(0.2);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('local 模式：FastGPT 失败不调用云端 fallback', async () => {
+    setConfig({ MODEL_MODE: 'local', LOCAL_LLM_BASE_URL: 'http://local:8000/v1' });
+    post.mockRejectedValue(new Error('fastgpt down'));
+    const engine = await buildEngine();
+    const res = await engine.ask(req());
+    expect(res.ok).toBe(false);
+    expect(post).toHaveBeenCalledTimes(2); // 主通道重试 1 次，无 fallback
+  });
+
+  it('hybrid 模式：FastGPT 失败后切云 fallback', async () => {
+    setConfig({ MODEL_MODE: 'hybrid', LOCAL_LLM_BASE_URL: 'http://local:8000/v1' });
+    post
+      .mockRejectedValueOnce(new Error('fastgpt down'))
+      .mockRejectedValueOnce(new Error('fastgpt down'))
+      .mockResolvedValueOnce({ data: { choices: [{ message: { content: '云回退答案' } }] } });
+    const engine = await buildEngine();
+    const value = expectOk(await engine.ask(req()));
+    expect(value.source).toBe('fallback');
+    expect(value.answer).toBe('云回退答案');
+    expect(post).toHaveBeenCalledTimes(3);
+  });
+
   it('请求参数：URL 为 /api/v1/chat/completions，model 固定 fastgpt', async () => {
     post.mockResolvedValueOnce({ data: { choices: [{ message: { content: 'ok' } }] } });
     const engine = await buildEngine();

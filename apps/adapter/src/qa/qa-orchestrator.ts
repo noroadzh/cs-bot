@@ -1,7 +1,6 @@
 /** QaOrchestrator */
 import { Injectable, Inject } from '@nestjs/common';
-import { IQA_ENGINE, type IQAEngine, Ok, Err, ErrCode, type AskResult } from '@cs-bot/shared';
-import { ModelRouter } from './model-router.js';
+import { IQA_ENGINE, type IQAEngine, ErrCode } from '@cs-bot/shared';
 import { ContextService } from '../context/context.service.js';
 import { SensitiveFilterService } from '../filter/sensitive-filter.service.js';
 import { MissService } from '../miss/miss.service.js';
@@ -33,32 +32,6 @@ export class QaOrchestrator {
     @Inject(IMessageSender) private readonly sender: IMessageSender,
   ) {}
 
-  /** 增项 D：模型通道路由（null = 沿用 IQAEngine，即 cloud/未配置） */
-  private modelRouter: ModelRouter | null = null;
-
-  setModelRouter(r: ModelRouter | null): void {
-    this.modelRouter = r;
-  }
-
-  /** 通过 ModelRouter 直连 LLM（local/hybrid），绕过 RAG；失败按 LLM 超时处理 */
-  private async askViaRouter(question: string): Promise<AskResult> {
-    try {
-      const r = await this.modelRouter!.chat(question);
-      if (r.failover) {
-        this.usageService.increment('llmFailovers');
-        this.logger.warn({ detail: 'model-failover', source: r.source });
-      }
-      return new Ok({
-        answer: r.text,
-        score: 1,
-        source: r.source === 'local' ? 'primary' : 'fallback',
-      });
-    } catch (err) {
-      this.logger.warn({ detail: 'local-model-failed', err: (err as Error).message });
-      return new Err({ code: ErrCode.LLM_TIMEOUT, message: (err as Error).message });
-    }
-  }
-
   async handle(msg: InboundMsg, traceId: string, _triggerReason: 'mention' | 'keyword'): Promise<void> {
     const chatId = msg.ChatId ?? msg.FromUserName;
     const userId = msg.FromUserName;
@@ -78,10 +51,17 @@ export class QaOrchestrator {
     this.logger.log({ detail: 'qa-start', chatHash: hashId(chatId), userHash: hashId(userId), trigger: _triggerReason });
     const history = await this.context.get(chatId, userId);
     const engineStart = Date.now();
-    const result =
-      this.modelRouter && this.modelRouter.getMode() !== 'cloud'
-        ? await this.askViaRouter(question)
-        : await this.engine.ask({ question, history, traceId, chatId: `group:${chatId}:${userId}` });
+    // 所有模式都走 FastGPT（保留 RAG）；local 档由引擎禁止云回退
+    const result = await this.engine.ask({
+      question,
+      history,
+      traceId,
+      chatId: `group:${chatId}:${userId}`,
+    });
+    if (result.ok && result.value.source === 'fallback') {
+      this.usageService.increment('llmFailovers');
+      this.logger.warn({ detail: 'model-failover', source: result.value.source });
+    }
     this.logger.timing(
       {
         detail: 'engine',
