@@ -88,6 +88,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // Media
   MAX_ASSET_BYTES: EnvInt(20971520), // 20MB
+  MAX_IMAGE_BYTES: EnvInt(10 * 1024 * 1024), // 10MB (M8 入站图片)
   // 未配置（''）表示 mock/关闭；配置了则必须是合法 URL / 足长 key
   QWEN_VL_BASE_URL: EnvString.url().optional().or(z.literal('')),
   QWEN_VL_API_KEY: EnvString.min(8).optional().or(z.literal('')),

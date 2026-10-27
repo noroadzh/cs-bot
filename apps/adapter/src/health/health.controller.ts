@@ -31,8 +31,11 @@ export class HealthController {
     } catch { deps.push('postgresql'); }
     const licenseState = await this.license.verifyAndCache();
     if (!licenseState.valid) deps.push('license');
-    const c = this.usage.getUsage().counters;
+    const snapshot = this.usage.getUsage();
+    const c = snapshot.counters;
     const usage = {
+      period: snapshot.period,
+      startedAt: snapshot.startedAt,
       messagesReceived: c.messagesReceived,
       messagesAnswered: c.messagesAnswered,
       messagesMissed: c.messagesMissed,

@@ -273,6 +273,38 @@ describe('WecomController.callback', () => {
     });
   });
 
+  describe('traceId 与图片大小', () => {
+    it('消息 traceId 使用 MsgId', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'text', Content: 'hi', MsgId: 'msg-abc', ChatId: 'c1', mentioned: true })),
+      });
+      const routing = makeRouting();
+      const { controller } = makeController(crypto, routing);
+      await controller.callback(
+        { msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce },
+        'cipher', {} as any, makeRes(),
+      );
+      expect(routing.dispatch).toHaveBeenCalledWith(expect.objectContaining({ MsgId: 'msg-abc' }), 'msg-abc');
+    });
+
+    it('图片超过 10MB → 引导话术，不调用识别', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'm-big', Content: '', ChatId: 'c-big' })),
+      });
+      const { controller } = makeController(crypto, makeRouting());
+      controller.__client.downloadMedia.mockResolvedValue(Buffer.alloc(10 * 1024 * 1024 + 1));
+      const res = makeRes();
+      await controller.callback(
+        { msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce },
+        'cipher', {} as any, res,
+      );
+      expect(controller.__recognize.recognizeImage).not.toHaveBeenCalled();
+      expect(controller.__client.sendText).toHaveBeenCalledWith('c-big', expect.stringContaining('没看懂'));
+      expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
+      expect(res.statusCode).toBe(200);
+    });
+  });
+
   describe('语音/视频/文件入站', () => {
     const call = async (parseMsg: any, opts: { sendReject?: boolean; gate?: any } = {}) => {
       const crypto = makeCrypto({ parseXml: jest.fn(() => Promise.resolve(parseMsg)) });

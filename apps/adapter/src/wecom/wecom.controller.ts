@@ -11,6 +11,7 @@ import { RoutingService } from '../routing/routing.service.js';
 import { MediaRecognizeService } from '../media/media-recognize.service.js';
 import { UsageService } from '../usage/usage.service.js';
 import { MissService } from '../miss/miss.service.js';
+import { ConfigService } from '../config/config.service.js';
 import { LicenseGateService } from '../license/license-gate.service.js';
 import {
   LICENSE_INVALID_TEXT,
@@ -80,7 +81,7 @@ export class WecomController {
     @Res() res: Response,
   ) {
     const { msg_signature: msgSignature, timestamp, nonce, echostr } = q;
-    const traceId = crypto.randomUUID();
+    let traceId: string = crypto.randomUUID();
     this.logger.log({ traceId, msgSignature, timestamp });
 
     if (echostr !== undefined) {
@@ -104,6 +105,11 @@ export class WecomController {
     if (!msg) {
       res.status(HttpStatus.BAD_REQUEST).json({ errCode: ErrCode.WECOM_DECRYPT_FAIL });
       return;
+    }
+    // 详设：traceId = msgid（贯穿 D1–D9）；握手/无 MsgId 时保留请求级 UUID
+    if (msg.MsgId) {
+      traceId = msg.MsgId;
+      msg.traceId = traceId;
     }
 
     // 12.2 Increment messagesReceived for every valid incoming message
@@ -171,6 +177,10 @@ export class WecomController {
       this.usageService.increment('imagesReceived');
       try {
         const buf = await this.wecomClient.downloadMedia(parsedMsg.MediaId);
+        const maxBytes = ConfigService.instance.MAX_IMAGE_BYTES ?? 10 * 1024 * 1024;
+        if (buf.length > maxBytes) {
+          throw new Error(`image too large: ${buf.length} > ${maxBytes}`);
+        }
         const description = await this.recognizeService.recognizeImage(buf, 'image/jpeg');
         if (description) {
           this.usageService.increment('imagesRecognized');

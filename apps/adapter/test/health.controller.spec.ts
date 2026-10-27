@@ -32,6 +32,8 @@ function makeController(
   } as unknown as Stub;
   const usage = {
     getUsage: () => ({
+      period: 'daily',
+      startedAt: '2026-10-27T00:00:00.000Z',
       counters: {
         messagesReceived: 10, messagesAnswered: 6, messagesMissed: 4,
         llmFailures: 1, messagesRefused: 0, messagesTriggered: 8,
