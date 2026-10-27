@@ -93,3 +93,17 @@ Source: SHA-3.1.14
 #### Scenario: Required branches covered
 - **WHEN** the suite runs
 - **THEN** it contains cases for the four-step `startupCheck()` ordering, the `clean: false` exit path, `fingerprint-mismatch` in both verifiers, and all four mock outcome branches
+
+### Requirement: Delivery-side license issuer tool
+
+The delivery side MUST provide a CLI that signs license payloads with the issuer private key and emits the compact `base64(payload).base64(signature)` format accepted by the runtime verifier. The tool and private key MUST NOT be included in runtime images.
+
+#### Scenario: Issue a license
+
+- **WHEN** the issuer tool is given a payload with fingerprint, expiry, and max chats
+- **THEN** it emits a license file that the native verifier accepts
+
+#### Scenario: Not shipped at runtime
+
+- **WHEN** inspecting the adapter runtime image
+- **THEN** no issuer tool or private key is present
