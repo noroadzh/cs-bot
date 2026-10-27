@@ -73,6 +73,20 @@ export class PlatformMonitor {
  * 生产健康源：按 tenant.host 探测 `PLATFORM_HEALTH_URL_TEMPLATE`（{host} 占位）。
  * 失败（网络/非 200）视为不健康；实例指标无法从 healthz 获取时按 0 计。
  */
+/** 从 healthz.usage 计算失败率 */
+export function computeFailRates(usage?: {
+  messagesReceived?: number;
+  messagesMissed?: number;
+  llmFailures?: number;
+}): { qaFailRate: number; llmFailRate: number } {
+  const received = Number(usage?.messagesReceived ?? 0);
+  if (received <= 0) return { qaFailRate: 0, llmFailRate: 0 };
+  return {
+    qaFailRate: Number(usage?.messagesMissed ?? 0) / received,
+    llmFailRate: Number(usage?.llmFailures ?? 0) / received,
+  };
+}
+
 export class HttpHealthSource implements HealthSource {
   private readonly pool: Pool;
 
@@ -96,11 +110,11 @@ export class HttpHealthSource implements HealthSource {
       }
       const url = this.template.replace('{host}', host);
       const resp = await axios.get(url, { timeout: this.timeoutMs });
+      const rates = computeFailRates(resp.data?.usage);
       return {
         tenantId,
         healthy: resp.status === 200,
-        qaFailRate: 0,
-        llmFailRate: 0,
+        ...rates,
       };
     } catch {
       return { tenantId, healthy: false, qaFailRate: 0, llmFailRate: 0 };

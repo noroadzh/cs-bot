@@ -27,6 +27,7 @@ import { ShellProvisioner } from './provisioner/shell-provisioner.js';
 import {
   type CertificateProvider,
   type LicenseIssuer,
+  CommandCertificateProvider,
   FakeCertificateProvider,
   FileCertificateProvider,
   NoopLicenseIssuer,
@@ -49,9 +50,15 @@ function selectCertificateProvider(cfg: typeof ConfigService.instance): Certific
       return new FakeCertificateProvider();
     case 'file':
       return new FileCertificateProvider(cfg.PLATFORM_CERT_DIR);
+    case 'acme':
+    case 'command':
+      if (!cfg.PLATFORM_CERT_CMD) {
+        throw new Error('PLATFORM_CERT_CMD is required when PLATFORM_TLS_PROVIDER=acme|command');
+      }
+      return new CommandCertificateProvider(cfg.PLATFORM_CERT_CMD, cfg.PLATFORM_CERT_DIR);
     default:
       throw new Error(
-        `unsupported PLATFORM_TLS_PROVIDER="${cfg.PLATFORM_TLS_PROVIDER}" (supported: file, fake)`,
+        `unsupported PLATFORM_TLS_PROVIDER="${cfg.PLATFORM_TLS_PROVIDER}" (supported: file, acme, command, fake)`,
       );
   }
 }

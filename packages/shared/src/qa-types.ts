@@ -4,6 +4,8 @@ export interface QAHistory { role: 'user' | 'assistant'; content: string; }
 
 export interface AskReq {
   question: string;
+  /** FastGPT 会话隔离键：group:{chatId}:{userId} */
+  chatId?: string;
   history?: QAHistory[];
   datasetIds?: string[];
   traceId: string;

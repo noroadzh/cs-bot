@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from
 import { mkdtemp, writeFile, readFile, chmod, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { FileCertificateProvider, ShellLicenseIssuer } from '../src/platform/certificate-provider.js';
+import { CommandCertificateProvider, FileCertificateProvider, ShellLicenseIssuer } from '../src/platform/certificate-provider.js';
 import { ShellUpgradeDeps } from '../src/platform/upgrade-runner.js';
 import { HttpHealthSource } from '../src/platform/platform-monitor.js';
 import { TenantService } from '../src/platform/tenant.service.js';
@@ -28,6 +28,19 @@ beforeEach(async () => {
 afterEach(() => {
   resetConfig();
   delete process.env.NODE_ENV;
+});
+
+describe('CommandCertificateProvider', () => {
+  it('调用外部命令并按域名读取证书', async () => {
+    const script = join(dir, 'cert.sh');
+    await writeFile(script, `#!/bin/sh\nmkdir -p "$2"\necho CERT-$1 > "$2/$1.crt"\necho KEY-$1 > "$2/$1.key"\n`);
+    await chmod(script, 0o755);
+    const p = new CommandCertificateProvider(script, join(dir, 'certs'));
+    await expect(p.issue('t.example.com')).resolves.toEqual({
+      cert: 'CERT-t.example.com\n',
+      key: 'KEY-t.example.com\n',
+    });
+  });
 });
 
 describe('FileCertificateProvider', () => {

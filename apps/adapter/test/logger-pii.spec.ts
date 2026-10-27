@@ -12,10 +12,25 @@ describe('sanitizeLogPayload', () => {
       meta: { reply: '好的，已经为您处理完成' },
       chatHash: 'abc',
     });
-    expect(out.question).toBe('我的***00');
+    expect(out.question).toBe('我的***号]');
     expect(out.text).toBe('请帮***谢谢');
     expect((out.meta as any).reply).toBe('好的***完成');
     expect(out.chatHash).toBe('abc');
+  });
+
+  it('手机号/身份证/银行卡/邮箱按模式打码', () => {
+    const out = sanitizeLogPayload({
+      detail: '手机 13800138000，身份证 110101199001011234，卡 6222021234567890123，邮箱 a@b.com',
+    });
+    const s = String(out.detail);
+    expect(s).toContain('[手机号]');
+    expect(s).toContain('[身份证号]');
+    expect(s).toContain('[银行卡号]');
+    expect(s).toContain('[邮箱]');
+    expect(s).not.toContain('13800138000');
+    expect(s).not.toContain('110101199001011234');
+    expect(s).not.toContain('6222021234567890123');
+    expect(s).not.toContain('a@b.com');
   });
 
   it('不修改入参对象', () => {

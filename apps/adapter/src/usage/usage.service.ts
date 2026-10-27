@@ -21,6 +21,8 @@ export interface UsageCounters {
   messagesTriggered: number;
   /** 模型通道切云次数（增项 D） */
   llmFailovers: number;
+  /** LLM 调用失败次数 */
+  llmFailures: number;
 }
 
 export interface UsageSnapshot {
@@ -48,6 +50,7 @@ export class UsageService implements OnModuleInit, OnModuleDestroy {
     imagesSkipped: 0,
     messagesTriggered: 0,
     llmFailovers: 0,
+    llmFailures: 0,
   };
   private periodStart: Date;
   private currentPeriod: UsagePeriod;
@@ -152,6 +155,7 @@ export class UsageService implements OnModuleInit, OnModuleDestroy {
         imagesSkipped: 0,
         messagesTriggered: 0,
         llmFailovers: 0,
+        llmFailures: 0,
       };
       this.periodStart = now;
       this.currentPeriod = period;

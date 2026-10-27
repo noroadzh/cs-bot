@@ -20,4 +20,5 @@ export {
   coerceEnvValue,
 } from './env-schemas.js';
 export { maskPII, logRedact } from './redact.js';
+export { maskPIIPatterns } from './mask.js';
 export { IQA_ENGINE, IQAEngine, QAHistory, AskReq, AskResp, AskResult } from './qa-types.js';

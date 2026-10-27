@@ -41,6 +41,18 @@ export class FileCertificateProvider implements CertificateProvider {
   }
 }
 
+/** 通过外部命令签发（certbot/acme.sh 脚本）：<cmd> <domain> <dir>，产物为 <dir>/<domain>.crt/.key */
+export class CommandCertificateProvider implements CertificateProvider {
+  constructor(private readonly cmd: string, private readonly dir: string) {}
+
+  async issue(domain: string): Promise<IssuedCert> {
+    await execFileP(this.cmd, [domain, this.dir], { timeout: 120_000 });
+    const cert = await readFile(`${this.dir}/${domain}.crt`, 'utf8');
+    const key = await readFile(`${this.dir}/${domain}.key`, 'utf8');
+    return { cert, key };
+  }
+}
+
 /** 订阅期授权签发（调用 M9 签发，绑定实例指纹） */
 export interface LicenseIssuer {
   issue(tenant: { id: string; host: string | null }): Promise<void>;

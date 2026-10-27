@@ -25,3 +25,14 @@ export function maskPII(value: string, kind: 'userid' | 'mobile' | 'email' | 'ge
     }
   }
 }
+
+
+/** 按内容模式脱敏（手机号/身份证/银行卡/邮箱），用于日志等任意文本 */
+export function maskPIIPatterns(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/\b\d{17}[\dXx]\b/g, '[身份证号]')
+    .replace(/\b\d{16,19}\b/g, '[银行卡号]')
+    .replace(/\b1[3-9]\d{9}\b/g, '[手机号]')
+    .replace(/[\w.+-]+@[\w-]+\.[\w.-]+/g, '[邮箱]');
+}

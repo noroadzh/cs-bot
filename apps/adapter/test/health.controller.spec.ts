@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import { HealthController } from '../src/health/health.controller.js';
 import { LicenseService } from '../src/license/license.service.js';
+import { UsageService } from '../src/usage/usage.service.js';
 
 interface Stub {
   ping: () => Promise<unknown>;
@@ -29,7 +30,18 @@ function makeController(
   const pg = {
     query: (sql: string) => (failing.pg ? Promise.reject(new Error('pg down')) : Promise.resolve({ rows: [] })),
   } as unknown as Stub;
-  return new HealthController(makeLicense(licenseState), redis as never, pg as never);
+  const usage = {
+    getUsage: () => ({
+      counters: {
+        messagesReceived: 10, messagesAnswered: 6, messagesMissed: 4,
+        llmFailures: 1, messagesRefused: 0, messagesTriggered: 8,
+        assetsSent: 0, tokensPrimary: 0, tokensFallback: 0,
+        imagesReceived: 0, imagesRecognized: 0, imagesSkipped: 0,
+        llmFailovers: 0,
+      },
+    }),
+  } as unknown as UsageService;
+  return new HealthController(makeLicense(licenseState), redis as never, pg as never, usage);
 }
 
 async function capture(fn: () => Promise<unknown>) {
@@ -48,7 +60,11 @@ describe('HealthController.check', () => {
   it('全部依赖正常 + license 有效 → 200 ok', async () => {
     const out = await capture(() => makeController({ valid: true, mock: true }).check());
     expect(out.threw).toBe(false);
-    expect(out.res).toEqual({ status: 'ok', license: { valid: true, mock: true } });
+    expect(out.res).toMatchObject({
+      status: 'ok',
+      license: { valid: true, mock: true },
+      usage: { messagesReceived: 10, messagesAnswered: 6, messagesMissed: 4, llmFailures: 1 },
+    });
   });
 
   it('redis ping 失败 → deps 含 redis，抛 503 degraded', async () => {
@@ -87,7 +103,13 @@ describe('HealthController.check', () => {
 
   it('pg query 用 SELECT 1 探活（不建连）', async () => {
     const query = jest.fn((_sql: string) => Promise.resolve({ rows: [] }));
-    const c = new HealthController(makeLicense({ valid: true, mock: true }), { ping: () => Promise.resolve('PONG') } as never, { query } as never);
+    const usage = { getUsage: () => ({ counters: { messagesReceived: 0, messagesAnswered: 0, messagesMissed: 0, llmFailures: 0 } }) } as unknown as UsageService;
+    const c = new HealthController(
+      makeLicense({ valid: true, mock: true }),
+      { ping: () => Promise.resolve('PONG') } as never,
+      { query } as never,
+      usage,
+    );
     await capture(() => c.check());
     expect(query).toHaveBeenCalledWith('SELECT 1');
   });

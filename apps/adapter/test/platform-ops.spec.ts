@@ -15,6 +15,7 @@ import {
   isQuotaWarning,
   WebhookQuotaWarningNotifier,
 } from '../src/platform/quota-warning.js';
+import { computeFailRates } from '../src/platform/platform-monitor.js';
 import { SubscriptionReminder, WebhookNotifier } from '../src/platform/subscription-reminder.js';
 import { PlatformAuditService } from '../src/platform/platform-audit.service.js';
 import {
@@ -95,6 +96,17 @@ describe('D10 usage report', () => {
       { payload: {}, ts: now - 6 * 86_400_000 },
     ], now);
     expect(kept).toHaveLength(1);
+  });
+});
+
+describe('instance fail rates', () => {
+  it('从 healthz usage 计算问答/LLM 失败率', () => {
+    expect(computeFailRates({ messagesReceived: 100, messagesMissed: 5, llmFailures: 2 })).toEqual({
+      qaFailRate: 0.05,
+      llmFailRate: 0.02,
+    });
+    expect(computeFailRates({ messagesReceived: 0 })).toEqual({ qaFailRate: 0, llmFailRate: 0 });
+    expect(computeFailRates(undefined)).toEqual({ qaFailRate: 0, llmFailRate: 0 });
   });
 });
 

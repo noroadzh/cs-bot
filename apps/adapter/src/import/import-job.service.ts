@@ -454,6 +454,7 @@ export class ImportJobService {
     } catch (err) {
       return this.failJob(jobId, `read failed: ${(err as Error).message}`);
     }
+    await this.guardMemory();
 
     // 内容嗅探 → 会话形态走清洗+配对；其余保持直接成对
     let xlsxHeader: string[] | undefined;
@@ -479,8 +480,10 @@ export class ImportJobService {
       if (messages.length > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
         return this.failJob(jobId, `too many messages: ${messages.length} > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
       }
+      await this.guardMemory();
       const cleaned = this.getCleaner().clean(messages);
       const { paired, unpaired } = this.getPairing().pair(cleaned);
+      await this.guardMemory();
       try {
         await this.persistItems(jobId, paired);
         await this.persistUnpaired(jobId, unpaired);
@@ -517,6 +520,7 @@ export class ImportJobService {
     if (rows.length > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
       return this.failJob(jobId, `too many messages: ${rows.length} > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
     }
+    await this.guardMemory();
     try {
       await this.persistItems(jobId, rows);
     } catch (err) {

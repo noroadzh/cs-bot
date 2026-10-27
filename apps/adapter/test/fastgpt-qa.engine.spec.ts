@@ -84,7 +84,7 @@ describe('FastGPTQaEngine', () => {
     expect(value).toEqual({ answer: '', quotes: [], score: 0.8, source: 'primary' });
   });
 
-  it('history 映射为 messages 前缀，question 作为最后一条 user 消息', async () => {
+  it('history 映射为 histories，messages 仅当前问题', async () => {
     post.mockResolvedValueOnce({ data: { choices: [{ message: { content: 'ok' } }] } });
     const engine = await buildEngine();
 
@@ -97,11 +97,13 @@ describe('FastGPTQaEngine', () => {
     }));
 
     const [, body] = post.mock.calls[0];
-    expect(body.messages).toEqual([
+    expect(body.messages).toEqual([{ role: 'user', content: '第二个问题' }]);
+    expect(body.histories).toEqual([
       { role: 'user', content: '第一个问题' },
       { role: 'assistant', content: '第一个回答' },
-      { role: 'user', content: '第二个问题' },
     ]);
+    expect(body.stream).toBe(false);
+    expect(body.detail).toBe(true);
   });
 
   it('history 缺省 → messages 只有当前 question 一条', async () => {
@@ -112,6 +114,7 @@ describe('FastGPTQaEngine', () => {
 
     const [, body] = post.mock.calls[0];
     expect(body.messages).toEqual([{ role: 'user', content: '只有一个问题' }]);
+    expect(body.histories).toEqual([]);
   });
 
   it('datasetIds 缺省 → 回落到 config.FASTGPT_DATASET_IDS 组成单元素数组', async () => {
@@ -187,6 +190,14 @@ describe('FastGPTQaEngine', () => {
     expect(value.answer).toBe('带引用答案');
     expect(value.score).toBeCloseTo(0.92);
     expect(value.quotes?.map((q) => [q.score, q.source])).toEqual([[0.92, '报销流程.docx'], [0.7, '财务制度.pdf']]);
+  });
+
+  it('chatId 透传到 FastGPT 请求体', async () => {
+    post.mockResolvedValueOnce({ data: { choices: [{ message: { content: 'ok' } }] } });
+    const engine = await buildEngine();
+    await engine.ask(req({ chatId: 'group:c1:u1' }));
+    const [, body] = post.mock.calls[0];
+    expect(body.chatId).toBe('group:c1:u1');
   });
 
   it('请求参数：URL 为 /api/v1/chat/completions，model 固定 fastgpt', async () => {

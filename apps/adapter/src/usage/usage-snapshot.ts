@@ -27,6 +27,8 @@ export interface UsageCounters {
   messagesTriggered: number;
   /** 模型通道切云次数（hybrid 本地失败切云；增项 D） */
   llmFailovers: number;
+  /** LLM 调用失败次数（双通道失败/超时） */
+  llmFailures: number;
 }
 
 export function createEmptyCounters(): UsageCounters {
@@ -43,5 +45,6 @@ export function createEmptyCounters(): UsageCounters {
     imagesSkipped: 0,
     messagesTriggered: 0,
     llmFailovers: 0,
+    llmFailures: 0,
   };
 }

@@ -64,6 +64,7 @@ export const MOCK_CONFIG = {
   PLATFORM_COMPOSE_DIR: 'data/tenants',
   PLATFORM_PROVISION_TIMEOUT_MS: 120000,
   PLATFORM_TLS_PROVIDER: 'fake',
+  PLATFORM_CERT_CMD: '',
   PLATFORM_CERT_DIR: 'data/tenants/certs',
   LICENSE_ISSUER: 'noop',
   LICENSE_ISSUER_BIN: 'tools/license-issuer/license-issuer',

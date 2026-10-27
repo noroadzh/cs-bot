@@ -4,7 +4,7 @@
  * 可选 LOG_FILE 文件落盘（与 stdout 双写，供无 SSH 场景排查）。
  */
 import pino from 'pino';
-import { maskPII } from '@cs-bot/shared';
+import { maskPII, maskPIIPatterns } from '@cs-bot/shared';
 import { currentTraceId } from './request-context.js';
 
 const APP = 'cs-bot-adapter';
@@ -40,17 +40,22 @@ const REDACT_PATHS = [
 /** 正文字段：落盘前统一截断（maskPII 仅保留首尾各 2 字符） */
 const BODY_FIELDS = new Set(['question', 'answer', 'content', 'text', 'reply']);
 
+function maskString(key: string, value: string): string {
+  const withPatterns = maskPIIPatterns(value);
+  return BODY_FIELDS.has(key) ? maskPII(withPatterns) : withPatterns;
+}
+
 export function sanitizeLogPayload(payload: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...payload };
   for (const [k, v] of Object.entries(out)) {
-    if (BODY_FIELDS.has(k) && typeof v === 'string') {
-      out[k] = maskPII(v);
+    if (typeof v === 'string') {
+      out[k] = maskString(k, v);
     } else if (v && typeof v === 'object' && !Array.isArray(v)) {
       const nested = { ...(v as Record<string, unknown>) };
       let changed = false;
       for (const [nk, nv] of Object.entries(nested)) {
-        if (BODY_FIELDS.has(nk) && typeof nv === 'string') {
-          nested[nk] = maskPII(nv);
+        if (typeof nv === 'string') {
+          nested[nk] = maskString(nk, nv);
           changed = true;
         }
       }

@@ -4,6 +4,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Redis } from 'ioredis';
 import type { Client as PgClient } from 'pg';
 import { LicenseService } from '../license/license.service.js';
+import { UsageService } from '../usage/usage.service.js';
 import { HealthResponseDto, HealthDegradedResponseDto } from '../common/dto/health-response.dto.js';
 
 @ApiTags('health')
@@ -13,6 +14,7 @@ export class HealthController {
     private readonly license: LicenseService,
     @Inject('HEALTH_REDIS') private readonly healthRedis: Redis,
     @Inject('HEALTH_PG') private readonly healthPg: PgClient,
+    private readonly usage: UsageService,
   ) {}
 
   @Get('healthz')
@@ -29,9 +31,19 @@ export class HealthController {
     } catch { deps.push('postgresql'); }
     const licenseState = await this.license.verifyAndCache();
     if (!licenseState.valid) deps.push('license');
+    const c = this.usage.getUsage().counters;
+    const usage = {
+      messagesReceived: c.messagesReceived,
+      messagesAnswered: c.messagesAnswered,
+      messagesMissed: c.messagesMissed,
+      llmFailures: c.llmFailures,
+    };
     if (deps.length > 0) {
-      throw new HttpException({ status: 'degraded', deps, license: licenseState }, HttpStatus.SERVICE_UNAVAILABLE);
+      throw new HttpException(
+        { status: 'degraded', deps, license: licenseState, usage },
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
-    return { status: 'ok', license: { valid: licenseState.valid, mock: licenseState.mock } };
+    return { status: 'ok', license: { valid: licenseState.valid, mock: licenseState.mock }, usage };
   }
 }

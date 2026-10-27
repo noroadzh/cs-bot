@@ -194,6 +194,8 @@ export class WecomController {
       }
     }
 
+    // 群聊（appchat）不支持被动回复，必须立即 ack 后走主动发送；
+    // 详设的 3.5s 被动竞速适用于单聊/应用消息，本产品群聊场景不适用。
     res.status(HttpStatus.OK).send('');
     this.routingService.dispatch(msg, traceId).catch((err) => {
       this.logger.error({ traceId, err: (err as Error).message });

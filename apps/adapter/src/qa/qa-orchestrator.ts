@@ -81,7 +81,7 @@ export class QaOrchestrator {
     const result =
       this.modelRouter && this.modelRouter.getMode() !== 'cloud'
         ? await this.askViaRouter(question)
-        : await this.engine.ask({ question, history, traceId });
+        : await this.engine.ask({ question, history, traceId, chatId: `group:${chatId}:${userId}` });
     this.logger.timing(
       {
         detail: 'engine',
@@ -109,8 +109,9 @@ export class QaOrchestrator {
     if (!result.ok) {
       answer = this.cfg.SLOW_REPLY_TEXT;
       this.logger.warn({ traceId, errCode: ErrCode.LLM_TIMEOUT });
-      // LLM 调用失败同样属于未应答，计入 messagesMissed
+      // LLM 调用失败同样属于未应答，计入 messagesMissed；同时记录 LLM 失败率
       this.usageService.increment('messagesMissed');
+      this.usageService.increment('llmFailures');
     } else {
       score = result.value.score;
       if (score < this.cfg.CONFIDENCE_THRESHOLD) {

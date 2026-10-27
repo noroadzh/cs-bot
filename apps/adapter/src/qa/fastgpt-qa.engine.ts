@@ -74,10 +74,11 @@ export class FastGPTQaEngine implements IQAEngine {
       try {
         const resp = await llmSemaphore().run(() => client.post('/api/v1/chat/completions', {
           model: 'fastgpt',
-          messages: [
-            ...(req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
-            { role: 'user', content: req.question },
-          ],
+          chatId: req.chatId,
+          stream: false,
+          detail: true,
+          messages: [{ role: 'user', content: req.question }],
+          histories: (req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
           datasetIds: (req.datasetIds ?? (this.cfg.FASTGPT_DATASET_IDS ? [this.cfg.FASTGPT_DATASET_IDS] : [])),
         }));
         return { ok: true, value: this.parseResponse(resp.data, source) };
