@@ -27,10 +27,10 @@ import {
   MissingColumnError,
 } from './import-parser.js';
 import { ImportCleaner, type CleanMessage } from './import-cleaner.js';
-import { QaPairing } from './qa-pairing.js';
+import { QaPairing, StreamingQaPairing, type PairedItem } from './qa-pairing.js';
 import { ImportBlacklist } from './import-blacklist.js';
-import { sniffShape, UnrecognizedShapeError, type ImportShape } from './content-sniffer.js';
-import { parseConversation, readXlsxHeader } from './conversation-parser.js';
+import { sniffShapeHead, UnrecognizedShapeError, type ImportShape } from './content-sniffer.js';
+import { readXlsxHeaderFromFile, streamConversationMessages, streamQaPairs } from './message-stream.js';
 import {
   HttpFastGptDatasetClient,
   InMemoryDatasetClient,
@@ -57,6 +57,18 @@ export type { ImportJobListQuery, ImportItemListQuery };
 /** RSS 是否超过限额的 80%（纯函数，便于单测） */
 export function isMemoryHigh(rssBytes: number, limitMb: number): boolean {
   return rssBytes > limitMb * 1024 * 1024 * 0.8;
+}
+
+/** 只读文件头（默认 64KB），避免大文件整读 */
+async function readHead(path: string, size = 64 * 1024): Promise<Buffer> {
+  const fh = await fs.open(path, 'r');
+  try {
+    const buf = Buffer.alloc(size);
+    const { bytesRead } = await fh.read(buf, 0, size, 0);
+    return buf.subarray(0, bytesRead);
+  } finally {
+    await fh.close();
+  }
 }
 
 /** 命中即短路，不再重复解析的历史状态 */
@@ -448,88 +460,183 @@ export class ImportJobService {
 
     await this.updateStatus(jobId, 'parsing');
 
-    let bytes: Buffer;
+    let bytes: Buffer | null = null;
+    let head: Buffer;
+    let xlsxHeader: string[] | undefined;
     try {
-      bytes = await fs.readFile(storedPath);
+      head = await readHead(storedPath);
+      if (mimeType.includes('spreadsheetml')) {
+        xlsxHeader = await readXlsxHeaderFromFile(storedPath);
+      }
     } catch (err) {
       return this.failJob(jobId, `read failed: ${(err as Error).message}`);
     }
     await this.guardMemory();
 
-    // 内容嗅探 → 会话形态走清洗+配对；其余保持直接成对
-    let xlsxHeader: string[] | undefined;
-    if (mimeType.includes('spreadsheetml')) {
-      xlsxHeader = await readXlsxHeader(bytes);
-    }
     let shape: ImportShape;
     try {
-      shape = await sniffShape(bytes, mimeType, xlsxHeader);
+      shape = sniffShapeHead(head, mimeType, xlsxHeader);
     } catch (err) {
       if (err instanceof UnrecognizedShapeError) return this.failJob(jobId, err.message);
       return this.failJob(jobId, `sniff failed: ${(err as Error).message}`);
     }
     await this.pool.query('UPDATE import_job SET source_shape = $2 WHERE id = $1', [jobId, shape]);
 
+    // JSON/CSV 会话形态：流式解析 + 暂存排序 + 增量配对（不全量入内存）
     if (shape === 'conversation-table' || shape === 'wecom-archive') {
-      let messages;
-      try {
-        messages = await parseConversation(bytes, mimeType, shape, jobId);
-      } catch (err) {
-        return this.failJob(jobId, `conversation parse failed: ${(err as Error).message}`);
-      }
-      if (messages.length > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
-        return this.failJob(jobId, `too many messages: ${messages.length} > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
-      }
-      await this.guardMemory();
-      const cleaned = this.getCleaner().clean(messages);
-      const { paired, unpaired } = this.getPairing().pair(cleaned);
-      await this.guardMemory();
-      try {
-        await this.persistItems(jobId, paired);
-        await this.persistUnpaired(jobId, unpaired);
-      } catch (err) {
-        return this.failJob(jobId, `persist failed: ${(err as Error).message}`);
-      }
-      await this.updateStageCounts(jobId, cleaned.length, paired.length, unpaired.length);
-      await this.updateStatus(jobId, 'parsed', paired.length);
-      this.logger.log({
-        detail: 'import-parsed',
-        jobId,
-        shape,
-        cleaned: cleaned.length,
-        paired: paired.length,
-        unpaired: unpaired.length,
-      });
-      return (await this.getJob(jobId))!;
+      return this.parseConversationStreaming(jobId, storedPath, mimeType, shape);
     }
 
-    // qa-pairs（直接成对）
-    let rows;
+    // qa-pairs（直接成对）：流式解析 + 分批入库
+    let count = 0;
     try {
-      rows = await parseImport(mimeType, bytes);
+      let batch: { question: string; answer: string }[] = [];
+      for await (const row of streamQaPairs(storedPath, mimeType)) {
+        batch.push(row);
+        count += 1;
+        if (count > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
+          return this.failJob(jobId, `too many messages: > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
+        }
+        if (batch.length >= 1000) {
+          await this.persistItems(jobId, batch);
+          batch = [];
+        }
+        if (count % 2000 === 0) await this.guardMemory();
+      }
+      if (batch.length > 0) await this.persistItems(jobId, batch);
     } catch (err) {
       if (err instanceof UnsupportedFormatError || err instanceof MissingColumnError) {
         return this.failJob(jobId, err.message);
       }
-      if (err instanceof SyntaxError) {
-        return this.failJob(jobId, err.message);
-      }
+      if (err instanceof SyntaxError) return this.failJob(jobId, err.message);
       return this.failJob(jobId, `parse failed: ${(err as Error).message}`);
     }
 
-    if (rows.length > (ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000)) {
-      return this.failJob(jobId, `too many messages: ${rows.length} > ${ConfigService.instance.IMPORT_MAX_MESSAGES}`);
-    }
-    await this.guardMemory();
-    try {
-      await this.persistItems(jobId, rows);
-    } catch (err) {
-      return this.failJob(jobId, `persist failed: ${(err as Error).message}`);
-    }
-
-    await this.updateStatus(jobId, 'parsed', rows.length);
-    this.logger.log({ detail: 'import-parsed', jobId, shape, items: rows.length });
+    await this.updateStatus(jobId, 'parsed', count);
+    this.logger.log({ detail: 'import-parsed', jobId, shape, streaming: true, items: count });
     return (await this.getJob(jobId))!;
+  }
+
+  /** JSON/CSV/XLSX 会话流式导入：头部嗅探 → 逐条清洗 → 暂存表 → 游标增量配对 */
+  private async parseConversationStreaming(
+    jobId: string,
+    storedPath: string,
+    mimeType: string,
+    shape: ImportShape,
+  ): Promise<ImportJob> {
+    const max = ConfigService.instance.IMPORT_MAX_MESSAGES ?? 50000;
+    const streamCleaner = this.getCleaner().stream();
+    const gap = (ConfigService.instance.IMPORT_PAIR_GAP_MINUTES ?? 30) * 60_000;
+    const minAnswer = ConfigService.instance.IMPORT_MIN_ANSWER_CHARS ?? 6;
+    const pairing = new StreamingQaPairing(gap, minAnswer);
+    let cleaned = 0;
+    let pairedCount = 0;
+    let unpairedCount = 0;
+
+    const flushStage = async (batch: CleanMessage[]): Promise<void> => {
+      if (batch.length === 0) return;
+      const values: string[] = [];
+      const params: unknown[] = [jobId];
+      batch.forEach((m, i) => {
+        const base = 2 + i * 5;
+        values.push(`($1, $${base}, $${base + 1}, $${base + 2}, $${base + 3}, to_timestamp($${base + 4} / 1000.0))`);
+        params.push(m.conversationId, m.senderId, m.senderType, m.content, m.occurredAt);
+      });
+      await this.pool.query(
+        `INSERT INTO import_message_stage
+           (job_id, conversation_id, sender_id, sender_type, content, occurred_at)
+         VALUES ${values.join(',')}`,
+        params,
+      );
+    };
+
+    try {
+      await this.pool.query('DELETE FROM import_message_stage WHERE job_id = $1', [jobId]);
+      let stageBatch: CleanMessage[] = [];
+      for await (const raw of streamConversationMessages(storedPath, mimeType, shape, jobId)) {
+        const m = streamCleaner.push(raw);
+        if (!m) continue;
+        cleaned += 1;
+        if (cleaned > max) throw new Error(`too many messages: > ${max}`);
+        stageBatch.push(m);
+        if (stageBatch.length >= 500) {
+          await flushStage(stageBatch);
+          stageBatch = [];
+        }
+        if (cleaned % 2000 === 0) await this.guardMemory();
+      }
+      await flushStage(stageBatch);
+
+      const client = await this.pool.connect();
+      let pairedBatch: PairedItem[] = [];
+      let unpairedBatch: CleanMessage[] = [];
+      const flushPairs = async (): Promise<void> => {
+        if (pairedBatch.length > 0) {
+          await this.persistItems(jobId, pairedBatch);
+          pairedCount += pairedBatch.length;
+          pairedBatch = [];
+        }
+        if (unpairedBatch.length > 0) {
+          await this.persistUnpaired(jobId, unpairedBatch);
+          unpairedCount += unpairedBatch.length;
+          unpairedBatch = [];
+        }
+      };
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          `DECLARE cur CURSOR FOR
+             SELECT conversation_id, sender_id, sender_type, content, occurred_at
+             FROM import_message_stage
+             WHERE job_id = '${jobId}'
+             ORDER BY conversation_id, occurred_at, id`,
+        );
+        for (;;) {
+          const res = await client.query<{
+            conversation_id: string; sender_id: string; sender_type: string;
+            content: string; occurred_at: Date;
+          }>('FETCH 1000 FROM cur');
+          if (res.rows.length === 0) break;
+          for (const r of res.rows) {
+            pairing.push({
+              conversationId: r.conversation_id,
+              senderId: r.sender_id,
+              senderType: r.sender_type as CleanMessage['senderType'],
+              content: r.content,
+              occurredAt: new Date(r.occurred_at).getTime(),
+            });
+            const drained = pairing.drain();
+            pairedBatch.push(...drained.paired);
+            unpairedBatch.push(...drained.unpaired);
+            if (pairedBatch.length >= 1000 || unpairedBatch.length >= 1000) await flushPairs();
+          }
+        }
+        pairing.finish();
+        const drained = pairing.drain();
+        pairedBatch.push(...drained.paired);
+        unpairedBatch.push(...drained.unpaired);
+        await flushPairs();
+        await client.query('CLOSE cur');
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw err;
+      } finally {
+        await client.query('DELETE FROM import_message_stage WHERE job_id = $1', [jobId]).catch(() => undefined);
+        client.release();
+      }
+
+      await this.updateStageCounts(jobId, cleaned, pairedCount, unpairedCount);
+      await this.updateStatus(jobId, 'parsed', pairedCount);
+      this.logger.log({
+        detail: 'import-parsed', jobId, shape, streaming: true,
+        cleaned, paired: pairedCount, unpaired: unpairedCount,
+      });
+      return (await this.getJob(jobId))!;
+    } catch (err) {
+      await this.pool.query('DELETE FROM import_message_stage WHERE job_id = $1', [jobId]).catch(() => undefined);
+      return this.failJob(jobId, `stream parse failed: ${(err as Error).message}`);
+    }
   }
 
   // -------------------------------------------------------------------------

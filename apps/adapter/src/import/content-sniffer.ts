@@ -5,6 +5,7 @@
  * 未识别 → 抛 UnrecognizedShapeError（调用方转 415）。
  */
 import { parseCsv } from './import-parser.js';
+import { parseCsvLine } from './csv-stream.js';
 
 export type ImportShape = 'wecom-archive' | 'conversation-table' | 'qa-pairs';
 
@@ -24,7 +25,7 @@ function isArchiveMessage(m: unknown): boolean {
   return hasContent && hasSender;
 }
 
-function isConversationHeader(header: readonly string[] | undefined): boolean {
+export function isConversationHeader(header: readonly string[] | undefined): boolean {
   if (!header) return false;
   const n = header.map((h) => h.trim());
   const hasTime = n.includes('时间') || n.includes('发生时间');
@@ -74,5 +75,63 @@ export async function sniffShape(
   }
 
   // txt / 其他：按直接成对处理
+  return 'qa-pairs';
+}
+
+
+/** 仅凭文件头部（64KB）嗅探，避免大文件整读 */
+export function sniffShapeHead(
+  head: Buffer,
+  mimeType: string,
+  firstSheetHeader?: readonly string[],
+): ImportShape {
+  if (mimeType.includes('json')) {
+    const text = head.toString('utf8').trimStart();
+    if (!text.startsWith('[')) throw new UnrecognizedShapeError('JSON is not an array');
+    const objStart = text.indexOf('{');
+    if (objStart < 0) throw new UnrecognizedShapeError('invalid JSON array');
+    // 尝试解析头部中的第一个完整对象；跨块截断时退回关键字判断
+    let first: unknown;
+    try {
+      let depth = 0;
+      let inStr = false;
+      let esc = false;
+      for (let i = objStart; i < text.length; i++) {
+        const ch = text[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === '\\') esc = true;
+          else if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') inStr = true;
+        else if (ch === '{') depth++;
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0) {
+            first = JSON.parse(text.slice(objStart, i + 1));
+            break;
+          }
+        }
+      }
+    } catch {
+      first = undefined;
+    }
+    if (first !== undefined) {
+      if (isArchiveMessage(first)) return 'wecom-archive';
+      const o = first as Record<string, unknown>;
+      if ('question' in o || 'q' in o) return 'qa-pairs';
+    }
+    if (/"question"\s*:/.test(text)) return 'qa-pairs';
+    if (/"sender"\s*:|"content"\s*:/.test(text)) return 'wecom-archive';
+    throw new UnrecognizedShapeError('JSON array is neither archive nor QA pairs');
+  }
+  if (mimeType === 'text/csv') {
+    const firstLine = head.toString('utf8').split(/\r?\n/)[0] ?? '';
+    return isConversationHeader(parseCsvLine(firstLine)) ? 'conversation-table' : 'qa-pairs';
+  }
+  if (mimeType.includes('spreadsheetml')) {
+    return firstSheetHeader && isConversationHeader(firstSheetHeader) ? 'conversation-table' : 'qa-pairs';
+  }
   return 'qa-pairs';
 }

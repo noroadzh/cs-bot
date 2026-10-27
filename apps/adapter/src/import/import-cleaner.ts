@@ -64,23 +64,33 @@ export class ImportCleaner {
     return { ...this.rules };
   }
 
-  clean(messages: readonly CleanMessage[]): CleanMessage[] {
+  /** 流式清洗：跨消息保持“同发送方 60s 重复”状态 */
+  stream(): { push: (m: CleanMessage) => CleanMessage | null } {
     const opts = this.rules;
-    const out: CleanMessage[] = [];
     const lastBySender = new Map<string, { content: string; at: number }>();
     const repeatMs = opts.repeatWindowSec * 1000;
+    return {
+      push: (m: CleanMessage): CleanMessage | null => {
+        if (opts.dropSystemMessages && m.senderType === 'system') return null;
+        if (opts.dropBotMessages && m.senderType === 'bot') return null;
+        const text = m.content.trim();
+        if (opts.dropPlaceholders && PLACEHOLDER_RE.test(text)) return null;
+        if (effectiveChars(text) < opts.minEffectiveChars) return null;
+        const key = `${m.conversationId}:${m.senderId}`;
+        const last = lastBySender.get(key);
+        if (last && last.content === text && m.occurredAt - last.at <= repeatMs) return null;
+        lastBySender.set(key, { content: text, at: m.occurredAt });
+        return { ...m, content: text };
+      },
+    };
+  }
 
+  clean(messages: readonly CleanMessage[]): CleanMessage[] {
+    const streamer = this.stream();
+    const out: CleanMessage[] = [];
     for (const m of messages) {
-      if (opts.dropSystemMessages && m.senderType === 'system') continue;
-      if (opts.dropBotMessages && m.senderType === 'bot') continue;
-      const text = m.content.trim();
-      if (opts.dropPlaceholders && PLACEHOLDER_RE.test(text)) continue;
-      if (effectiveChars(text) < opts.minEffectiveChars) continue;
-      const key = `${m.conversationId}:${m.senderId}`;
-      const last = lastBySender.get(key);
-      if (last && last.content === text && m.occurredAt - last.at <= repeatMs) continue;
-      lastBySender.set(key, { content: text, at: m.occurredAt });
-      out.push({ ...m, content: text });
+      const cleaned = streamer.push(m);
+      if (cleaned) out.push(cleaned);
     }
     return out;
   }

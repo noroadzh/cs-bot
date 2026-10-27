@@ -61,3 +61,11 @@
 - [控制面不可达] → 同步失败重试+审计；实例保留本地旧值并继续服务。
 - [共享网络] → 部署需预创建 external network（compose 自动创建主网络）。
 - [备份耗时] → 按租户串行、失败隔离、低峰执行。
+
+
+## Recorded Decisions (2026-10-27)
+
+- **5.3 契约偏差（保持现状）**：保留 `/admin/import-jobs` 与现有 `ErrCode` 数值；详设路径/错误码差异作为已接受偏差记录。若未来对齐，按 **BREAKING** 单独变更并同步客户端。
+- **6.2 被动回复**：群聊 appchat 不支持被动回包，保持“立即 ack + 主动发送”；单聊/应用消息的 PassiveReplyStrategy 在本产品阶段关闭。
+- **6.3 grace 知识库只读**：知识库在 FastGPT 外部后台，适配层无法强制；已在部署手册附录 A 记录运营约束。
+- **6.4 UI/mTLS/confirmToken**：本期管理面为 API-only；Web UI、mTLS、destroy confirmToken 记录关闭，后续按产品需要单独立项。

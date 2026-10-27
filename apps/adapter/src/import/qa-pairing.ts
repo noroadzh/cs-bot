@@ -57,26 +57,79 @@ export class QaPairing {
     paired: PairedItem[],
     unpaired: CleanMessage[],
   ): void {
-    // 按轮次配对：客户连续消息聚合为「问」，其后的实质客服回复为「答」结束一轮；
-    // 每轮产出一条 item；最终未获得回复的客户消息入未配对池。
-    let qBuf: string[] = [];
-    let pendingCustomers: CleanMessage[] = [];
+    pairWindow(window, paired, unpaired, this.minAnswerChars);
+  }
+}
 
-    for (const m of window) {
-      if (m.senderType === 'customer') {
-        qBuf.push(m.content);
-        pendingCustomers.push(m);
-      } else if (
-        m.senderType === 'service' &&
-        qBuf.length > 0 &&
-        m.content.trim().length >= this.minAnswerChars
-      ) {
-        paired.push({ question: qBuf.join(' '), answer: m.content });
-        qBuf = [];
-        pendingCustomers = [];
-      }
+/** 单窗口配对（供全量/流式共用） */
+export function pairWindow(
+  window: readonly CleanMessage[],
+  paired: PairedItem[],
+  unpaired: CleanMessage[],
+  minAnswerChars = 6,
+): void {
+  // 按轮次配对：客户连续消息聚合为「问」，其后的实质客服回复为「答」结束一轮；
+  // 每轮产出一条 item；最终未获得回复的客户消息入未配对池。
+  let qBuf: string[] = [];
+  let pendingCustomers: CleanMessage[] = [];
+
+  for (const m of window) {
+    if (m.senderType === 'customer') {
+      qBuf.push(m.content);
+      pendingCustomers.push(m);
+    } else if (
+      m.senderType === 'service' &&
+      qBuf.length > 0 &&
+      m.content.trim().length >= minAnswerChars
+    ) {
+      paired.push({ question: qBuf.join(' '), answer: m.content });
+      qBuf = [];
+      pendingCustomers = [];
     }
+  }
 
-    for (const m of pendingCustomers) unpaired.push(m);
+  for (const m of pendingCustomers) unpaired.push(m);
+}
+
+/**
+ * 流式配对：输入按 (conversationId, occurredAt) 有序时，只保留当前会话的一个窗口。
+ * 输出通过 drain() 分批取走。
+ */
+export class StreamingQaPairing {
+  private conversation = '';
+  private window: CleanMessage[] = [];
+  private paired: PairedItem[] = [];
+  private unpaired: CleanMessage[] = [];
+
+  constructor(
+    private readonly gapMs = 30 * 60_000,
+    private readonly minAnswerChars = 6,
+  ) {}
+
+  push(m: CleanMessage): void {
+    if (m.conversationId !== this.conversation) {
+      this.flushWindow();
+      this.conversation = m.conversationId;
+    }
+    const prev = this.window[this.window.length - 1];
+    if (prev && m.occurredAt - prev.occurredAt > this.gapMs) this.flushWindow();
+    this.window.push(m);
+  }
+
+  finish(): void {
+    this.flushWindow();
+  }
+
+  drain(): PairResult {
+    const out = { paired: this.paired, unpaired: this.unpaired };
+    this.paired = [];
+    this.unpaired = [];
+    return out;
+  }
+
+  private flushWindow(): void {
+    if (this.window.length === 0) return;
+    pairWindow(this.window, this.paired, this.unpaired, this.minAnswerChars);
+    this.window = [];
   }
 }

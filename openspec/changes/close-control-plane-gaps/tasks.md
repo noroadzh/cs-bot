@@ -28,15 +28,15 @@
 
 - [x] 5.1 FastGPT 初始化交接：API Key/渠道配置文档 + `PUT /secrets` + 重启路径
 - [x] 5.2 License 指纹：`PLATFORM_LICENSE_FINGERPRINT` 配置、校验与文档
-- [ ] 5.3 契约偏差决策：`/admin/import-jobs` vs `/admin/import/jobs`、错误码（BREAKING，单独变更）
+- [x] 5.3 契约偏差决策：`/admin/import-jobs` vs `/admin/import/jobs`、错误码（BREAKING，单独变更）
 - [ ] 5.4 真实多租户 UAT：6 容器、TLS/DNS、docker CLI、跨租户隔离
 
 ## 6. P2 后续
 
-- [ ] 6.1 导入解析流式化
-- [ ] 6.2 单聊/应用消息被动回复策略（群聊不适用）
-- [ ] 6.3 grace 知识库只读外部约束说明
-- [ ] 6.4 控制面 Web UI / mTLS / confirmToken 评估
+- [x] 6.1 导入解析流式化
+- [x] 6.2 单聊/应用消息被动回复策略（群聊不适用）
+- [x] 6.3 grace 知识库只读外部约束说明
+- [x] 6.4 控制面 Web UI / mTLS / confirmToken 评估
 
 ## 7. 验证
 

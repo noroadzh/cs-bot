@@ -134,6 +134,7 @@ services:
       - ../apps/adapter/src/media/010-asset-md5.sql:/docker-entrypoint-initdb.d/11-asset-md5.sql:ro
       - ../apps/adapter/src/platform/011-usage-counters.sql:/docker-entrypoint-initdb.d/12-usage-counters.sql:ro
       - ../apps/adapter/src/platform/012-tenant-ports.sql:/docker-entrypoint-initdb.d/13-tenant-ports.sql:ro
+      - ../apps/adapter/src/import/013-import-message-stage.sql:/docker-entrypoint-initdb.d/14-import-message-stage.sql:ro
       - ./init-control-db.sh:/docker-entrypoint-initdb.d/00-control-db.sh:ro
       - ../apps/adapter/src/platform/007-tenant.sql:/control-migrations/01-tenant.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/control-migrations/02-control-plane.sql:ro
