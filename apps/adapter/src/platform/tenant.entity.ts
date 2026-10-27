@@ -31,6 +31,8 @@ export interface Tenant {
 export interface TenantCreateInput {
   name: string;
   contact?: string;
+  /** 租户访问域名（回调/TLS），提供后写入 host */
+  domain?: string;
   plan?: string;
   subscriptionExpiresAt?: string;
 }

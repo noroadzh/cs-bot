@@ -11,6 +11,7 @@ import {
   Param,
   Patch,
   Post,
+  Put,
   HttpCode,
   HttpStatus,
   Query,
@@ -37,6 +38,7 @@ import { TenantUsageService } from './tenant-usage.service.js';
 import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
 import { PlatformMonitor } from './platform-monitor.js';
 import { TenantOffboarding } from './tenant-offboarding.js';
+import { TenantSecretsService } from './tenant-secrets.service.js';
 
 /** PLATFORM_ENABLED=false 时所有 /platform 路由 404 */
 @Injectable()
@@ -63,6 +65,7 @@ export class PlatformController {
     private readonly upgrade: UpgradeOrchestrator,
     private readonly monitor: PlatformMonitor,
     private readonly offboarding: TenantOffboarding,
+    private readonly secrets: TenantSecretsService,
   ) {}
 
   private actor(req: Request): string {
@@ -111,6 +114,13 @@ export class PlatformController {
   @ApiOperation({ summary: '租户详情（含配额与当日用量）' })
   async detail(@Param('id') id: string) {
     return this.tenants.getDetail(id);
+  }
+
+  @Put('tenants/:id/secrets')
+  @ApiOperation({ summary: '设置/更新租户密钥（企微/LLM/FastGPT，值不回显）' })
+  async updateSecrets(@Param('id') id: string, @Body() body: Record<string, unknown>) {
+    const updated = await this.secrets.update(id, body);
+    return { ok: true, updated };
   }
 
   @Post('tenants/:id/provision')

@@ -50,7 +50,7 @@ suite('7.2 租户全生命周期端到端（真实 PG + 假 docker）', () => {
     fakeDocker = join(tmpDir, 'fake-docker.sh');
     await fs.writeFile(
       fakeDocker,
-      `#!/bin/sh\necho "docker $@" >> "${dockerLog}"\nexit 0\n`,
+      `#!/bin/sh\necho "docker $@" >> "${dockerLog}"\nif [ "$1" = "inspect" ]; then echo healthy; fi\nexit 0\n`,
       'utf8',
     );
     await fs.chmod(fakeDocker, 0o755);

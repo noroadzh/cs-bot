@@ -17,6 +17,7 @@ import { TenantUsageService } from './tenant-usage.service.js';
 import { PlatformAuditService } from './platform-audit.service.js';
 import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantSecretStore } from './tenant-secret-store.js';
+import { TenantSecretsService } from './tenant-secrets.service.js';
 import { ExportPackager } from './export-package.js';
 import { PlatformMonitor, HttpHealthSource } from './platform-monitor.js';
 import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
@@ -34,6 +35,12 @@ export class PlatformModule {
       providers: [
         AdminGuard,
         TenantService,
+        {
+          provide: TenantSecretsService,
+          useFactory: (store: TenantSecretStore) =>
+            new TenantSecretsService(store, ConfigService.instance.PLATFORM_COMPOSE_DIR),
+          inject: [TenantSecretStore],
+        },
         TenantQuotaService,
         TenantUsageService,
         PlatformAuditService,

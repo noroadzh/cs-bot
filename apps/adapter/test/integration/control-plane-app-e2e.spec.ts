@@ -36,7 +36,7 @@ suite('独立控制面 e2e', () => {
 
     const controlUrl = dbUrl(PG_URL!, DB);
     const pool = new Pool({ connectionString: controlUrl, max: 2 });
-    for (const f of ['007-tenant.sql', '008-control-plane.sql', '011-usage-counters.sql']) {
+    for (const f of ['007-tenant.sql', '008-control-plane.sql', '011-usage-counters.sql', '012-tenant-ports.sql']) {
       await pool.query(readFileSync(join(process.cwd(), 'src/platform', f), 'utf8'));
     }
     await pool.end();

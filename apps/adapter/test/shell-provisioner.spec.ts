@@ -97,6 +97,8 @@ describe('ShellProvisioner 命令组装', () => {
       'csbot-t-' + t.id,
       '-f',
       p.composePath(t.id),
+      '--env-file',
+      expect.stringContaining('tenant.env'),
       'up',
       '-d',
     ]);
@@ -198,14 +200,18 @@ describe('ShellProvisioner.render', () => {
     expect(path).toContain(t.id);
     expect(content).toContain('name: csbot-t-' + t.id);
     expect(content).toContain('TENANT_ID=' + t.id);
-    expect(content).toContain('"18001:3000"');
-    // 资源隔离（概设 M11）
+    expect(content).toContain('"18001:443"');
+    // 六服务与资源隔离（概设 M11）
     const net = 'csbot-t-' + t.id + '-net';
     expect(content).toContain(net);
-    expect(content).toContain('POSTGRES_DB=tenant_' + t.id.replace(/-/g, '_'));
-    expect(content).toContain('  redis:');
-    expect(content).toContain('  mongo:');
+    for (const svc of ['nginx', 'adapter', 'fastgpt', 'pg', 'mongo', 'redis']) {
+      expect(content).toContain(`  ${svc}:`);
+    }
+    expect(content).toContain('POSTGRES_DB=csbot');
+    expect(content).toContain('env_file:');
+    expect(content).toContain('tenant.env');
+    expect(content).toContain('/app/license:ro');
+    expect(content).toContain('docker-entrypoint-initdb.d');
     expect(content).toContain('networks:');
-    expect(content).toContain('/pg:');
   });
 });

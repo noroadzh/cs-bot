@@ -9,6 +9,7 @@
  *   PLATFORM_DOCKER_BIN  docker 可执行文件路径（默认 'docker'）
  */
 import { promises as fs } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'path';
 import { spawn } from 'child_process';
 import { ConfigService } from '../../config/config.service.js';
@@ -69,69 +70,193 @@ export class ShellProvisioner implements TenantProvisioner {
     return join(this.tenantDir(tenantId), 'docker-compose.yml');
   }
 
-  async render(tenant: Tenant): Promise<string> {
+  async render(tenant: Tenant, envFile?: string): Promise<string> {
     const dir = this.tenantDir(tenant.id);
-    await fs.mkdir(dir, { recursive: true });
-    const path = this.composePath(tenant.id);
+    const nginxDir = join(dir, 'nginx');
+    const initDir = join(dir, 'initdb');
+    for (const d of [
+      dir, nginxDir, join(nginxDir, 'certs'), join(nginxDir, 'logs'),
+      join(dir, 'data'), join(dir, 'pg'), join(dir, 'mongo'), join(dir, 'redis'),
+      join(dir, 'fastgpt-data'), join(dir, 'license'), initDir,
+    ]) {
+      await fs.mkdir(d, { recursive: true });
+    }
+    const env = envFile ?? join(dir, 'tenant.env');
+    const host = tenant.host ?? tenant.id;
     const port = tenant.port ?? 0;
     const project = ShellProvisioner.projectName(tenant.id);
     const net = `${project}-net`;
-    const dbName = `tenant_${tenant.id.replace(/-/g, '_')}`;
+
+    await fs.writeFile(join(nginxDir, 'nginx.conf'), this.nginxConf(host), 'utf8');
+    await this.writeInitDb(initDir);
+
     const content = [
-      '# 由 cs-bot 平台控制面自动渲染，请勿手工编辑',
+      '# 由 cs-bot 控制面自动渲染，请勿手工编辑',
       `name: ${project}`,
       'services:',
+      '  nginx:',
+      '    image: nginx:1.27-alpine',
+      '    restart: unless-stopped',
+      '    ports:',
+      `      - "${port}:443"`,
+      '    volumes:',
+      `      - ${join(nginxDir, 'nginx.conf')}:/etc/nginx/nginx.conf:ro`,
+      `      - ${join(nginxDir, 'certs')}:/etc/nginx/certs:ro`,
+      `      - ${join(nginxDir, 'logs')}:/var/log/nginx`,
+      '    depends_on:',
+      '      adapter:',
+      '        condition: service_healthy',
+      '    networks:',
+      `      - ${net}`,
       '  adapter:',
-      '    image: ${CSBOT_IMAGE:-cs-bot/adapter:latest}',
+      '    image: ${CSBOT_IMAGE:-cs-bot-adapter:latest}',
       '    container_name: ' + project,
       '    restart: unless-stopped',
+      '    env_file:',
+      `      - ${env}`,
       '    environment:',
-      '      - TENANT_ID=' + tenant.id,
-      '      - TENANT_NAME=' + (tenant.name ?? ''),
-      '      - DATABASE_URL=postgresql://cs:cs@db:5432/' + dbName,
+      `      - TENANT_ID=${tenant.id}`,
+      `      - TENANT_NAME=${tenant.name ?? ''}`,
       '      - REDIS_HOST=redis',
+      '      - REDIS_PASSWORD=${REDIS_PASSWORD}',
+      '      - DATABASE_URL=postgresql://cs:${POSTGRES_PASSWORD}@pg:5432/csbot',
+      '      - ADMIN_PASSWORD=${ADMIN_PASSWORD}',
+      '      - FASTGPT_BASE_URL=http://fastgpt:3000',
       '      - LICENSE_FILE=/app/license/license.lic',
       '    volumes:',
-      '      - ' + join(dir, 'data') + ':/app/data',
-      '      - ' + join(dir, 'license') + ':/app/license:ro',
-      '    ports:',
-      '      - "' + port + ':3000"',
-      '    networks:',
-      '      - ' + net,
+      `      - ${join(dir, 'data')}:/app/data`,
+      `      - ${join(dir, 'license')}:/app/license:ro`,
+      '    healthcheck:',
+      `      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]`,
+      '      interval: 10s',
+      '      timeout: 5s',
+      '      retries: 12',
       '    depends_on:',
-      '      - db',
-      '      - redis',
-      '  db:',
+      '      pg:',
+      '        condition: service_healthy',
+      '      redis:',
+      '        condition: service_healthy',
+      '      fastgpt:',
+      '        condition: service_started',
+      '    networks:',
+      `      - ${net}`,
+      '  fastgpt:',
+      '    image: labring/fastgpt:v4.8.17',
+      '    restart: unless-stopped',
+      '    env_file:',
+      `      - ${env}`,
+      '    environment:',
+      '      - MONGODB_URI=mongodb://mongo:27017/fastgpt',
+      '      - PG_URL=postgresql://cs:${POSTGRES_PASSWORD}@pg:5432/fastgpt',
+      '      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/1',
+      '      - DEFAULT_ROOT_PSW=${FASTGPT_ROOT_PASSWORD}',
+      '      - FILE_TOKEN=${FASTGPT_FILE_TOKEN}',
+      '      - TOKEN_KEY=${FASTGPT_TOKEN_KEY}',
+      '      - ROOT_KEY=${FASTGPT_ROOT_KEY}',
+      '    volumes:',
+      `      - ${join(dir, 'fastgpt-data')}:/data`,
+      '    depends_on:',
+      '      pg:',
+      '        condition: service_healthy',
+      '      mongo:',
+      '        condition: service_started',
+      '      redis:',
+      '        condition: service_healthy',
+      '    networks:',
+      `      - ${net}`,
+      '  pg:',
       '    image: pgvector/pgvector:pg16',
       '    restart: unless-stopped',
+      '    env_file:',
+      `      - ${env}`,
       '    environment:',
       '      - POSTGRES_USER=cs',
-      '      - POSTGRES_DB=' + dbName,
+      '      - POSTGRES_DB=csbot',
       '    volumes:',
-      '      - ' + join(dir, 'pg') + ':/var/lib/postgresql/data',
+      `      - ${join(dir, 'pg')}:/var/lib/postgresql/data`,
+      `      - ${join(initDir)}:/docker-entrypoint-initdb.d:ro`,
+      '    healthcheck:',
+      '      test: ["CMD-SHELL", "pg_isready -U cs -d csbot"]',
+      '      interval: 5s',
+      '      timeout: 3s',
+      '      retries: 20',
       '    networks:',
-      '      - ' + net,
-      '  redis:',
-      '    image: redis:7-alpine',
-      '    restart: unless-stopped',
-      '    volumes:',
-      '      - ' + join(dir, 'redis') + ':/data',
-      '    networks:',
-      '      - ' + net,
+      `      - ${net}`,
       '  mongo:',
       '    image: mongo:7',
       '    restart: unless-stopped',
       '    volumes:',
-      '      - ' + join(dir, 'mongo') + ':/data/db',
+      `      - ${join(dir, 'mongo')}:/data/db`,
       '    networks:',
-      '      - ' + net,
+      `      - ${net}`,
+      '  redis:',
+      '    image: redis:7-alpine',
+      '    restart: unless-stopped',
+      '    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]',
+      '    volumes:',
+      `      - ${join(dir, 'redis')}:/data`,
+      '    healthcheck:',
+      '      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]',
+      '      interval: 5s',
+      '      timeout: 3s',
+      '      retries: 20',
+      '    networks:',
+      `      - ${net}`,
       'networks:',
-      '  ' + net + ':',
+      `  ${net}:`,
       '    driver: bridge',
       '',
     ].join('\n');
+    const path = this.composePath(tenant.id);
     await fs.writeFile(path, content, 'utf8');
     return path;
+  }
+
+  private nginxConf(host: string): string {
+    return `events {}
+http {
+  upstream csbot_adapter { server adapter:3000; }
+  server {
+    listen 443 ssl;
+    server_name ${host};
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    location / {
+      proxy_pass http://csbot_adapter;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
+}
+`;
+  }
+
+  /** 复制数据面迁移到 tenant initdb（控制面镜像用 /app/migrate，开发环境扫描 src） */
+  private async writeInitDb(initDir: string): Promise<void> {
+    const files: { name: string; content: string }[] = [];
+    const roots = existsSync('/app/migrate')
+      ? ['/app/migrate']
+      : ['miss', 'media', 'license', 'import'].map((d) => join(process.cwd(), 'src', d));
+    for (const root of roots) {
+      try {
+        for (const f of readdirSync(root).sort()) {
+          if (!/^\d{3}-.*\.sql$/.test(f)) continue;
+          files.push({ name: f, content: readFileSync(join(root, f), 'utf8') });
+        }
+      } catch {
+        // 目录不存在则跳过（测试/裁剪镜像）
+      }
+    }
+    for (const [i, f] of files.entries()) {
+      await fs.writeFile(join(initDir, `${String(10 + i).padStart(2, '0')}-${f.name}`), f.content, 'utf8');
+    }
+    await fs.writeFile(
+      join(initDir, '00-fastgpt-db.sh'),
+      '#!/bin/bash\nset -e\npsql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d postgres -tc "SELECT 1 FROM pg_database WHERE datname=\'fastgpt\'" | grep -q 1 || psql -U "$POSTGRES_USER" -d postgres -c "CREATE DATABASE fastgpt"\n',
+      { mode: 0o755 },
+    );
   }
 
   async up(tenant: Tenant): Promise<void> {
@@ -155,25 +280,39 @@ export class ShellProvisioner implements TenantProvisioner {
    * 探测失败（连接拒绝/非 2xx）不算致命，继续重试直到 timeout。
    */
   async probe(tenant: Tenant, timeoutMs: number): Promise<boolean> {
-    const host = tenant.host ?? '127.0.0.1';
-    const port = tenant.port ?? 0;
-    if (!port) return false;
-    const url = `http://${host}:${port}/health`;
+    const name = ShellProvisioner.projectName(tenant.id);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
-        const res = await fetch(url, { signal: AbortSignal.timeout(2_000) });
-        if (res.ok) {
-          const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-          const status = body.status ?? body.state;
-          if (status === undefined || status === 'ok' || status === 'healthy') return true;
-        }
+        const out = await this.runCapture(this.dockerBin, [
+          'inspect', '--format',
+          '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}',
+          name,
+        ]);
+        const status = out.trim();
+        if (status === 'healthy' || status === 'running') return true;
       } catch {
-        // 实例还没起来 —— 继续轮询
+        // 容器还没建好
       }
       await new Promise((r) => setTimeout(r, PROBE_INTERVAL_MS));
     }
     return false;
+  }
+
+  /** 执行命令并返回 stdout（用于 inspect 等只读探测） */
+  private runCapture(bin: string, argv: string[]): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const child = spawn(bin, argv, { stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout?.on('data', (c: Buffer) => { stdout += c.toString(); });
+      child.stderr?.on('data', (c: Buffer) => { stderr += c.toString(); });
+      child.on('error', (e: Error) => reject(new ProvisionerError(e.message, null, stderr.slice(-2000))));
+      child.on('close', (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(new ProvisionerError(`inspect failed (${code})`, code, stderr.slice(-2000)));
+      });
+    });
   }
 
   /**
@@ -187,6 +326,8 @@ export class ShellProvisioner implements TenantProvisioner {
       ShellProvisioner.projectName(tenant.id),
       '-f',
       this.composePath(tenant.id),
+      '--env-file',
+      join(this.tenantDir(tenant.id), 'tenant.env'),
       ...args,
     ];
     await this.run(this.dockerBin, argv, tenant.id);

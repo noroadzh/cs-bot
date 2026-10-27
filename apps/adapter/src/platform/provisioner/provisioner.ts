@@ -8,7 +8,7 @@ import type { Tenant } from '../tenant.entity.js';
 
 export interface TenantProvisioner {
   /** 渲染 per-tenant compose 文件到 PLATFORM_COMPOSE_DIR/<id>/docker-compose.yml，返回文件路径 */
-  render(tenant: Tenant): Promise<string>;
+  render(tenant: Tenant, envFile?: string): Promise<string>;
   /** docker compose up -d */
   up(tenant: Tenant): Promise<void>;
   /** 轮询健康检查端点直到 healthy 或超时 */

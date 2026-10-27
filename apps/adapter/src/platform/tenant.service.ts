@@ -7,6 +7,7 @@
 
 import {
   Injectable,
+  Optional,
   OnModuleDestroy,
   HttpException,
   HttpStatus,
@@ -24,6 +25,7 @@ import { TenantQuotaService, DEFAULT_QUOTA } from './tenant-quota.service.js';
 import { TenantUsageService } from './tenant-usage.service.js';
 import { TenantStateMachine } from './tenant.state-machine.js';
 import type { TenantProvisioner } from './provisioner/provisioner.js';
+import type { TenantSecretsService } from './tenant-secrets.service.js';
 import { ShellProvisioner } from './provisioner/shell-provisioner.js';
 import {
   type CertificateProvider,
@@ -86,6 +88,7 @@ export class TenantService implements OnModuleDestroy {
     private readonly quota: TenantQuotaService,
     private readonly usage: TenantUsageService,
     _config: ConfigService,
+    @Optional() private readonly secrets?: TenantSecretsService,
   ) {
     this.pool = new Pool({
       connectionString: ConfigService.instance.DATABASE_URL,
@@ -151,9 +154,9 @@ export class TenantService implements OnModuleDestroy {
 
     const res = await this.pool.query(
       `INSERT INTO tenant (id, name, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at)
-       VALUES ($1, $2, 'created', NULL, NULL, NULL, $3, $3, $4, NULL, NULL)
+       VALUES ($1, $2, 'created', $3, nextval('tenant_port_seq'), NULL, $4, $4, $5, NULL, NULL)
        RETURNING id, name, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at`,
-      [randomUUID(), trimmedName, now.toISOString(), expiredAt],
+      [randomUUID(), trimmedName, input.domain ?? null, now.toISOString(), expiredAt],
     );
 
     const tenant = mapTenantRow(res.rows[0]);
@@ -196,10 +199,35 @@ export class TenantService implements OnModuleDestroy {
     );
 
     try {
-      // Render compose file
-      await this.provisioner.render(tenant);
-      // TLS 证书（失败 → 回滚 + provisioning_failed）
-      await this.certProvider.issue(tenant.host ?? tenant.id);
+      if (!tenant.port) {
+        const portRes = await this.pool.query(`SELECT nextval('tenant_port_seq') AS port`);
+        tenant.port = Number(portRes.rows[0]?.port ?? 30000);
+      }
+      // 密钥与 env（幂等）；渲染器只消费 tenant.env
+      const secretsResult = await this.secrets?.ensure(tenantId);
+      const missingSecrets = (await this.secrets?.missingRequired(tenantId)) ?? [];
+      if (missingSecrets.length > 0) {
+        throw new BadRequestException({
+          errCode: 'TENANT_SECRETS_MISSING',
+          detail: 'tenant WeCom secrets are required before provisioning',
+          missing: missingSecrets,
+        });
+      }
+      const envFile = secretsResult?.envFile
+        ?? `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenantId}/tenant.env`;
+      await this.provisioner.render(tenant, envFile);
+      // TLS 证书（失败 → 回滚 + provisioning_failed），落盘供 nginx 使用
+      const cert = await this.certProvider.issue(tenant.host ?? tenant.id);
+      await this.writeCertFiles(tenantId, cert);
+      // 订阅期授权（必须在实例启动前落盘，否则 production 启动强校验会退出）
+      const quota = await this.quota.getQuota(tenantId);
+      await this.licenseIssuer.issue({
+        id: tenant.id,
+        host: tenant.host,
+        fingerprint: ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT || undefined,
+        expiresAtMs: tenant.expiredAt ? Date.parse(tenant.expiredAt) : Date.now() + 365 * 86_400_000,
+        maxChats: quota?.maxChats,
+      });
       // Up
       await this.provisioner.up(tenant);
       // Probe
@@ -230,15 +258,13 @@ export class TenantService implements OnModuleDestroy {
         });
       }
 
-      // 订阅期授权签发（绑定指纹）
-      await this.licenseIssuer.issue({ id: tenant.id, host: tenant.host });
-
       // Success → active
       this.logger.timing({ detail: 'tenant-provision', tenantId, status: 'active' }, Date.now() - provisionStart);
       await this.pool.query(
-        `UPDATE tenant SET status = 'active', host = $2, port = $3, database_url = $4, updated_at = NOW()
+        `UPDATE tenant SET status = 'active', host = $2, port = $3, database_url = $4,
+                tls_cert_ref = $5, secrets_ref = $6, updated_at = NOW()
          WHERE id = $1`,
-        [tenantId, tenant.host, tenant.port, tenant.databaseUrl],
+        [tenantId, tenant.host, tenant.port, tenant.databaseUrl, `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenantId}/nginx/certs`, secretsResult?.secretsRef ?? null],
       );
       await this.audit.append({
         action: 'tenant.provision',
@@ -560,6 +586,14 @@ export class TenantService implements OnModuleDestroy {
   /** Allow tests to inject a custom provisioner */
   setProvisioner(p: TenantProvisioner): void {
     this.provisioner = p;
+  }
+
+  private async writeCertFiles(tenantId: string, cert: { cert: string; key: string }): Promise<void> {
+    const dir = `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenantId}/nginx/certs`;
+    const fs = await import('node:fs/promises');
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(`${dir}/fullchain.pem`, cert.cert, { mode: 0o644 });
+    await fs.writeFile(`${dir}/privkey.pem`, cert.key, { mode: 0o600 });
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -42,6 +42,7 @@ function makeCtrl() {
     upgrade as any,
     monitor as any,
     offboarding as any,
+    {} as any,
   );
   return { ctrl, tenants, upgrade, monitor, offboarding };
 }

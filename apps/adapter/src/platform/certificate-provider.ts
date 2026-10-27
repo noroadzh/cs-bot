@@ -55,7 +55,13 @@ export class CommandCertificateProvider implements CertificateProvider {
 
 /** 订阅期授权签发（调用 M9 签发，绑定实例指纹） */
 export interface LicenseIssuer {
-  issue(tenant: { id: string; host: string | null }): Promise<void>;
+  issue(tenant: {
+    id: string;
+    host: string | null;
+    fingerprint?: string;
+    expiresAtMs?: number;
+    maxChats?: number;
+  }): Promise<void>;
 }
 
 export class NoopLicenseIssuer implements LicenseIssuer {
@@ -73,9 +79,18 @@ export class ShellLicenseIssuer implements LicenseIssuer {
     private readonly timeoutMs = 60_000,
   ) {}
 
-  async issue(tenant: { id: string; host: string | null }): Promise<void> {
+  async issue(tenant: {
+    id: string;
+    host: string | null;
+    fingerprint?: string;
+    expiresAtMs?: number;
+    maxChats?: number;
+  }): Promise<void> {
     if (this.keyPath === '') throw new Error('LICENSE_ISSUER_KEY is required for shell issuer');
     const args = ['issue', '--tenant', tenant.id, '--host', tenant.host ?? '', '--key', this.keyPath];
+    if (tenant.fingerprint) args.push('--fingerprint', tenant.fingerprint);
+    if (tenant.expiresAtMs) args.push('--expires', String(tenant.expiresAtMs));
+    if (tenant.maxChats !== undefined) args.push('--max-chats', String(tenant.maxChats));
     // distroless/无 /usr/bin/env 时，.mjs/.js 需显式用当前 node 解释
     const res = /\.(mjs|c?js)$/.test(this.bin)
       ? await execFileP(process.execPath, [this.bin, ...args], { timeout: this.timeoutMs })

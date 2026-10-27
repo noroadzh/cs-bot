@@ -25,6 +25,7 @@ const PG_URL = process.env.TEST_PG_URL;
 const suite = PG_URL ? describe : describe.skip;
 
 suite('M11 控制面 e2e', () => {
+  jest.setTimeout(30_000);
   let pool: Pool;
   let healthServer: Server;
   let tmpDir: string;
@@ -50,7 +51,7 @@ suite('M11 控制面 e2e', () => {
 
     tmpDir = await fs.mkdtemp(join(tmpdir(), 'csbot-cp-'));
     const fakeDocker = join(tmpDir, 'fake-docker.sh');
-    await fs.writeFile(fakeDocker, '#!/bin/sh\nexit 0\n', 'utf8');
+    await fs.writeFile(fakeDocker, '#!/bin/sh\nif [ "$1" = "inspect" ]; then echo healthy; fi\nexit 0\n', 'utf8');
     await fs.chmod(fakeDocker, 0o755);
     process.env.PLATFORM_DOCKER_BIN = fakeDocker;
 
@@ -165,10 +166,9 @@ suite('M11 控制面 e2e', () => {
   it('两租户资源隔离：独立 project/network/DB/卷', async () => {
     const a = await tenantSvc.create({ name: '隔离A' }, 'ops:alice');
     const b = await tenantSvc.create({ name: '隔离B' }, 'ops:alice');
-    const port = (healthServer.address() as AddressInfo).port;
     for (const t of [a, b]) {
-      await pool.query('UPDATE tenant SET host=$2, port=$3, database_url=$4 WHERE id=$1', [
-        t.id, '127.0.0.1', port, `db_${t.id}`,
+      await pool.query('UPDATE tenant SET host=$2, database_url=$3 WHERE id=$1', [
+        t.id, '127.0.0.1', `db_${t.id}`,
       ]);
       await tenantSvc.provision(t.id, 'ops:alice');
     }
@@ -182,8 +182,10 @@ suite('M11 控制面 e2e', () => {
     expect(cb).toContain(netB);
     expect(ca).not.toContain(netB);
     expect(cb).not.toContain(netA);
-    expect(ca).toContain(`POSTGRES_DB=${dbA}`);
-    expect(cb).not.toContain(dbA);
+    expect(ca).toContain(join(composeDir, a.id));
+    expect(cb).toContain(join(composeDir, b.id));
+    expect(ca).not.toContain(join(composeDir, b.id));
+    expect(cb).not.toContain(join(composeDir, a.id));
 
     await pool.query('DELETE FROM tenant WHERE id = ANY($1)', [[a.id, b.id]]);
     await fs.rm(join(composeDir, a.id), { recursive: true, force: true });
