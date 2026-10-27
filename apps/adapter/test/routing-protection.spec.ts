@@ -88,6 +88,80 @@ describe('限流提示异常与无 sender', () => {
   });
 });
 
+describe('ReplyQueue（chat+user 串行）', () => {
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => { resolve = r; });
+    return { promise, resolve };
+  };
+
+  it('同一会话严格串行：第二条等第一条完成', async () => {
+    setConfig({ REPLY_QUEUE_MAX: 10, REPLY_QUEUE_WAIT_TIMEOUT_MS: 0 });
+    const gate = deferred();
+    const started: string[] = [];
+    const orch = {
+      handle: jest.fn(async (m: any) => {
+        started.push(m.MsgId);
+        await gate.promise;
+      }),
+    };
+    const { svc } = await buildRouting({ orch });
+    const p1 = svc.dispatch(msg({ MsgId: 'q1' }), 't1');
+    const p2 = svc.dispatch(msg({ MsgId: 'q2' }), 't2');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started).toEqual(['q1']);
+    gate.resolve();
+    await Promise.all([p1, p2]);
+    expect(started).toEqual(['q1', 'q2']);
+  });
+
+  it('不同会话并发执行', async () => {
+    setConfig({ REPLY_QUEUE_MAX: 10, REPLY_QUEUE_WAIT_TIMEOUT_MS: 0 });
+    const gate = deferred();
+    const started: string[] = [];
+    const orch = {
+      handle: jest.fn(async (m: any) => {
+        started.push(m.ChatId);
+        await gate.promise;
+      }),
+    };
+    const { svc } = await buildRouting({ orch });
+    const p1 = svc.dispatch(msg({ ChatId: 'chat-a', FromUserName: 'u1' }), 't1');
+    const p2 = svc.dispatch(msg({ ChatId: 'chat-b', FromUserName: 'u2' }), 't2');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(started.sort()).toEqual(['chat-a', 'chat-b']);
+    gate.resolve();
+    await Promise.all([p1, p2]);
+  });
+
+  it('队列超限 → 丢弃并回提示，不调用 orchestrator', async () => {
+    setConfig({ REPLY_QUEUE_MAX: 1, REPLY_QUEUE_WAIT_TIMEOUT_MS: 0 });
+    const gate = deferred();
+    const orch = { handle: jest.fn(async () => { await gate.promise; }) };
+    const { svc, sender } = await buildRouting({ orch });
+    const p1 = svc.dispatch(msg({ MsgId: 'o1' }), 't1');
+    await new Promise((r) => setTimeout(r, 10));
+    await svc.dispatch(msg({ MsgId: 'o2' }), 't2');
+    expect(orch.handle).toHaveBeenCalledTimes(1);
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '问题较多，请稍后再试～');
+    gate.resolve();
+    await p1;
+  });
+
+  it('等待超时 → 丢弃第二条并回提示', async () => {
+    setConfig({ REPLY_QUEUE_MAX: 10, REPLY_QUEUE_WAIT_TIMEOUT_MS: 10 });
+    const orch = {
+      handle: jest.fn(async () => { await new Promise((r) => setTimeout(r, 60)); }),
+    };
+    const { svc, sender } = await buildRouting({ orch });
+    const p1 = svc.dispatch(msg({ MsgId: 'w1' }), 't1');
+    const p2 = svc.dispatch(msg({ MsgId: 'w2' }), 't2');
+    await Promise.all([p1, p2]);
+    expect(orch.handle).toHaveBeenCalledTimes(1);
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '问题较多，请稍后再试～');
+  });
+});
+
 describe('Semaphore', () => {
   it('并发不超过上限且 FIFO 执行', async () => {
     const sem = new Semaphore(1);

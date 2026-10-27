@@ -31,6 +31,10 @@ export interface UsageCounters {
   llmFailures: number;
   /** 群消息缺失 ChatId 被丢弃的条数 */
   messagesDroppedNoChatId: number;
+  /** 出站发送：尝试/重试/最终失败 */
+  sendAttempts: number;
+  sendRetries: number;
+  sendFailures: number;
 }
 
 export function createEmptyCounters(): UsageCounters {
@@ -49,5 +53,8 @@ export function createEmptyCounters(): UsageCounters {
     llmFailovers: 0,
     llmFailures: 0,
     messagesDroppedNoChatId: 0,
+    sendAttempts: 0,
+    sendRetries: 0,
+    sendFailures: 0,
   };
 }

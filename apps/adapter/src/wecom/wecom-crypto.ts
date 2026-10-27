@@ -35,18 +35,24 @@ export interface InboundMsg {
   CreateTime: number;
   text?: string;
   mentioned?: boolean;
+  /** 原始 @ 列表（userid/标识），便于排查真实回调结构 */
+  atList?: string[];
 }
 
 export class WecomCrypto {
   private readonly token: string;
   private readonly encodingAesKey: string;
   private readonly corpId: string;
+  private readonly botUserId: string;
+  private readonly botName: string;
 
   constructor(config?: AppConfigInput) {
     const cfg = config ?? ConfigService.instance;
     this.token = cfg.WECHAT_TOKEN;
     this.encodingAesKey = cfg.WECHAT_ENCODING_AES_KEY;
     this.corpId = cfg.WECHAT_CORP_ID;
+    this.botUserId = cfg.WECHAT_BOT_USER_ID ?? '';
+    this.botName = cfg.WECHAT_BOT_NAME ?? '';
   }
 
   verifySignature(msgSignature: string, timestamp: string, nonce: string, encrypt: string): boolean {
@@ -92,6 +98,7 @@ export class WecomCrypto {
       const xml = await parseXmlAsync(xmlText);
       const m: any = xml?.xml ?? {};
       const atList = Array.isArray(m.AtList) ? m.AtList : (m.AtList ? [m.AtList] : []);
+      const contentText = m.Content ? String(m.Content) : '';
       // 兼容嵌套结构：<AtList><item>x</item></AtList> 解析后为 [{ item: [x] }]
       const flatAtList: string[] = [];
       for (const entry of atList) {
@@ -112,7 +119,11 @@ export class WecomCrypto {
         MediaId: m.MediaId ? String(m.MediaId) : undefined,
         CreateTime: parseInt(String(m.CreateTime ?? '0'), 10),
         text: m.Content ? String(m.Content) : (m.Recognition ? String(m.Recognition) : undefined),
-        mentioned: flatAtList.includes(this.corpId),
+        mentioned:
+          flatAtList.includes(this.corpId) ||
+          (this.botUserId !== '' && flatAtList.includes(this.botUserId)) ||
+          (this.botName !== '' && contentText.includes(`@${this.botName}`)),
+        atList: flatAtList,
       };
     } catch {
       return null;

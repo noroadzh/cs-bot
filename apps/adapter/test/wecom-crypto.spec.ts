@@ -118,6 +118,60 @@ describe('WecomCrypto', () => {
       expect(m!.text).toBe('你好');
     });
 
+    it('@ 识别：AtList 含机器人 userid → mentioned=true', async () => {
+      const c = new WecomCrypto({
+        ...ConfigService.instance,
+        WECHAT_BOT_USER_ID: 'bot-001',
+        WECHAT_BOT_NAME: '客服机器人',
+      });
+      const xml = `<xml>
+<ToUserName><![CDATA[wxcorp]]></ToUserName>
+<FromUserName><![CDATA[user1]]></FromUserName>
+<ChatId><![CDATA[chat-1]]></ChatId>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[@客服机器人 你好]]></Content>
+<AtList><item>bot-001</item></AtList>
+<CreateTime>1700000000</CreateTime>
+</xml>`;
+      const m = await c.parseXml(xml, 'trace-at');
+      expect(m!.mentioned).toBe(true);
+      expect(m!.atList).toEqual(['bot-001']);
+    });
+
+    it('@ 识别：无 AtList 但内容包含 @机器人名 → mentioned=true', async () => {
+      const c = new WecomCrypto({
+        ...ConfigService.instance,
+        WECHAT_BOT_USER_ID: 'bot-001',
+        WECHAT_BOT_NAME: '客服机器人',
+      });
+      const xml = `<xml>
+<ToUserName><![CDATA[wxcorp]]></ToUserName>
+<FromUserName><![CDATA[user1]]></FromUserName>
+<ChatId><![CDATA[chat-1]]></ChatId>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[@客服机器人 怎么退款]]></Content>
+<CreateTime>1700000000</CreateTime>
+</xml>`;
+      expect((await c.parseXml(xml, 'trace-at2'))!.mentioned).toBe(true);
+    });
+
+    it('@ 识别：既无 AtList 也无名称 → mentioned=false', async () => {
+      const c = new WecomCrypto({
+        ...ConfigService.instance,
+        WECHAT_BOT_USER_ID: 'bot-001',
+        WECHAT_BOT_NAME: '客服机器人',
+      });
+      const xml = `<xml>
+<ToUserName><![CDATA[wxcorp]]></ToUserName>
+<FromUserName><![CDATA[user1]]></FromUserName>
+<ChatId><![CDATA[chat-1]]></ChatId>
+<MsgType><![CDATA[text]]></MsgType>
+<Content><![CDATA[普通聊天]]></Content>
+<CreateTime>1700000000</CreateTime>
+</xml>`;
+      expect((await c.parseXml(xml, 'trace-at3'))!.mentioned).toBe(false);
+    });
+
     it('缺失可选字段（ChatId/MsgId/MediaId）→ undefined 分支', async () => {
       const c = makeCrypto();
       const xml = `<xml>

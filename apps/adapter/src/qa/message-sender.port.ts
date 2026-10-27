@@ -6,6 +6,6 @@
 export const IMessageSender = Symbol('IMessageSender');
 
 export interface IMessageSender {
-  sendText(chatId: string, content: string, atUser?: string): Promise<void>;
+  sendText(chatId: string, content: string, atUser?: string, clientMsgId?: string): Promise<void>;
   sendAsset(chatId: string, assetId: string, type: 'link' | 'file' | 'video'): Promise<void>;
 }

@@ -69,9 +69,18 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   /** 群聊场景要求每条触发消息必须带 ChatId（缺失则丢弃并告警，不回退私聊） */
   REQUIRE_GROUP_CHAT_ID: EnvBool(true),
 
+  // 群聊回复队列（按 chat+user 串行）
+  REPLY_QUEUE_ENABLED: EnvBool(true),
+  REPLY_QUEUE_MAX: EnvInt(20),
+  REPLY_QUEUE_WAIT_TIMEOUT_MS: EnvInt(60_000),
+  REPLY_QUEUE_HINT_TEXT: EnvString.default('问题较多，请稍后再试～'),
+
   // 出站并发上限
   LLM_CONCURRENCY: EnvInt(4),
   WECOM_CONCURRENCY: EnvInt(8),
+  WECOM_SEND_MAX_ATTEMPTS: EnvInt(3),
+  WECOM_SEND_BACKOFF_MS: EnvInt(300),
+  WECOM_SEND_BACKOFF_MAX_MS: EnvInt(5000),
   VL_CONCURRENCY: EnvInt(2),
 
   // 长答案分段
@@ -103,6 +112,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // Bot user
   WECHAT_BOT_USER_ID: EnvString.optional().default(''),
+  WECHAT_BOT_NAME: EnvString.optional().default(''),
 
   // Swagger docs (production: disable via SWAGGER_ENABLED=false)
   SWAGGER_ENABLED: EnvBool(true),

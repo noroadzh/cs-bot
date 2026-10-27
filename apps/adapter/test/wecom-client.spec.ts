@@ -182,6 +182,49 @@ describe('WecomClient', () => {
     });
   });
 
+  describe('sendText 重试与幂等', () => {
+    it('45009 后重试成功，clientmsgid 复用', async () => {
+      const client = withToken(await newClient());
+      apiMock.post
+        .mockResolvedValueOnce({ data: { errcode: 45009, errmsg: 'freq limit' } })
+        .mockResolvedValueOnce({ data: { errcode: 0 } });
+      await client.sendText('chat-r', 'hi', undefined, 'trace-1:0');
+      expect(apiMock.post).toHaveBeenCalledTimes(2);
+      expect(apiMock.post.mock.calls[0][1].clientmsgid).toBe('trace-1:0');
+      expect(apiMock.post.mock.calls[1][1].clientmsgid).toBe('trace-1:0');
+    });
+
+    it('token 失效 40014 → 刷新后重试', async () => {
+      const client = withToken(await newClient());
+      apiMock.post
+        .mockResolvedValueOnce({ data: { errcode: 40014, errmsg: 'invalid token' } })
+        .mockResolvedValueOnce({ data: { errcode: 0 } });
+      await client.sendText('chat-t', 'hi');
+      expect(apiMock.post).toHaveBeenCalledTimes(2);
+      expect(apiMock.get).toHaveBeenCalledTimes(1); // gettoken 刷新
+    });
+
+    it('网络错误重试 3 次后失败', async () => {
+      const client = withToken(await newClient());
+      apiMock.post.mockRejectedValue(new Error('ECONNRESET'));
+      await expect(client.sendText('chat-n', 'hi')).rejects.toThrow('ECONNRESET');
+      expect(apiMock.post).toHaveBeenCalledTimes(3);
+    });
+
+    it('失败/重试计入 usage 指标', async () => {
+      const usage = { increment: jest.fn() };
+      const client = new (await import('../src/wecom/wecom-client.js')).WecomClient({} as any, usage as any);
+      (client as any).tokenCache = { token: "tok", expireAt: Date.now() + 3600_000 };
+      apiMock.post
+        .mockResolvedValueOnce({ data: { errcode: 45009, errmsg: 'freq' } })
+        .mockResolvedValueOnce({ data: { errcode: 0 } });
+      await client.sendText('chat-m', 'hi');
+      expect(usage.increment).toHaveBeenCalledWith('sendAttempts');
+      expect(usage.increment).toHaveBeenCalledWith('sendRetries');
+      expect(usage.increment).not.toHaveBeenCalledWith('sendFailures');
+    });
+  });
+
   describe('sendFile/sendVideo 错误分支', () => {
     it('sendFile errcode≠0 → WECOM_SEND_FAIL', async () => {
       const client = withToken(await newClient());

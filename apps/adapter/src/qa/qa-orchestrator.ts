@@ -134,7 +134,7 @@ export class QaOrchestrator {
 
     try {
       for (let i = 0; i < segments.length; i++) {
-        await this.sender.sendText(chatId, segments[i], msg.mentioned ? userId : undefined);
+        await this.sender.sendText(chatId, segments[i], msg.mentioned ? userId : undefined, `${traceId}:${i}`);
         if (i < segments.length - 1) await this.sleep(this.cfg.SEGMENT_GAP_MS);
       }
       this.logger.log({ detail: 'sent', chatHash: hashId(chatId), segments: segments.length, answered });

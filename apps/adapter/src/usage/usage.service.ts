@@ -25,6 +25,10 @@ export interface UsageCounters {
   llmFailures: number;
   /** 群消息缺失 ChatId 被丢弃的条数 */
   messagesDroppedNoChatId: number;
+  /** 出站发送：尝试/重试/最终失败 */
+  sendAttempts: number;
+  sendRetries: number;
+  sendFailures: number;
 }
 
 export interface UsageSnapshot {
@@ -54,6 +58,9 @@ export class UsageService implements OnModuleInit, OnModuleDestroy {
     llmFailovers: 0,
     llmFailures: 0,
     messagesDroppedNoChatId: 0,
+    sendAttempts: 0,
+    sendRetries: 0,
+    sendFailures: 0,
   };
   private periodStart: Date;
   private currentPeriod: UsagePeriod;
@@ -160,6 +167,9 @@ export class UsageService implements OnModuleInit, OnModuleDestroy {
         llmFailovers: 0,
         llmFailures: 0,
         messagesDroppedNoChatId: 0,
+        sendAttempts: 0,
+        sendRetries: 0,
+        sendFailures: 0,
       };
       this.periodStart = now;
       this.currentPeriod = period;

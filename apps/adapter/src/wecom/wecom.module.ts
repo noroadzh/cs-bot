@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { WecomClient } from './wecom-client.js';
 import { WecomCrypto } from './wecom-crypto.js';
 import { IMessageSender } from '../qa/message-sender.port.js';
+import { ConfigService } from '../config/config.service.js';
+import { UsageService } from '../usage/usage.service.js';
 
 /**
  * WecomModule 提供 IMessageSender 的实现（WecomClient）。
@@ -9,7 +11,11 @@ import { IMessageSender } from '../qa/message-sender.port.js';
  */
 @Module({
   providers: [
-    WecomClient,
+    {
+      provide: WecomClient,
+      useFactory: (cfg: ConfigService, usage: UsageService) => new WecomClient(cfg, usage),
+      inject: [ConfigService, UsageService],
+    },
     WecomCrypto,
     { provide: IMessageSender, useExisting: WecomClient },
   ],

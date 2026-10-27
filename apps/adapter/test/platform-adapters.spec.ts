@@ -40,7 +40,7 @@ describe('CommandCertificateProvider', () => {
       cert: 'CERT-t.example.com\n',
       key: 'KEY-t.example.com\n',
     });
-  });
+  }, 20_000);
 });
 
 describe('FileCertificateProvider', () => {

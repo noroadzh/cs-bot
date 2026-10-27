@@ -84,7 +84,7 @@ describe('QaOrchestrator', () => {
     );
     await orch.handle(makeMsg({ mentioned: true }), 'trace-1', 'mention');
     expect(sender.sendText).toHaveBeenCalledTimes(1);
-    expect(sender.sendText).toHaveBeenCalledWith('chat-1', 'mock-answer', 'user-A');
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', 'mock-answer', 'user-A', 'trace-1:0');
   });
 
   it('1.6.b segments long text and sends each chunk via sender', async () => {
@@ -106,7 +106,7 @@ describe('QaOrchestrator', () => {
     const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), miss, stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await orch.handle(makeMsg(), 'trace-3', 'keyword');
     expect(miss.record).toHaveBeenCalledTimes(1);
-    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '暂时没有合适答案，已记录到工单', undefined);
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '暂时没有合适答案，已记录到工单', undefined, 'trace-3:0');
   });
 
   it('1.6.d sends LLM error as slow reply without throwing', async () => {
@@ -115,7 +115,7 @@ describe('QaOrchestrator', () => {
     const sender = makeSender();
     const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await expect(orch.handle(makeMsg(), 'trace-4', 'keyword')).resolves.toBeUndefined();
-    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '系统繁忙，请稍后再试', undefined);
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '系统繁忙，请稍后再试', undefined, 'trace-4:0');
   });
 
   it('1.6.e appends context when score above threshold', async () => {

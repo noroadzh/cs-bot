@@ -9,6 +9,7 @@ import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
 import type { IMessageSender } from '../qa/message-sender.port.js';
 import { wecomSemaphore } from '../common/semaphore.js';
+import type { UsageService } from '../usage/usage.service.js';
 
 const TOKEN_TTL = 7000;
 const TOKEN_LOCK_TTL = 10;
@@ -20,7 +21,7 @@ export class WecomClient implements IMessageSender {
   private readonly redis: Redis;
   private tokenCache: { token: string; expireAt: number } | null = null;
 
-  constructor(config: ConfigService) {
+  constructor(config: ConfigService, private readonly usage?: UsageService) {
     const cfg = ConfigService.instance;
     this.api = axios.create({ baseURL: 'https://qyapi.weixin.qq.com/cgi-bin', timeout: 10000 });
     this.redis = new Redis({
@@ -57,7 +58,9 @@ export class WecomClient implements IMessageSender {
         params: { corpid: cfg.WECHAT_CORP_ID, corpsecret: cfg.WECHAT_AGENT_SECRET },
       }));
       const data = resp.data as { errcode: number; errmsg?: string; access_token?: string; expires_in?: number };
-      if (data.errcode !== 0) throw new Error(data.errmsg ?? 'gettoken fail');
+      if (data.errcode !== 0) {
+        throw Object.assign(new Error(data.errmsg ?? 'gettoken fail'), { errcode: data.errcode });
+      }
       const token = data.access_token!;
       const expiresIn = data.expires_in ?? TOKEN_TTL;
       await this.redis.set('wecom:at', token, 'EX', Math.min(expiresIn, TOKEN_TTL));
@@ -68,18 +71,60 @@ export class WecomClient implements IMessageSender {
     }
   }
 
-  async sendText(chatId: string, content: string, atUser?: string): Promise<void> {
-    const token = await this.getAccessToken();
-    const body: Record<string, unknown> = {
-      chatid: chatId, msgtype: 'text',
-      text: { content }, clientmsgid: crypto.randomUUID(),
-    };
-    if (atUser) (body as any).atuserlist = atUser;
-    const resp = await wecomSemaphore().run(() =>
-      this.api.post('/appchat/send', body, { params: { access_token: token } }),
-    );
-    if ((resp.data as any).errcode !== 0) {
-      throw Object.assign(new Error((resp.data as any).errmsg), { code: ErrCode.WECOM_SEND_FAIL });
+  async sendText(chatId: string, content: string, atUser?: string, clientMsgId?: string): Promise<void> {
+    const id = clientMsgId ?? crypto.randomUUID();
+    await this.withSendRetry('sendText', async () => {
+      const token = await this.getAccessToken();
+      const body: Record<string, unknown> = {
+        chatid: chatId, msgtype: 'text',
+        text: { content }, clientmsgid: id,
+      };
+      if (atUser) (body as any).atuserlist = atUser;
+      const resp = await wecomSemaphore().run(() =>
+        this.api.post('/appchat/send', body, { params: { access_token: token } }),
+      );
+      const data = resp.data as { errcode: number; errmsg?: string };
+      if (data.errcode !== 0) {
+        throw Object.assign(new Error(data.errmsg ?? 'send failed'), {
+          code: ErrCode.WECOM_SEND_FAIL,
+          errcode: data.errcode,
+        });
+      }
+    });
+  }
+
+  /** 出站重试：token 失效刷新一次；网络/45009/5xx 指数退避；clientmsgid 复用保证幂等 */
+  private async withSendRetry<T>(op: string, fn: () => Promise<T>): Promise<T> {
+    const cfg = ConfigService.instance;
+    const max = cfg.WECOM_SEND_MAX_ATTEMPTS ?? 3;
+    const base = cfg.WECOM_SEND_BACKOFF_MS ?? 300;
+    const maxBackoff = cfg.WECOM_SEND_BACKOFF_MAX_MS ?? 5000;
+    let tokenRetried = false;
+    for (let attempt = 1; ; attempt++) {
+      this.usage?.increment('sendAttempts');
+      try {
+        return await fn();
+      } catch (err) {
+        const e = err as Error & { errcode?: number };
+        if ([40014, 42001, 40001].includes(e.errcode ?? 0) && !tokenRetried) {
+          tokenRetried = true;
+          this.tokenCache = null;
+          await this.redis.del('wecom:at').catch(() => undefined);
+          this.usage?.increment('sendRetries');
+          this.logger.warn({ detail: 'send-token-refresh', op, errcode: e.errcode });
+          continue;
+        }
+        const retryable =
+          e.errcode === undefined || e.errcode === 45009 || e.errcode >= 50000;
+        if (!retryable || attempt >= max) {
+          this.usage?.increment('sendFailures');
+          throw err;
+        }
+        this.usage?.increment('sendRetries');
+        const delay = Math.min(base * 2 ** (attempt - 1), maxBackoff) + Math.floor(Math.random() * 100);
+        this.logger.warn({ detail: 'send-retry', op, attempt, errcode: e.errcode, err: e.message, delayMs: delay });
+        await new Promise((r) => setTimeout(r, delay));
+      }
     }
   }
 

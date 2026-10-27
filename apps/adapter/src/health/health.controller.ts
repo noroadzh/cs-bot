@@ -41,6 +41,9 @@ export class HealthController {
       messagesMissed: c.messagesMissed,
       llmFailures: c.llmFailures,
       messagesDroppedNoChatId: c.messagesDroppedNoChatId,
+      sendAttempts: c.sendAttempts,
+      sendRetries: c.sendRetries,
+      sendFailures: c.sendFailures,
     };
     if (deps.length > 0) {
       throw new HttpException(

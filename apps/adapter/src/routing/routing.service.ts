@@ -10,11 +10,20 @@ import { ErrCode } from '@cs-bot/shared';
 import type { InboundMsg } from '../wecom/wecom-crypto.js';
 import { ConfigService } from '../config/config.service.js';
 import { IMessageSender } from '../qa/message-sender.port.js';
+import {
+  QueueOverflowError,
+  QueueWaitTimeoutError,
+  ReplyQueue,
+} from './reply-queue.js';
 
 @Injectable()
 export class RoutingService {
   private readonly logger = new AppLogger('RoutingService');
   private readonly cfg = ConfigService.instance;
+  private readonly replyQueue = new ReplyQueue(
+    ConfigService.instance.REPLY_QUEUE_MAX ?? 20,
+    ConfigService.instance.REPLY_QUEUE_WAIT_TIMEOUT_MS ?? 60_000,
+  );
 
   constructor(
     private readonly trigger: TriggerService,
@@ -59,7 +68,26 @@ export class RoutingService {
         return;
       }
     }
-    await this.qaOrchestrator.handle(msg, traceId, trig.reason);
+    const key = `${msg.ChatId ?? msg.FromUserName}:${msg.FromUserName}`;
+    try {
+      if (this.cfg.REPLY_QUEUE_ENABLED === false) {
+        await this.qaOrchestrator.handle(msg, traceId, trig.reason);
+      } else {
+        await this.replyQueue.run(key, () => this.qaOrchestrator.handle(msg, traceId, trig.reason!));
+      }
+    } catch (err) {
+      if (err instanceof QueueOverflowError || err instanceof QueueWaitTimeoutError) {
+        this.logger.warn({ traceId, detail: 'reply-queue-dropped', reason: err.code });
+        const chatId = msg.ChatId ?? msg.FromUserName;
+        if (this.sender && chatId) {
+          await this.sender
+            .sendText(chatId, this.cfg.REPLY_QUEUE_HINT_TEXT ?? '问题较多，请稍后再试～')
+            .catch((e: Error) => this.logger.warn({ detail: 'queue-hint-fail', err: e.message }));
+        }
+        return;
+      }
+      throw err;
+    }
   }
 
   /** 限流提示：单人立即提示；群提示按 5 分钟去重 */
