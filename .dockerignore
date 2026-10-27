@@ -1,0 +1,16 @@
+# 构建上下文瘦身
+node_modules
+**/node_modules
+dist
+**/dist
+coverage
+**/coverage
+.git
+.claude
+.claude-flow
+data
+apps/adapter/data
+artifacts
+openspec
+**/target
+*.log

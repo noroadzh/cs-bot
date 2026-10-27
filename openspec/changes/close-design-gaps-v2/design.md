@@ -90,4 +90,4 @@
 - M11 真实适配器依赖外部 TLS 证书、签发私钥、docker/health 端点；CI 逻辑测试仍使用 fake/noop。
 - 控制面仍运行在 adapter 内（`PLATFORM_ENABLED` 开关），未拆分为独立 `apps/control-plane`（本变更非目标）。
 - 关键词热加载与提问归一化各自读取 `keywords.yml`，文件被外部修改时缓存按 mtime 刷新（秒级）。
-- JS 混淆步骤已写入 Dockerfile/`obfuscate` 脚本，但本机无外网无法执行 `javascript-obfuscator`；该验证留待 CI/release 构建（任务 8.5 保持未完成）。
+- JS 混淆已在本地 Docker 构建验证：`javascript-obfuscator` 生效（标识符/字符串数组），镜像内 `.map`、项目 `.d.ts`、`tools/` 均为 0；容器可启动并在缺失环境变量时 fail-fast。

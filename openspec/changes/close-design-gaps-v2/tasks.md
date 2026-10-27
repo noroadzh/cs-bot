@@ -66,7 +66,7 @@
 - [x] 8.2 引入 `javascript-obfuscator` 与 `obfuscate` 脚本，Dockerfile 启用（release 构建）
 - [x] 8.3 生产构建关闭 sourceMap、镜像剔除 `*.map`、移除 `--enable-source-maps`
 - [x] 8.4 新增 `scripts/release-sums.sh` 生成 `SHA256SUMS`（镜像 digest + 交付包）
-- [ ] 8.5 验证：构建产物无 `.map`、无 TS 源码、含混淆；签发 CLI 产物可被 verifier 接受
+- [x] 8.5 验证：构建产物无 `.map`、无 TS 源码、含混淆；签发 CLI 产物可被 verifier 接受
 
 ## 9. P1 M11 运营能力
 

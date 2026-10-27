@@ -11,7 +11,8 @@ const dockerfile = readFileSync(join(ROOT, 'deploy', 'Dockerfile.adapter'), 'utf
 describe('release hardening', () => {
   it('Dockerfile 启用混淆并剔除 sourcemap', () => {
     expect(dockerfile).toContain('javascript-obfuscator@4.1.1');
-    expect(dockerfile).toContain("find apps/adapter/dist -name '*.map' -delete");
+    expect(dockerfile).toContain("find apps/adapter/dist packages/shared/dist node_modules -name '*.map' -delete");
+    expect(dockerfile).toContain("-name '*.d.ts' -delete");
   });
 
   it('运行时不再 --enable-source-maps', () => {

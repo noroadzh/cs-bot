@@ -45,16 +45,18 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
 
 # 复制依赖描述
-COPY pnpm-workspace.yaml package.json ./
+COPY pnpm-workspace.yaml pnpm-lock.yaml package.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/license-native/package.json packages/license-native/
 COPY apps/adapter/package.json apps/adapter/
 
 # 安装依赖
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install --frozen-lockfile
 
 # 复制源码
 COPY packages/ packages/
 COPY apps/adapter/ apps/adapter/
+COPY config/ config/
 COPY tsconfig.base.json ./
 
 # 编译
@@ -73,7 +75,16 @@ RUN npx --yes javascript-obfuscator@4.1.1 apps/adapter/dist \
       --string-array-rotate true \
       --identifier-names-generator hexadecimal \
       --self-defending true \
-    && find apps/adapter/dist -name '*.map' -delete
+    && npx --yes javascript-obfuscator@4.1.1 packages/shared/dist \
+      --output packages/shared/dist \
+      --compact true \
+      --control-flow-flattening true \
+      --string-array true \
+      --string-array-rotate true \
+      --identifier-names-generator hexadecimal \
+      --self-defending true \
+    && find apps/adapter/dist packages/shared/dist node_modules -name '*.map' -delete \
+    && find apps/adapter/dist packages/shared/dist -name '*.d.ts' -delete
 
 # ----- Stage 2: assets -----
 # 把 native .node 汇齐（pubkey 已编入 .node 内部，无需单独拷）
@@ -85,7 +96,14 @@ FROM gcr.io/distroless/nodejs20-debian12:nonroot AS runtime
 WORKDIR /app
 
 COPY --from=builder /app/apps/adapter/dist/ /app/apps/adapter/dist/
+COPY --from=builder /app/apps/adapter/package.json /app/apps/adapter/package.json
 COPY --from=builder /app/packages/shared/dist/ /app/packages/shared/dist/
+COPY --from=builder /app/packages/shared/package.json /app/packages/shared/package.json
+COPY --from=builder /app/packages/license-native/package.json /app/packages/license-native/package.json
+COPY --from=builder /app/node_modules/ /app/node_modules/
+COPY --from=builder /app/apps/adapter/node_modules/ /app/apps/adapter/node_modules/
+COPY --from=builder /app/packages/shared/node_modules/ /app/packages/shared/node_modules/
+COPY --from=builder /app/packages/license-native/node_modules/ /app/packages/license-native/node_modules/
 COPY --from=assets /assets/packages/license-native/prebuilds/ /app/packages/license-native/prebuilds/
 COPY --from=builder /app/apps/adapter/src/miss/001-miss-record.sql /app/migrate/001-miss-record.sql
 COPY --from=builder /app/apps/adapter/src/media/002-asset.sql /app/migrate/002-asset.sql
@@ -108,4 +126,4 @@ EXPOSE 3000
 
 USER nonroot
 
-CMD ["node", "apps/adapter/dist/main.js"]
+CMD ["apps/adapter/dist/main.js"]
