@@ -63,6 +63,9 @@ COPY tsconfig.base.json ./
 RUN pnpm -C packages/shared build
 RUN pnpm -C apps/adapter build
 
+# 运行期可写目录（镜像内默认非 root 也可写；compose 绑定挂载时按 CSBOT_UID 覆盖）
+RUN mkdir -p /app/data /app/logs /app/license
+
 # ---- 交付加固（安全基线：JS 全量混淆 + 剔除 sourcemap）----
 # 版本固定，构建期通过 npx 获取，避免把混淆器打进运行时镜像。
 # 交付镜像的指纹（docker images --no-trunc）随交付文档一并提供用户核对。
@@ -101,6 +104,9 @@ COPY --from=builder /app/packages/shared/dist/ /app/packages/shared/dist/
 COPY --from=builder /app/packages/shared/package.json /app/packages/shared/package.json
 COPY --from=builder /app/packages/license-native/package.json /app/packages/license-native/package.json
 COPY --from=builder /app/node_modules/ /app/node_modules/
+COPY --from=builder --chown=65532:65532 /app/data /app/data
+COPY --from=builder --chown=65532:65532 /app/logs /app/logs
+COPY --from=builder --chown=65532:65532 /app/license /app/license
 COPY --from=builder /app/apps/adapter/node_modules/ /app/apps/adapter/node_modules/
 COPY --from=builder /app/packages/shared/node_modules/ /app/packages/shared/node_modules/
 COPY --from=builder /app/packages/license-native/node_modules/ /app/packages/license-native/node_modules/

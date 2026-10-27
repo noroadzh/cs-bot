@@ -22,12 +22,23 @@ services:
       dockerfile: deploy/Dockerfile.adapter
     image: cs-bot-adapter:latest
     restart: unless-stopped
+    # 默认 root 以直接写宿主 data/logs；安全加固环境可用 CSBOT_UID/CSBOT_GID
+    # 切到 65532 并事先 chown -R 65532:65532 data logs。
+    user: "${CSBOT_UID:-0}:${CSBOT_GID:-0}"
     env_file:
       - ../.env
     environment:
       REDIS_HOST: redis
       REDIS_PORT: "6379"
       DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${POSTGRES_DB:-csbot}
+      LOG_FILE: /app/logs/adapter.log
+    volumes:
+      # 数据持久化：素材、导入、用量快照、上报缓冲
+      - ../data:/app/data
+      # 日志落盘（无 SSH 时由运维在宿主机查看）
+      - ../logs:/app/logs
+      # 授权证书（由交付方签发后放入宿主机 license/）
+      - ../license:/app/license:ro
     depends_on:
       redis:
         condition: service_healthy
