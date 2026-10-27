@@ -147,6 +147,8 @@ export class WecomController {
           // 识别返回空（无有效内容 / 超时 / 失败）→ 跳过 routing，直接回复引导话术
           this.usageService.increment('imagesSkipped');
           await this.sendGuidanceAndSkipRouting(parsedMsg, traceId, GUIDANCE_TEXT);
+          // 图片分支由本方法接管响应：必须显式 ack，否则企微侧请求挂起重试。
+          res.status(HttpStatus.OK).send('');
           return;
         }
       } catch (err) {
@@ -154,6 +156,7 @@ export class WecomController {
         this.usageService.increment('imagesSkipped');
         this.logger.warn({ traceId, detail: 'image-recognize-failed', err: (err as Error).message });
         await this.sendGuidanceAndSkipRouting(parsedMsg, traceId, GUIDANCE_TEXT);
+        res.status(HttpStatus.OK).send('');
         return;
       }
     }

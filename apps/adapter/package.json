@@ -11,7 +11,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
-    "test:integration": "jest test/integration --runInBand"
+    "test:integration": "jest test/integration --runInBand",
+    "test:acceptance": "jest test/acceptance --runInBand --forceExit"
   },
   "dependencies": {
     "@cs-bot/license-native": "workspace:*",

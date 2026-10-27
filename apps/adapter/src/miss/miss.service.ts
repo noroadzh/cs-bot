@@ -1,5 +1,5 @@
 /** MissService */
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
@@ -12,7 +12,7 @@ export interface MissRecord {
 const FIFO_MAX = 1000;
 
 @Injectable()
-export class MissService {
+export class MissService implements OnModuleDestroy {
   private readonly logger = new AppLogger('MissService');
   private readonly pool: Pool;
   private fifo: MissRecord[] = [];
@@ -38,6 +38,10 @@ export class MissService {
       if (this.fifo.length > FIFO_MAX) this.fifo.shift();
       setTimeout(() => this.retry(), 5000);
     }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
   }
 
   private async retry(): Promise<void> {

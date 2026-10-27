@@ -1,7 +1,7 @@
 /**
  * Usage counter service - in-memory counters with periodic snapshots
  */
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service.js';
 import { createEmptyCounters } from './usage-snapshot.js';
 import * as fs from 'fs/promises';
@@ -33,7 +33,7 @@ export interface UsageSnapshot {
 export type UsagePeriod = 'daily' | 'weekly' | 'monthly';
 
 @Injectable()
-export class UsageService implements OnModuleInit {
+export class UsageService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(UsageService.name);
   private counters: UsageCounters = {
     messagesReceived: 0,
@@ -58,6 +58,13 @@ export class UsageService implements OnModuleInit {
   constructor() {
     this.periodStart = new Date();
     this.currentPeriod = ConfigService.instance.USAGE_PERIOD;
+  }
+
+  onModuleDestroy() {
+    if (this.snapshotInterval) {
+      clearInterval(this.snapshotInterval);
+      this.snapshotInterval = null;
+    }
   }
 
   async onModuleInit() {

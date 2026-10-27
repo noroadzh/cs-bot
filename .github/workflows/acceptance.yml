@@ -1,0 +1,92 @@
+name: acceptance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # nightly 真实 6 容器冒烟（无网络时脚本自行 skip）
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  mock-acceptance:
+    name: mock full-stack + ab
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cs
+          POSTGRES_PASSWORD: cs
+          POSTGRES_DB: csbot_test
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U cs -d csbot_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      # ab（ApacheBench）用于 /wecom/callback 压测
+      - name: Install ab
+        run: sudo apt-get update && sudo apt-get install -y apache2-utils
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build adapter
+        run: pnpm --filter @cs-bot/adapter build
+
+      - name: Acceptance (mock stack + ab)
+        env:
+          TEST_PG_URL: postgresql://cs:cs@127.0.0.1:55432/csbot_test
+        run: pnpm --filter @cs-bot/adapter test:acceptance
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-reports
+          path: artifacts/acceptance/
+          if-no-files-found: ignore
+
+  real-compose-nightly:
+    name: real 6-container smoke (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # 真实栈依赖外网镜像；环境不可用时脚本 skip/失败都不阻塞主干
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare .env
+        run: cp .env.template .env
+
+      - name: Real compose smoke (skips without network)
+        env:
+          REAL_COMPOSE: '1'
+        run: ./scripts/acceptance-real.sh

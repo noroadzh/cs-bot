@@ -36,3 +36,6 @@ apps/adapter/coverage/
 
 # 运行时数据（导入落盘、用量快照）
 apps/adapter/data/
+
+# 验收测试报告（生成的产物）
+artifacts/
