@@ -26,6 +26,7 @@ const adminAuth = `Basic ${Buffer.from('admin:admin-test-pwd').toString('base64'
 
 suite('独立控制面 e2e', () => {
   let admin: Pool;
+  let control: Pool;
   let app: any;
   let createdId = '';
 
@@ -35,11 +36,11 @@ suite('独立控制面 e2e', () => {
     await admin.query(`CREATE DATABASE ${DB}`);
 
     const controlUrl = dbUrl(PG_URL!, DB);
-    const pool = new Pool({ connectionString: controlUrl, max: 2 });
+    control = new Pool({ connectionString: controlUrl, max: 2 });
+    const pool = control;
     for (const f of ['007-tenant.sql', '008-control-plane.sql', '011-usage-counters.sql', '012-tenant-ports.sql']) {
       await pool.query(readFileSync(join(process.cwd(), 'src/platform', f), 'utf8'));
     }
-    await pool.end();
 
     setConfig({
       DATABASE_URL: controlUrl,
@@ -60,7 +61,8 @@ suite('独立控制面 e2e', () => {
 
   afterAll(async () => {
     if (app) await app.close();
-    await admin?.query(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`).catch(() => undefined);
+    await control?.end().catch(() => undefined);
+    // 不在 afterAll DROP：避免终止仍存活的连接产生 unhandled error；下次 beforeAll 会重建
     await admin?.end().catch(() => undefined);
     resetConfig();
   });
@@ -97,5 +99,11 @@ suite('独立控制面 e2e', () => {
       });
     expect(report.status).toBe(200);
     expect(report.body).toMatchObject({ ok: true });
+
+    const usage = await control.query(
+      'SELECT api_call_count, active_chats FROM tenant_usage_daily WHERE tenant_id = $1',
+      [createdId],
+    );
+    expect(usage.rows[0]).toMatchObject({ api_call_count: 10, active_chats: 3 });
   });
 });

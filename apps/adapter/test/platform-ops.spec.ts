@@ -15,7 +15,7 @@ import {
   isQuotaWarning,
   WebhookQuotaWarningNotifier,
 } from '../src/platform/quota-warning.js';
-import { computeFailRates } from '../src/platform/platform-monitor.js';
+import { computeFailRates, buildHealthUrl } from '../src/platform/platform-monitor.js';
 import { SubscriptionReminder, WebhookNotifier } from '../src/platform/subscription-reminder.js';
 import { PlatformAuditService } from '../src/platform/platform-audit.service.js';
 import {
@@ -96,6 +96,13 @@ describe('D10 usage report', () => {
       { payload: {}, ts: now - 6 * 86_400_000 },
     ], now);
     expect(kept).toHaveLength(1);
+  });
+});
+
+describe('instance health URL', () => {
+  it('使用 host+port+scheme 构造 healthz', () => {
+    expect(buildHealthUrl('t1.example.com', 30010)).toBe('https://t1.example.com:30010/healthz');
+    expect(buildHealthUrl('127.0.0.1', 18001, 'http')).toBe('http://127.0.0.1:18001/healthz');
   });
 });
 

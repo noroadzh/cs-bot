@@ -32,6 +32,7 @@ suite('验收：导入吞吐', () => {
       IMPORT_RULES_FILE: '',
       IMPORT_BLACKLIST_FILE: '',
       IMPORT_MAX_MESSAGES: 100_000,
+      IMPORT_MEMORY_LIMIT_MB: 4096,
       LOG_LEVEL: 'silent',
     });
     svc = new ImportJobService({} as any, new SensitiveRedactor());
@@ -45,12 +46,13 @@ suite('验收：导入吞吐', () => {
   });
 
   it('1 万条消息 ≤10 分钟完成解析与配对', async () => {
+    const runId = Date.now();
     const messages = Array.from({ length: MESSAGE_COUNT }, (_, i) => ({
       sender: i % 2 === 0 ? '客户张三' : '客服小李',
       content:
         i % 2 === 0
-          ? `这是第 ${i} 条客户问题，想咨询退款流程与到账时间`
-          : `这是第 ${i} 条客服回复，退款一般 1-3 个工作日到账，请在订单页申请`,
+          ? `[${runId}] 第 ${i} 条客户问题，想咨询退款流程与到账时间`
+          : `[${runId}] 第 ${i} 条客服回复，退款一般 1-3 个工作日到账，请在订单页申请`,
       time: i * 1000,
     }));
     const bytes = Buffer.from(JSON.stringify(messages), 'utf8');

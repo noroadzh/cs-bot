@@ -18,6 +18,7 @@ import { PlatformAuditService } from './platform-audit.service.js';
 import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantSecretStore } from './tenant-secret-store.js';
 import { TenantSecretsService } from './tenant-secrets.service.js';
+import { TenantSyncService } from './tenant-sync.service.js';
 import { ExportPackager } from './export-package.js';
 import { PlatformMonitor, HttpHealthSource } from './platform-monitor.js';
 import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
@@ -35,6 +36,7 @@ export class PlatformModule {
       providers: [
         AdminGuard,
         TenantService,
+        TenantSyncService,
         {
           provide: TenantSecretsService,
           useFactory: (store: TenantSecretStore) =>
@@ -66,10 +68,11 @@ export class PlatformModule {
           provide: PlatformMonitor,
           useFactory: () =>
             new PlatformMonitor(
-              new HttpHealthSource(
-                ConfigService.instance.DATABASE_URL,
-                ConfigService.instance.PLATFORM_HEALTH_URL_TEMPLATE,
-              ),
+              new HttpHealthSource(ConfigService.instance.DATABASE_URL, {
+                scheme: ConfigService.instance.PLATFORM_INSTANCE_SCHEME ?? 'https',
+                verifyTls: ConfigService.instance.PLATFORM_VERIFY_TLS !== false,
+                timeoutMs: ConfigService.instance.PLATFORM_INSTANCE_TIMEOUT_MS ?? 8000,
+              }),
             ),
         },
         {

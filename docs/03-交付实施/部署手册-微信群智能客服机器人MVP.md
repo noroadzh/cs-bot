@@ -500,3 +500,28 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
 ---
 
 *版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。*
+
+### 附录 A.1 租户 FastGPT 初始化与密钥更新（运营步骤）
+
+> 租户实例的 FastGPT 后台通过独立 HTTPS 端口暴露：`https://<租户域名>:<port+1>`（`port` 见 `GET /platform/tenants/:id`）。
+
+1. 开通前先写入租户密钥（不回显）：
+   ```bash
+   curl -X PUT https://<控制面>/platform/tenants/<id>/secrets \
+     -u admin:<ADMIN_PASSWORD> -H 'Content-Type: application/json' \
+     -d '{"WECHAT_CORP_ID":"...","WECHAT_AGENT_ID":"...","WECHAT_AGENT_SECRET":"...","WECHAT_TOKEN":"...","WECHAT_ENCODING_AES_KEY":"...","FASTGPT_ROOT_PASSWORD":"<自定强口令>"}'
+   ```
+2. `POST /platform/tenants/<id>/provision` 开通（会生成 DB/Redis 密码、TLS、授权证书）。
+3. 打开 `https://<租户域名>:<port+1>` 登录 FastGPT 后台（初始口令为第 1 步设置的 `FASTGPT_ROOT_PASSWORD`）：
+   - cloud：配置云端模型渠道（DeepSeek/通义）；
+   - local/hybrid：配置本地 `http://vllm:8000/v1` 或 Ollama 兼容渠道；
+   - 创建应用/API Key，记录下来。
+4. 更新 FastGPT Key 并重启租户 adapter：
+   ```bash
+   curl -X PUT https://<控制面>/platform/tenants/<id>/secrets \
+     -u admin:<ADMIN_PASSWORD> -H 'Content-Type: application/json' \
+     -d '{"FASTGPT_API_KEY":"<新 Key>"}'
+   curl -X POST https://<控制面>/platform/tenants/<id>/restart -u admin:<ADMIN_PASSWORD>
+   ```
+5. 企微后台把回调 URL 配置为 `https://<租户域名>/wecom/callback` 并完成校验。
+6. 配额/状态变更会自动同步到租户实例（内部 `/internal/tenant/sync`，Bearer token）。

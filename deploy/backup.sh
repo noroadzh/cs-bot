@@ -54,6 +54,12 @@ if [[ -d data/assets ]]; then
   tar -czf "$BACKUP_DIR/$DATE/assets_${DATE}.tar.gz" -C data assets || fail "assets"
 fi
 
+# 3b. 租户实例备份（SaaS）
+if [[ -x "$ROOT_DIR/scripts/backup-tenants.sh" ]]; then
+  log "tenant instances"
+  BACKUP_DIR="$BACKUP_DIR"   PLATFORM_COMPOSE_DIR="${PLATFORM_COMPOSE_DIR:-${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/tenants}"   "$ROOT_DIR/scripts/backup-tenants.sh" || log "tenant backup had failures"
+fi
+
 # 4. 清理旧备份
 log "cleanup old (keep ${KEEP_DAYS}d)"
 find "$BACKUP_DIR" -maxdepth 1 -type d -mtime +${KEEP_DAYS} -exec rm -rf {} +

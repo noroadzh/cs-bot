@@ -90,7 +90,7 @@ describe('ShellUpgradeDeps', () => {
 
 describe('HttpHealthSource', () => {
   it('DB 不可用/无 host → unhealthy（不抛出）', async () => {
-    const src = new HttpHealthSource('postgresql://x:x@127.0.0.1:1/none', 'http://{host}/healthz', 200);
+    const src = new HttpHealthSource('postgresql://x:x@127.0.0.1:1/none', { scheme: 'https', verifyTls: false, timeoutMs: 200 });
     await expect(src.probe('T-1')).resolves.toMatchObject({ tenantId: 'T-1', healthy: false });
     await src.close();
   });

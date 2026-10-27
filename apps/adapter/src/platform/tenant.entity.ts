@@ -73,7 +73,9 @@ export type PlatformAuditAction =
   | 'tenant.renew'
   | 'tenant.quota-set'
   | 'tenant.expired-sweep'
-  | 'tenant.paused-sweep';
+  | 'tenant.paused-sweep'
+  | 'tenant.sync'
+  | 'tenant.restart';
 
 export interface AuditAppendOpts {
   action: PlatformAuditAction;

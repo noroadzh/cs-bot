@@ -99,6 +99,7 @@ export class ShellProvisioner implements TenantProvisioner {
       '    restart: unless-stopped',
       '    ports:',
       `      - "${port}:443"`,
+      `      - "${port + 1}:8443"`,
       '    volumes:',
       `      - ${join(nginxDir, 'nginx.conf')}:/etc/nginx/nginx.conf:ro`,
       `      - ${join(nginxDir, 'certs')}:/etc/nginx/certs:ro`,
@@ -126,6 +127,8 @@ export class ShellProvisioner implements TenantProvisioner {
       '    volumes:',
       `      - ${join(dir, 'data')}:/app/data`,
       `      - ${join(dir, 'license')}:/app/license:ro`,
+      '    extra_hosts:',
+      '      - "host.docker.internal:host-gateway"',
       '    healthcheck:',
       `      test: ["CMD", "/nodejs/bin/node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]`,
       '      interval: 10s',
@@ -229,6 +232,20 @@ http {
       proxy_set_header X-Forwarded-Proto $scheme;
     }
   }
+  # 租户 FastGPT 后台（初始化/知识运营），独立端口，FastGPT 自身登录保护
+  server {
+    listen 8443 ssl;
+    server_name ${host};
+    ssl_certificate /etc/nginx/certs/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/privkey.pem;
+    location / {
+      proxy_pass http://fastgpt:3000;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+    }
+  }
 }
 `;
   }
@@ -269,6 +286,10 @@ http {
 
   async start(tenant: Tenant): Promise<void> {
     await this.compose(tenant, ['start']);
+  }
+
+  async restart(tenant: Tenant): Promise<void> {
+    await this.compose(tenant, ['restart', 'adapter']);
   }
 
   async down(tenant: Tenant, dropVols: boolean): Promise<void> {

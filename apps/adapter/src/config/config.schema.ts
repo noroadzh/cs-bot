@@ -142,7 +142,11 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LICENSE_ISSUER_OUT_DIR: EnvString.default('data/licenses'),
   PLATFORM_LICENSE_FINGERPRINT: EnvString.optional().default(''),
   PLATFORM_HEALTH_URL_TEMPLATE: EnvString.default('http://{host}/healthz'),
-  PLATFORM_TENANT_CONTROL_PLANE_URL: EnvString.optional().default(''),
+  PLATFORM_TENANT_CONTROL_PLANE_URL: EnvString.optional().default('http://host.docker.internal:3100'),
+  PLATFORM_SHARED_NETWORK: EnvString.default('csbot-control'),
+  PLATFORM_INSTANCE_SCHEME: EnvString.default('https'),
+  PLATFORM_VERIFY_TLS: EnvBool(true),
+  PLATFORM_INSTANCE_TIMEOUT_MS: EnvInt(8000),
   PLATFORM_UPGRADE_SCRIPT: EnvString.default('scripts/tenant-upgrade.sh'),
   PLATFORM_CANARY_OBSERVE_MS: EnvInt(86_400_000),
   PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),
@@ -161,6 +165,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // 当前实例所属租户（形态 B：每租户一实例）。空 = 数据面不做 tenant 配额/状态准入。
   TENANT_ID: EnvString.optional().default(''),
+  /** 控制面 → 数据面内部同步 Bearer token */
+  TENANT_SYNC_TOKEN: EnvString.optional().default(''),
   CONTROL_PLANE_URL: EnvString.optional().default(''),
   CONTROL_PLANE_TOKEN: EnvString.optional().default(''),
 

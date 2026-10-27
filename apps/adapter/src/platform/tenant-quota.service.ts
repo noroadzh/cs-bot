@@ -7,6 +7,7 @@
 
 import {
   Injectable,
+  Optional,
   OnModuleDestroy,
   HttpException,
   HttpStatus,
@@ -17,6 +18,7 @@ import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { PlatformAuditService } from './platform-audit.service.js';
+import type { TenantSyncService } from './tenant-sync.service.js';
 import { NoopQuotaPusher, type QuotaPusher } from './quota-pusher.js';
 import {
   isQuotaWarning,
@@ -66,6 +68,7 @@ export class TenantQuotaService implements OnModuleDestroy {
   constructor(
     private readonly audit: PlatformAuditService,
     _config: ConfigService,
+    @Optional() private readonly tenantSync?: TenantSyncService,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
   }
@@ -135,6 +138,7 @@ export class TenantQuotaService implements OnModuleDestroy {
     }
     const after = mapQuota(res.rows[0]);
 
+    await this.tenantSync?.sync(tenantId);
     await this.audit.append({
       action: 'tenant.quota-set',
       actor,

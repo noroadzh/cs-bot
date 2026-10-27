@@ -26,6 +26,7 @@ import { TenantUsageService } from './tenant-usage.service.js';
 import { TenantStateMachine } from './tenant.state-machine.js';
 import type { TenantProvisioner } from './provisioner/provisioner.js';
 import type { TenantSecretsService } from './tenant-secrets.service.js';
+import type { TenantSyncService } from './tenant-sync.service.js';
 import { ShellProvisioner } from './provisioner/shell-provisioner.js';
 import {
   type CertificateProvider,
@@ -89,6 +90,7 @@ export class TenantService implements OnModuleDestroy {
     private readonly usage: TenantUsageService,
     _config: ConfigService,
     @Optional() private readonly secrets?: TenantSecretsService,
+    @Optional() private readonly tenantSync?: TenantSyncService,
   ) {
     this.pool = new Pool({
       connectionString: ConfigService.instance.DATABASE_URL,
@@ -199,6 +201,12 @@ export class TenantService implements OnModuleDestroy {
     );
 
     try {
+      if (ConfigService.instance.LICENSE_ISSUER === 'shell' && !ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT) {
+        throw new BadRequestException({
+          errCode: 'LICENSE_FINGERPRINT_MISSING',
+          detail: 'PLATFORM_LICENSE_FINGERPRINT is required for shell license issuance',
+        });
+      }
       if (!tenant.port) {
         const portRes = await this.pool.query(`SELECT nextval('tenant_port_seq') AS port`);
         tenant.port = Number(portRes.rows[0]?.port ?? 30000);
@@ -274,6 +282,7 @@ export class TenantService implements OnModuleDestroy {
         tenantId,
         payload: { tenantId, instanceHost: tenant.host, instancePort: tenant.port, composeFilePath: provisionerPath(tenantId) },
       });
+      await this.tenantSync?.sync(tenantId);
 
       return this.requireTenant(tenantId);
     } catch (err) {
@@ -349,6 +358,7 @@ export class TenantService implements OnModuleDestroy {
       [tenantId, afterExpiresAt, toStatus],
     );
 
+    await this.tenantSync?.sync(tenantId);
     await this.audit.append({
       action: 'tenant.renew',
       actor,
@@ -399,6 +409,7 @@ export class TenantService implements OnModuleDestroy {
       // ignore: compose dir may not exist for created tenants
     }
 
+    await this.tenantSync?.sync(tenantId);
     await this.audit.append({
       action: 'tenant.suspend',
       actor,
@@ -442,6 +453,7 @@ export class TenantService implements OnModuleDestroy {
       // ignore; instance may need re-provision
     }
 
+    await this.tenantSync?.sync(tenantId);
     await this.audit.append({
       action: 'tenant.resume',
       actor,
@@ -588,6 +600,20 @@ export class TenantService implements OnModuleDestroy {
   /** Allow tests to inject a custom provisioner */
   setProvisioner(p: TenantProvisioner): void {
     this.provisioner = p;
+  }
+
+  /** 更新密钥后重启租户 adapter（FastGPT 初始化交接） */
+  async restart(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+    await this.provisioner.restart(tenant);
+    await this.audit.append({
+      action: 'tenant.restart',
+      actor,
+      tenantId,
+      payload: { tenantId },
+    });
+    await this.tenantSync?.sync(tenantId);
+    return tenant;
   }
 
   /** 租户实例 DB 初始化种子：本租户状态与配额（供数据面 TenantGate 本地准入） */

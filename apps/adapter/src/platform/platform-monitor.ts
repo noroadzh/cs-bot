@@ -4,6 +4,7 @@
  * 健康来源与重启动作经接口注入，便于单测。
  */
 import axios from 'axios';
+import https from 'node:https';
 import { OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 export interface InstanceHealth {
@@ -79,6 +80,10 @@ export class PlatformMonitor implements OnModuleDestroy {
  * 失败（网络/非 200）视为不健康；实例指标无法从 healthz 获取时按 0 计。
  */
 /** 从 healthz.usage 计算失败率 */
+export function buildHealthUrl(host: string, port: number, scheme = 'https'): string {
+  return `${scheme}://${host}:${port}/healthz`;
+}
+
 export function computeFailRates(usage?: {
   messagesReceived?: number;
   messagesMissed?: number;
@@ -97,24 +102,36 @@ export class HttpHealthSource implements HealthSource {
 
   constructor(
     connectionString: string,
-    private readonly template: string,
-    private readonly timeoutMs = 5000,
+    private readonly opts: {
+      scheme?: string;
+      verifyTls?: boolean;
+      timeoutMs?: number;
+    } = {},
   ) {
     this.pool = new Pool({ connectionString, max: 2 });
   }
 
   async probe(tenantId: string): Promise<InstanceHealth> {
     try {
-      const row = await this.pool.query<{ host: string | null }>(
-        'SELECT host FROM tenant WHERE id = $1 AND deleted_at IS NULL',
+      const row = await this.pool.query<{ host: string | null; port: number | null }>(
+        'SELECT host, port FROM tenant WHERE id = $1 AND deleted_at IS NULL',
         [tenantId],
       );
       const host = row.rows[0]?.host;
-      if (!host) {
+      const port = Number(row.rows[0]?.port ?? 0);
+      if (!host || !port) {
         return { tenantId, healthy: false, qaFailRate: 0, llmFailRate: 0 };
       }
-      const url = this.template.replace('{host}', host);
-      const resp = await axios.get(url, { timeout: this.timeoutMs });
+      const scheme = this.opts.scheme ?? 'https';
+      const url = buildHealthUrl(host, port, scheme);
+      const httpsAgent =
+        scheme === 'https'
+          ? new https.Agent({ rejectUnauthorized: this.opts.verifyTls !== false })
+          : undefined;
+      const resp = await axios.get(url, {
+        timeout: this.opts.timeoutMs ?? 5000,
+        httpsAgent,
+      });
       const rates = computeFailRates(resp.data?.usage);
       return {
         tenantId,

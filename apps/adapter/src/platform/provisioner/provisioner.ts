@@ -17,6 +17,8 @@ export interface TenantProvisioner {
   stop(tenant: Tenant): Promise<void>;
   /** docker compose start */
   start(tenant: Tenant): Promise<void>;
+  /** 重启 adapter（更新密钥后生效） */
+  restart(tenant: Tenant): Promise<void>;
   /** docker compose down [-v] */
   down(tenant: Tenant, dropVols: boolean): Promise<void>;
 }

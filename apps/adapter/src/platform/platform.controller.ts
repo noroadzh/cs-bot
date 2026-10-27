@@ -123,6 +123,13 @@ export class PlatformController {
     return { ok: true, updated };
   }
 
+  @Post('tenants/:id/restart')
+  @ApiOperation({ summary: '重启租户 adapter（更新密钥/FastGPT 初始化后生效）' })
+  async restartTenant(@Param('id') id: string, @Req() req: Request) {
+    await this.tenants.restart(id, this.actor(req));
+    return { ok: true };
+  }
+
   @Post('tenants/:id/provision')
   @ApiOperation({ summary: '编排开通租户实例（docker compose up + probe）' })
   async provision(@Param('id') id: string, @Req() req: Request) {

@@ -120,6 +120,14 @@ describe('ShellProvisioner 命令组装', () => {
     expect(argv.slice(-1)).toEqual(['start']);
   });
 
+  it('restart → compose restart adapter', async () => {
+    const t = tenant();
+    childExits(0);
+    await p.restart(t);
+    const [, argv] = spawnMock.mock.calls.at(-1) as [string, string[]];
+    expect(argv.slice(-2)).toEqual(['restart', 'adapter']);
+  });
+
   it('down(false) → compose down；down(true) → compose down -v', async () => {
     const t = tenant();
     childExits(0);
@@ -201,6 +209,10 @@ describe('ShellProvisioner.render', () => {
     expect(content).toContain('name: csbot-t-' + t.id);
     expect(content).toContain('TENANT_ID=' + t.id);
     expect(content).toContain('"18001:443"');
+    expect(content).toContain('"18002:8443"');
+    const nginxCall = fsWriteFile.mock.calls.find(([p]) => String(p).endsWith('nginx.conf')) as [string, string];
+    expect(nginxCall[1]).toContain('listen 8443 ssl;');
+    expect(nginxCall[1]).toContain('proxy_pass http://fastgpt:3000;');
     // 六服务与资源隔离（概设 M11）
     const net = 'csbot-t-' + t.id + '-net';
     expect(content).toContain(net);

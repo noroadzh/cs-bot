@@ -16,6 +16,7 @@ import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { TenantStateMachine } from './tenant.state-machine.js';
 import { SubscriptionReminder } from './subscription-reminder.js';
+import type { TenantSyncService } from './tenant-sync.service.js';
 import { Optional } from '@nestjs/common';
 import { PlatformAuditService } from './platform-audit.service.js';
 import type { Tenant, TenantStatus } from './tenant.entity.js';
@@ -44,6 +45,7 @@ export class TenantExpirySweepService implements OnModuleDestroy {
     private readonly audit: PlatformAuditService,
     _config: ConfigService,
     @Optional() private readonly reminder?: SubscriptionReminder,
+    @Optional() private readonly tenantSync?: TenantSyncService,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
   }
@@ -196,6 +198,9 @@ export class TenantExpirySweepService implements OnModuleDestroy {
       }
     }
 
+    for (const id of [...result.expiredToGrace, ...result.graceToPaused]) {
+      await this.tenantSync?.sync(id);
+    }
     return result;
   }
 

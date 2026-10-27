@@ -23,6 +23,7 @@ import { AdminModule } from './admin/admin.module.js';
 import { HealthModule } from './health/health.module.js';
 import { ImportModule } from './import/import.module.js';
 import { PlatformModule } from './platform/platform.module.js';
+import { InternalModule } from './internal/internal.module.js';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { PlatformModule } from './platform/platform.module.js';
     HealthModule,
     ImportModule,
     PlatformModule.forRoot(),
+    InternalModule,
   ],
   providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
 })

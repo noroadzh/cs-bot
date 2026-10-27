@@ -59,6 +59,9 @@ services:
     restart: unless-stopped
     user: "${CSBOT_UID:-0}:${CSBOT_GID:-0}"
     command: ["apps/adapter/dist/control-plane-main.js"]
+    ports:
+      - "${CONTROL_PLANE_BIND:-0.0.0.0}:3100:3100"
+
     env_file:
       - ../.env
     environment:
