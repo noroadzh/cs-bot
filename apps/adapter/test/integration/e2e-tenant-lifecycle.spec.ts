@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, jest } from '@jest/globals';
 import { Pool } from 'pg';
+import { applyMigrations } from '../__setup__/migrations.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -20,32 +21,6 @@ import { tmpdir } from 'node:os';
 
 const PG_URL = process.env.TEST_PG_URL;
 const suite = PG_URL ? describe : describe.skip;
-
-const SRC = join(process.cwd(), 'src');
-
-async function applyMigrations(pool: Pool): Promise<void> {
-  const { readdirSync, readFileSync } = await import('node:fs');
-  const files: { seq: string; path: string }[] = [];
-  for (const dir of readdirSync(SRC, { withFileTypes: true })) {
-    if (!dir.isDirectory()) continue;
-    const full = join(SRC, dir.name);
-    for (const f of readdirSync(full)) {
-      const m = /^(\d{3})-.*\.sql$/.exec(f);
-      if (m) files.push({ seq: m[1], path: join(full, f) });
-    }
-  }
-  files.sort((a, b) => a.seq.localeCompare(b.seq));
-  for (const { path } of files) {
-    try {
-      await pool.query(readFileSync(path, 'utf8'));
-    } catch (err) {
-      // 非幂等 DDL（ALTER TABLE ... ADD CONSTRAINT）重复执行时忽略
-      const msg = (err as Error).message || '';
-      if (/already exists|duplicate/i.test(msg)) continue;
-      throw err;
-    }
-  }
-}
 
 suite('7.2 租户全生命周期端到端（真实 PG + 假 docker）', () => {
   jest.setTimeout(30_000);

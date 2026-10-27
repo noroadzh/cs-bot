@@ -13,27 +13,10 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from '@jest/globals';
 import { Pool } from 'pg';
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { applyMigrations } from '../__setup__/migrations.js';
 
 const PG_URL = process.env.TEST_PG_URL;
 const suite = PG_URL ? describe : describe.skip;
-
-const SRC = join(process.cwd(), 'src');
-
-/** 收集所有追加式迁移 SQL，按编号升序 */
-function migrationFiles(): string[] {
-  const files: { seq: string; path: string }[] = [];
-  for (const dir of readdirSync(SRC, { withFileTypes: true })) {
-    if (!dir.isDirectory()) continue;
-    const full = join(SRC, dir.name);
-    for (const f of readdirSync(full)) {
-      const m = /^(\d{3})-.*\.sql$/.exec(f);
-      if (m) files.push({ seq: m[1], path: join(full, f) });
-    }
-  }
-  return files.sort((a, b) => a.seq.localeCompare(b.seq)).map((x) => x.path);
-}
 
 suite('TenantQuotaService 真实 PG 并发竞争（5.1）', () => {
   let pool: Pool;
@@ -42,10 +25,7 @@ suite('TenantQuotaService 真实 PG 并发竞争（5.1）', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: PG_URL, max: 10 });
     // 应用迁移（幂等 DDL）
-    for (const file of migrationFiles()) {
-      const sql = readFileSync(file, 'utf8');
-      await pool.query(sql);
-    }
+    await applyMigrations(pool);
     ({ consumeQuota } = await import('../../src/platform/tenant-quota.service.js'));
   });
 

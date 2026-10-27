@@ -6,16 +6,17 @@
  *
  * 验收口径：P95 ≤ 8000ms、失败请求 0。回调为异步 ack 模型，
  * 该延迟衡量的是 webhook 应答时延（企微侧重试阈值），不是完整 QA 时延。
+ * 另一个阶段以 20/min 群限流重启应用，验证 ab 压测下限流确实生效并写入报告。
  *
  * 依赖：TEST_PG_URL；本机需安装 ab（ApacheBench）。缺失则 skip。
  */
 import { describe, it, expect, beforeAll, afterAll, jest } from '@jest/globals';
 import { Test } from '@nestjs/testing';
 import { Pool } from 'pg';
+import { applyMigrations } from '../__setup__/migrations.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
-import { readdirSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AppModule } from '../../src/app.module.js';
@@ -63,27 +64,6 @@ jest.mock('axios', () => {
   const factory = () => api;
   return { create: factory, default: { create: factory } };
 });
-
-async function applyMigrations(pool: Pool): Promise<void> {
-  const src = join(process.cwd(), 'src');
-  const files: { seq: string; path: string }[] = [];
-  for (const dir of readdirSync(src, { withFileTypes: true })) {
-    if (!dir.isDirectory()) continue;
-    for (const f of readdirSync(join(src, dir.name))) {
-      const m = /^(\d{3})-.*\.sql$/.exec(f);
-      if (m) files.push({ seq: m[1], path: join(src, dir.name, f) });
-    }
-  }
-  files.sort((a, b) => a.seq.localeCompare(b.seq));
-  for (const { path } of files) {
-    try {
-      await pool.query(readFileSync(path, 'utf8'));
-    } catch (err) {
-      if (/already exists|duplicate/i.test((err as Error).message)) continue;
-      throw err;
-    }
-  }
-}
 
 function num(re: RegExp, text: string): number | null {
   const m = re.exec(text);
@@ -193,6 +173,8 @@ suite('验收：ab 压测 /wecom/callback', () => {
     const report = {
       generatedAt: new Date().toISOString(),
       tool: 'ab',
+      environment: 'mock',
+      note: 'mock 全栈口径，不代表生产容量；回调为异步 ack，延迟为 webhook 应答时延',
       url: '/wecom/callback',
       requests: REQUESTS,
       concurrency: CONCURRENCY,
@@ -208,8 +190,10 @@ suite('验收：ab 压测 /wecom/callback', () => {
     await writeFile(
       join(outDir, `ab-report-${stamp}.txt`),
       [
-        `# ab acceptance report`,
+        `# ab acceptance report (mock full stack)`,
         `generatedAt: ${report.generatedAt}`,
+        `environment=${report.environment}`,
+        `note=${report.note}`,
         `requests=${REQUESTS} concurrency=${CONCURRENCY}`,
         `throughput=${rps} req/s`,
         `mean=${meanMs} ms`,
@@ -240,5 +224,136 @@ suite('验收：ab 压测 /wecom/callback', () => {
     }
     expect(g.chatCalls).toBeGreaterThanOrEqual(1);
     expect(g.sendCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('3.3 限流阶段：ab 同群高频 → 实际回复受 20/min 限制，报告记录 limiterEngaged', async () => {
+    if (!abAvailable) return;
+    const GROUP_LIMIT = 20;
+    const USER_LIMIT = 5;
+
+    // 第二个 app：20/min 群限流 + 30 个轮换用户（避免先撞单人 5/min）
+    setConfig({
+      DATABASE_URL: PG_URL,
+      USE_MOCK_LLM: false,
+      USE_MOCK_LICENSE: true,
+      CONFIDENCE_THRESHOLD: 0.75,
+      SEGMENT_GAP_MS: 0,
+      RATE_USER_PER_MIN: USER_LIMIT,
+      RATE_GROUP_PER_MIN: GROUP_LIMIT,
+      LOG_LEVEL: 'silent',
+      MOCK_QA_FILE: '',
+      KEYWORDS_FILE: '',
+      WECHAT_BOT_USER_ID: '',
+      LICENSE_FILE: '/tmp/csbot-acceptance-no-license.lic',
+      MODEL_MODE: 'cloud',
+    });
+    let seq = 0;
+    const limiterCrypto = {
+      randomUUID: () => `trace-limiter-${++seq}`,
+      decryptMsg: async () => 'plain',
+      parseXml: async () => {
+        const n = ++seq;
+        return {
+          ToUserName: 'corp',
+          FromUserName: `ab-limiter-user-${n % 30}`,
+          ChatId: 'ab-chat-limiter',
+          MsgType: 'text',
+          Content: '限流压测问题',
+          MsgId: `ab-limiter-${n}`,
+          CreateTime: Math.floor(Date.now() / 1000),
+          mentioned: true,
+        };
+      },
+    };
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(WecomCrypto)
+      .useValue(limiterCrypto)
+      .compile();
+    const app2 = moduleRef.createNestApplication();
+    await app2.init();
+    await app2.listen(0);
+
+    try {
+      const addr = app2.getHttpServer().address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      expect(port).toBeGreaterThan(0);
+      const url = `http://127.0.0.1:${port}/wecom/callback?msg_signature=sig&timestamp=1&nonce=1`;
+
+      const g = (globalThis as any).__ax;
+      const baseChat = g.chatCalls;
+      const baseSend = g.sendCalls;
+      const minuteStart = Math.floor(Date.now() / 60_000);
+
+      const { stdout, stderr } = await execFileP(
+        'ab',
+        ['-n', String(REQUESTS), '-c', String(CONCURRENCY), '-p', payloadPath, '-T', 'application/json', url],
+        { maxBuffer: 10 * 1024 * 1024 },
+      );
+      const out = `${stdout}\n${stderr}`;
+      const minuteEnd = Math.floor(Date.now() / 60_000);
+      const minuteBuckets = minuteEnd - minuteStart + 1;
+
+      // 等待异步 dispatch 稳定（最多 8s）
+      let last = -1;
+      let stableSince = Date.now();
+      const settleStart = Date.now();
+      while (Date.now() - settleStart < 8000) {
+        if (g.chatCalls !== last) {
+          last = g.chatCalls;
+          stableSince = Date.now();
+        } else if (Date.now() - stableSince > 500) break;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      const processed = g.chatCalls - baseChat;
+      const sent = g.sendCalls - baseSend;
+      const maxAllowed = GROUP_LIMIT * minuteBuckets;
+      const limiterEngaged = processed > 0 && processed < REQUESTS;
+
+      const outDir = join(process.cwd(), '..', '..', 'artifacts', 'acceptance');
+      await mkdir(outDir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const report = {
+        generatedAt: new Date().toISOString(),
+        tool: 'ab',
+        environment: 'mock',
+        note: 'limiter phase: same group, 30 cycling users; not production capacity',
+        phase: 'rate-limit',
+        requests: REQUESTS,
+        concurrency: CONCURRENCY,
+        groupLimitPerMin: GROUP_LIMIT,
+        userLimitPerMin: USER_LIMIT,
+        minuteBuckets,
+        processedMessages: processed,
+        sentMessages: sent,
+        limiterEngaged,
+        passed: limiterEngaged && processed <= maxAllowed,
+      };
+      await writeFile(join(outDir, `ab-limiter-report-${stamp}.json`), JSON.stringify(report, null, 2), 'utf8');
+      await writeFile(
+        join(outDir, `ab-limiter-report-${stamp}.txt`),
+        [
+          '# ab acceptance report (rate-limit phase, mock)',
+          `generatedAt: ${report.generatedAt}`,
+          `requests=${REQUESTS} concurrency=${CONCURRENCY}`,
+          `groupLimit=${GROUP_LIMIT}/min userLimit=${USER_LIMIT}/min`,
+          `processedMessages=${processed} sentMessages=${sent}`,
+          `minuteBuckets=${minuteBuckets} maxAllowed=${maxAllowed}`,
+          `limiterEngaged=${limiterEngaged}`,
+          `passed=${report.passed}`,
+          '',
+          '## raw ab output',
+          out,
+        ].join('\n'),
+        'utf8',
+      );
+
+      expect(processed).toBeGreaterThan(0);
+      expect(limiterEngaged).toBe(true);
+      expect(processed).toBeLessThanOrEqual(maxAllowed);
+      expect(sent).toBeLessThanOrEqual(maxAllowed);
+    } finally {
+      await app2.close().catch(() => undefined);
+    }
   });
 });

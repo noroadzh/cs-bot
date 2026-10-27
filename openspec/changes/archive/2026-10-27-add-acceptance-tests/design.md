@@ -53,3 +53,14 @@
 
 - FastGPT mock 的响应需覆盖：命中（高分）、低分拒答、超时/5xx 降级三类。
 - ab 压测的目标并发量（建议与 SLO 并发档位对齐，如 20/50）。
+
+## Implementation Notes (2026-10-27, post-verify)
+
+- **D1 偏差（已接受）**：FastGPT mock 落在 axios 层（`jest.mock('axios')`），未起独立 HTTP mock server。
+  覆盖引擎调用契约与三态（高分/低分/超时-5xx），但不覆盖 axios/HTTP 配置本身；
+  真实 HTTP 行为由可选 6 容器冒烟兜底。
+- **D3 补强**：ab 阶段仍用 fake crypto 注入；另增 `test/acceptance/callback-signature.spec.ts`，
+  按 WXBizMsgCrypt 规范构造 AES-CBC 密文 + SHA1 签名，真实走「验签 → 解密 → XML 解析」HTTP 回调。
+- **限流报告**：`load.spec.ts` 增加 20/min 群限流阶段（200 请求 / 30 轮换用户），
+  报告 `ab-limiter-report-*.json` 记录 `processedMessages` 与 `limiterEngaged`。
+- **运行说明**：`test:acceptance` 带 `--forceExit`（native license N-API 的 CustomGC 句柄不释放）。

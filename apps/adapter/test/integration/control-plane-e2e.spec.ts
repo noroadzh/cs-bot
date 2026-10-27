@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { Pool } from 'pg';
+import { applyMigrations } from '../__setup__/migrations.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -22,28 +23,6 @@ import { setConfig, resetConfig } from '../__setup__/test-helpers.js';
 
 const PG_URL = process.env.TEST_PG_URL;
 const suite = PG_URL ? describe : describe.skip;
-
-async function applyMigrations(pool: Pool): Promise<void> {
-  const { readdirSync, readFileSync } = await import('node:fs');
-  const src = join(process.cwd(), 'src');
-  const files: { seq: string; path: string }[] = [];
-  for (const dir of readdirSync(src, { withFileTypes: true })) {
-    if (!dir.isDirectory()) continue;
-    for (const f of readdirSync(join(src, dir.name))) {
-      const m = /^(\d{3})-.*\.sql$/.exec(f);
-      if (m) files.push({ seq: m[1], path: join(src, dir.name, f) });
-    }
-  }
-  files.sort((a, b) => a.seq.localeCompare(b.seq));
-  for (const { path } of files) {
-    try {
-      await pool.query(readFileSync(path, 'utf8'));
-    } catch (err) {
-      if (/already exists|duplicate/i.test((err as Error).message)) continue;
-      throw err;
-    }
-  }
-}
 
 suite('M11 控制面 e2e', () => {
   let pool: Pool;
