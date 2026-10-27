@@ -78,6 +78,8 @@ export const MOCK_CONFIG = {
   PLATFORM_CERT_DIR: 'data/tenants/certs',
   LICENSE_ISSUER: 'noop',
   LICENSE_ISSUER_BIN: 'tools/license-issuer/license-issuer',
+  LICENSE_ISSUER_KEY: '',
+  LICENSE_ISSUER_OUT_DIR: 'data/licenses',
   PLATFORM_HEALTH_URL_TEMPLATE: 'http://{host}/healthz',
   PLATFORM_UPGRADE_SCRIPT: 'scripts/tenant-upgrade.sh',
   PLATFORM_CANARY_OBSERVE_MS: 0,

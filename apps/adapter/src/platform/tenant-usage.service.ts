@@ -5,7 +5,7 @@
  * - queryUsage: 区间查询 + totals
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
@@ -19,7 +19,7 @@ const USAGE_COLUMNS = [
 ] as const;
 
 @Injectable()
-export class TenantUsageService {
+export class TenantUsageService implements OnModuleDestroy {
   private readonly logger = new AppLogger('TenantUsageService');
   private readonly pool: Pool;
 
@@ -137,6 +137,11 @@ export class TenantUsageService {
     if (res.rows.length > 0) return mapUsageRow(res.rows[0]);
     return { day: new Date().toISOString().slice(0, 10), chatCount: 0, apiCallCount: 0, storageBytes: 0, userCount: 0 };
   }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
+  }
+
 }
 
 function mapUsageRow(row: Record<string, unknown>): UsageDayRow {

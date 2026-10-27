@@ -11,6 +11,8 @@ import {
   Param,
   Patch,
   Post,
+  HttpCode,
+  HttpStatus,
   Query,
   Req,
   UseGuards,
@@ -230,6 +232,7 @@ export class PlatformController {
   // -----------------------------------------------------------------------
 
   @Post('report')
+  @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: '适配层用量上报（仅计数，无正文）' })
   async report(@Body() body: Record<string, unknown>) {
     const tenantId = String(body.tenantId ?? '');

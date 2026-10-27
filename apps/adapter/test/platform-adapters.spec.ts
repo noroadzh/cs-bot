@@ -57,10 +57,12 @@ describe('ShellLicenseIssuer', () => {
     const out = join(dir, 'issued.txt');
     await writeFile(join(dir, 'bin.sh'), `#!/bin/sh\nprintf '%s\\n' "$@" > ${out}\n`);
     await chmod(join(dir, 'bin.sh'), 0o755);
-    const issuer = new ShellLicenseIssuer(join(dir, 'bin.sh'));
+    const key = join(dir, 'issuer.pem');
+    await writeFile(key, 'KEY');
+    const issuer = new ShellLicenseIssuer(join(dir, 'bin.sh'), key);
     await issuer.issue({ id: 'T-1', host: 't1.example.com' });
     const args = (await readFile(out, 'utf8')).trim().split('\n');
-    expect(args).toEqual(['issue', '--tenant', 'T-1', '--host', 't1.example.com']);
+    expect(args).toEqual(['issue', '--tenant', 'T-1', '--host', 't1.example.com', '--key', key]);
   }, 20_000);
 });
 

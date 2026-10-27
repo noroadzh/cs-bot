@@ -57,6 +57,7 @@ RUN pnpm install --frozen-lockfile
 COPY packages/ packages/
 COPY apps/adapter/ apps/adapter/
 COPY config/ config/
+COPY scripts/ scripts/
 COPY tsconfig.base.json ./
 
 # 编译
@@ -124,6 +125,7 @@ COPY --from=builder /app/apps/adapter/src/media/010-asset-md5.sql /app/migrate/0
 COPY --from=builder /app/apps/adapter/src/platform/011-usage-counters.sql /app/migrate/012-usage-counters.sql
 COPY --from=builder /app/apps/adapter/src/platform/008-control-plane.sql /app/migrate/009-control-plane.sql
 COPY --from=builder /app/config /app/config
+COPY --from=builder /app/scripts /app/scripts
 
 ENV NODE_ENV=production
 ENV PORT=3000

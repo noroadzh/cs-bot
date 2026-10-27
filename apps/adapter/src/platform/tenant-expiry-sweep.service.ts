@@ -9,7 +9,7 @@
  * 每次自动转移写一条审计，actor 固定 'system:sweep'。
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Cron, Interval } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
@@ -36,7 +36,7 @@ export interface SweepResult {
 }
 
 @Injectable()
-export class TenantExpirySweepService {
+export class TenantExpirySweepService implements OnModuleDestroy {
   private readonly logger = new AppLogger('TenantExpirySweepService');
   private readonly pool: Pool;
 
@@ -209,6 +209,11 @@ export class TenantExpirySweepService {
     );
     return res.rows.length > 0 ? mapTenantRow(res.rows[0]) : null;
   }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
+  }
+
 }
 
 export function mapTenantRow(row: Record<string, unknown>): Tenant {

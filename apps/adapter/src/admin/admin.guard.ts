@@ -22,6 +22,15 @@ export class AdminGuard implements CanActivate {
 
   canActivate(ctx: ExecutionContext): boolean {
     const req = ctx.switchToHttp().getRequest<Request>();
+    const authHeader = req.headers.authorization ?? '';
+    // 数据面用量上报：/platform/report 允许 CONTROL_PLANE_TOKEN Bearer 认证
+    if (
+      String(req.path ?? req.url ?? '').endsWith('/platform/report') &&
+      this.cfg.CONTROL_PLANE_TOKEN &&
+      authHeader === `Bearer ${this.cfg.CONTROL_PLANE_TOKEN}`
+    ) {
+      return true;
+    }
     const ip = (req.ip ?? '').replace('::ffff:', '');
     const allowed = this.cfg.ALLOWED_ADMIN_IPS.split(',').map((s) => s.trim()).filter(Boolean);
     if (allowed.length > 0 && !allowed.some((cidr) => inCidr(ip, cidr))) {

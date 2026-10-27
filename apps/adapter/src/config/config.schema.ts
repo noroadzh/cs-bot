@@ -138,6 +138,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_CERT_CMD: EnvString.optional().default(''),
   LICENSE_ISSUER: EnvString.default('noop'),
   LICENSE_ISSUER_BIN: EnvString.default('tools/license-issuer/license-issuer'),
+  LICENSE_ISSUER_KEY: EnvString.optional().default(''),
+  LICENSE_ISSUER_OUT_DIR: EnvString.default('data/licenses'),
   PLATFORM_HEALTH_URL_TEMPLATE: EnvString.default('http://{host}/healthz'),
   PLATFORM_UPGRADE_SCRIPT: EnvString.default('scripts/tenant-upgrade.sh'),
   PLATFORM_CANARY_OBSERVE_MS: EnvInt(86_400_000),

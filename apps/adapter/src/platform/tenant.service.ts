@@ -7,6 +7,7 @@
 
 import {
   Injectable,
+  OnModuleDestroy,
   HttpException,
   HttpStatus,
   ConflictException,
@@ -68,14 +69,14 @@ function selectLicenseIssuer(cfg: typeof ConfigService.instance): LicenseIssuer 
     case 'noop':
       return new NoopLicenseIssuer();
     case 'shell':
-      return new ShellLicenseIssuer(cfg.LICENSE_ISSUER_BIN);
+      return new ShellLicenseIssuer(cfg.LICENSE_ISSUER_BIN, cfg.LICENSE_ISSUER_KEY, cfg.LICENSE_ISSUER_OUT_DIR);
     default:
       throw new Error(`unsupported LICENSE_ISSUER="${cfg.LICENSE_ISSUER}" (supported: shell, noop)`);
   }
 }
 
 @Injectable()
-export class TenantService {
+export class TenantService implements OnModuleDestroy {
   private readonly logger = new AppLogger('TenantService');
   private readonly pool: Pool;
   private provisioner: TenantProvisioner;
@@ -560,6 +561,11 @@ export class TenantService {
   setProvisioner(p: TenantProvisioner): void {
     this.provisioner = p;
   }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
+  }
+
 }
 
 function mapTenantRow(row: Record<string, unknown>): Tenant {

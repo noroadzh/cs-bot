@@ -7,6 +7,7 @@
 
 import {
   Injectable,
+  OnModuleDestroy,
   HttpException,
   HttpStatus,
   NotFoundException,
@@ -58,7 +59,7 @@ export interface QuotaConsumeResult {
 }
 
 @Injectable()
-export class TenantQuotaService {
+export class TenantQuotaService implements OnModuleDestroy {
   private readonly logger = new AppLogger('TenantQuotaService');
   private readonly pool: Pool;
 
@@ -223,6 +224,11 @@ export class TenantQuotaService {
       this.logger.warn({ detail: 'quota-warning-fail', tenantId, kind, err: (err as Error).message });
     }
   }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
+  }
+
 }
 
 const CONSUME_SPEC: Record<

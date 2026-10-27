@@ -3,7 +3,7 @@
  *
  * 默认实现可替换：ACME/DNS、预置证书文件、测试 fake。
  */
-import { readFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -66,13 +66,24 @@ export class NoopLicenseIssuer implements LicenseIssuer {
 
 /** 生产：调用交付侧签发 CLI（默认 tools/license-issuer/license-issuer） */
 export class ShellLicenseIssuer implements LicenseIssuer {
-  constructor(private readonly bin: string, private readonly timeoutMs = 60_000) {}
+  constructor(
+    private readonly bin: string,
+    private readonly keyPath = '',
+    private readonly outDir = '',
+    private readonly timeoutMs = 60_000,
+  ) {}
 
   async issue(tenant: { id: string; host: string | null }): Promise<void> {
-    await execFileP(
-      this.bin,
-      ['issue', '--tenant', tenant.id, '--host', tenant.host ?? ''],
-      { timeout: this.timeoutMs },
-    );
+    if (this.keyPath === '') throw new Error('LICENSE_ISSUER_KEY is required for shell issuer');
+    const args = ['issue', '--tenant', tenant.id, '--host', tenant.host ?? '', '--key', this.keyPath];
+    // distroless/无 /usr/bin/env 时，.mjs/.js 需显式用当前 node 解释
+    const res = /\.(mjs|c?js)$/.test(this.bin)
+      ? await execFileP(process.execPath, [this.bin, ...args], { timeout: this.timeoutMs })
+      : await execFileP(this.bin, args, { timeout: this.timeoutMs });
+    if (this.outDir !== '' && typeof res.stdout === 'string' && res.stdout.trim() !== '') {
+      const dir = `${this.outDir}/${tenant.id}/license`;
+      await mkdir(dir, { recursive: true });
+      await writeFile(`${dir}/license.lic`, res.stdout.trim(), { mode: 0o600 });
+    }
   }
 }

@@ -8,7 +8,7 @@
  *   4. verifyChain 全链重算，返回第一个断裂点
  */
 
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { createHash } from 'crypto';
@@ -46,7 +46,7 @@ export interface AuditVerifyResult {
 }
 
 @Injectable()
-export class PlatformAuditService {
+export class PlatformAuditService implements OnModuleDestroy {
   private readonly logger = new AppLogger('PlatformAuditService');
   private readonly pool: Pool;
 
@@ -221,6 +221,11 @@ export class PlatformAuditService {
 
     return { valid: true, entries: rows.length };
   }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.end().catch(() => undefined);
+  }
+
 }
 
 // ---------------------------------------------------------------------------

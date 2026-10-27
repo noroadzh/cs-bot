@@ -32,6 +32,10 @@ services:
       REDIS_PORT: "6379"
       DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${POSTGRES_DB:-csbot}
       LOG_FILE: /app/logs/adapter.log
+      # SaaS：控制面独立进程；数据面不再暴露 /platform
+      PLATFORM_ENABLED: "false"
+      CONTROL_PLANE_URL: http://control-plane:3100
+      CONTROL_PLANE_TOKEN: ${CONTROL_PLANE_TOKEN:-}
     volumes:
       # 数据持久化：素材、导入、用量快照、上报缓冲
       - ../data:/app/data
@@ -42,6 +46,40 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      pg:
+        condition: service_healthy
+    networks:
+      - csbot
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.adapter
+    image: cs-bot-control-plane:latest
+    restart: unless-stopped
+    user: "${CSBOT_UID:-0}:${CSBOT_GID:-0}"
+    command: ["apps/adapter/dist/control-plane-main.js"]
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${CONTROL_PLANE_DB:-csbot_control}
+      PORT: "3100"
+      PLATFORM_ENABLED: "true"
+      CONTROL_PLANE_TOKEN: ${CONTROL_PLANE_TOKEN:-}
+      PLATFORM_TLS_PROVIDER: ${PLATFORM_TLS_PROVIDER:-file}
+      PLATFORM_CERT_DIR: /app/data/certs
+      PLATFORM_COMPOSE_DIR: /app/data/tenants
+      LICENSE_ISSUER: ${LICENSE_ISSUER:-shell}
+      LICENSE_ISSUER_BIN: /app/tools/license-issuer/license-issuer.mjs
+      LICENSE_ISSUER_KEY: /app/tools/license-issuer/issuer-private.pem
+      LICENSE_ISSUER_OUT_DIR: /app/data/licenses
+      PLATFORM_UPGRADE_SCRIPT: /app/scripts/tenant-upgrade.sh
+      LOG_FILE: /app/logs/control-plane.log
+    volumes:
+      - ../data/control:/app/data
+      - ../logs/control-plane:/app/logs
+      - ../tools/license-issuer:/app/tools/license-issuer:ro
+    depends_on:
       pg:
         condition: service_healthy
     networks:
@@ -86,6 +124,10 @@ services:
       - ../apps/adapter/src/miss/009-miss-media-status.sql:/docker-entrypoint-initdb.d/10-miss-media-status.sql:ro
       - ../apps/adapter/src/media/010-asset-md5.sql:/docker-entrypoint-initdb.d/11-asset-md5.sql:ro
       - ../apps/adapter/src/platform/011-usage-counters.sql:/docker-entrypoint-initdb.d/12-usage-counters.sql:ro
+      - ./init-control-db.sh:/docker-entrypoint-initdb.d/00-control-db.sh:ro
+      - ../apps/adapter/src/platform/007-tenant.sql:/control-migrations/01-tenant.sql:ro
+      - ../apps/adapter/src/platform/008-control-plane.sql:/control-migrations/02-control-plane.sql:ro
+      - ../apps/adapter/src/platform/011-usage-counters.sql:/control-migrations/03-usage-counters.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/docker-entrypoint-initdb.d/09-control-plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]

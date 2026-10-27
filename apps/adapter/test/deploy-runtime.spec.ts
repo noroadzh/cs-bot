@@ -28,4 +28,12 @@ describe('adapter runtime mounts', () => {
   it('adapter 用户可由 CSBOT_UID/GID 覆盖', () => {
     expect(compose).toContain('user: "${CSBOT_UID:-0}:${CSBOT_GID:-0}"');
   });
+
+  it('独立控制面服务与独立数据库', () => {
+    expect(compose).toContain('control-plane:');
+    expect(compose).toContain('command: ["apps/adapter/dist/control-plane-main.js"]');
+    expect(compose).toContain('csbot_control');
+    expect(compose).toContain('init-control-db.sh');
+    expect(dockerfile).toContain('COPY --from=builder /app/scripts /app/scripts');
+  });
 });

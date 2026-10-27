@@ -8,7 +8,7 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
-import { AdminModule } from '../admin/admin.module.js';
+import { AdminGuard } from '../admin/admin.guard.js';
 import { ConfigService } from '../config/config.service.js';
 import { PlatformController } from './platform.controller.js';
 import { TenantService } from './tenant.service.js';
@@ -29,9 +29,10 @@ export class PlatformModule {
   static forRoot(): DynamicModule {
     return {
       module: PlatformModule,
-      imports: [AdminModule],
+      imports: [],
       controllers: [PlatformController],
       providers: [
+        AdminGuard,
         TenantService,
         TenantQuotaService,
         TenantUsageService,

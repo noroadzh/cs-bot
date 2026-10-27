@@ -4,6 +4,7 @@
  * 健康来源与重启动作经接口注入，便于单测。
  */
 import axios from 'axios';
+import { OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 export interface InstanceHealth {
   tenantId: string;
@@ -26,7 +27,7 @@ export interface PlatformOverview {
   avgLlmFailRate: number;
 }
 
-export class PlatformMonitor {
+export class PlatformMonitor implements OnModuleDestroy {
   constructor(
     private readonly source: HealthSource,
     private readonly restart?: (tenantId: string) => Promise<void>,
@@ -50,6 +51,10 @@ export class PlatformMonitor {
       avgLlmFailRate: instances.reduce((s, i) => s + i.llmFailRate, 0) / n,
     };
     return { overview, instances };
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await (this.source as { close?: () => Promise<void> }).close?.().catch(() => undefined);
   }
 
   /** 对异常实例执行重启（若注入了重启动作） */
