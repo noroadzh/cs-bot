@@ -115,6 +115,14 @@ export class WecomController {
     // 12.2 Increment messagesReceived for every valid incoming message
     this.usageService.increment('messagesReceived');
 
+    // 群聊强校验：缺少 ChatId 时无法定位群，禁止回退到私聊
+    if ((ConfigService.instance.REQUIRE_GROUP_CHAT_ID ?? true) && !msg.ChatId) {
+      this.usageService.increment('messagesDroppedNoChatId');
+      this.logger.warn({ traceId, msgId: msg.MsgId, detail: 'missing-chat-id' });
+      res.status(HttpStatus.OK).send('');
+      return;
+    }
+
     // M9 授权闸门：license 失效 → 受限模式；新群超 maxChats → 拒绝。
     // 拦截时代发提示话术，消息不进 routing（也不做图片识别，省识别成本）。
     const gateChatId = (msg as { ChatId?: string; FromUserName?: string }).ChatId

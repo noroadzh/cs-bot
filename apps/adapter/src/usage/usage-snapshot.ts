@@ -29,6 +29,8 @@ export interface UsageCounters {
   llmFailovers: number;
   /** LLM 调用失败次数（双通道失败/超时） */
   llmFailures: number;
+  /** 群消息缺失 ChatId 被丢弃的条数 */
+  messagesDroppedNoChatId: number;
 }
 
 export function createEmptyCounters(): UsageCounters {
@@ -46,5 +48,6 @@ export function createEmptyCounters(): UsageCounters {
     messagesTriggered: 0,
     llmFailovers: 0,
     llmFailures: 0,
+    messagesDroppedNoChatId: 0,
   };
 }

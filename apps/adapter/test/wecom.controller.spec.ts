@@ -10,7 +10,8 @@
  * 6. parseXml 成功 → 200 + send('') + 后台 dispatch（不 await）
  * 7. dispatch 抛错 → 被 .catch 吞掉，只写 error 日志
  */
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, beforeAll, afterAll, jest } from '@jest/globals';
+import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
 /** 记录 res 调用序列的 mock */
 function makeRes() {
@@ -67,6 +68,9 @@ function makeController(crypto: any, routing: any, gateCheck?: jest.Mock) {
   Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss });
   return { controller, wecomClient, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
 }
+
+beforeAll(() => setConfig({ REQUIRE_GROUP_CHAT_ID: false }));
+afterAll(() => resetConfig());
 
 describe('WecomController.callback', () => {
   beforeEach(() => {
@@ -270,6 +274,29 @@ describe('WecomController.callback', () => {
       expect(controller.__usage.increment).toHaveBeenCalledWith('messagesReceived');
       const imageCalls = (controller.__usage.increment as any).mock.calls.filter((c: any[]) => c[0].startsWith('image'));
       expect(imageCalls.length).toBe(0);
+    });
+  });
+
+  describe('ChatId 强校验', () => {
+    it('缺少 ChatId → 丢弃、计数、不 dispatch', async () => {
+      setConfig({ REQUIRE_GROUP_CHAT_ID: true });
+      try {
+        const crypto = makeCrypto({
+          parseXml: jest.fn(() => Promise.resolve({ MsgType: 'text', Content: 'hi', MsgId: 'm-no-chat', mentioned: true })),
+        });
+        const routing = makeRouting();
+        const { controller } = makeController(crypto, routing);
+        const res = makeRes();
+        await controller.callback(
+          { msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce },
+          'cipher', {} as any, res,
+        );
+        expect(routing.dispatch).not.toHaveBeenCalled();
+        expect(controller.__usage.increment).toHaveBeenCalledWith('messagesDroppedNoChatId');
+        expect(res.statusCode).toBe(200);
+      } finally {
+        setConfig({ REQUIRE_GROUP_CHAT_ID: false });
+      }
     });
   });
 

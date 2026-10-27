@@ -66,6 +66,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   RATE_USER_PER_MIN: EnvInt(5),
   RATE_HINT_TEXT: EnvString.default('提问太频繁，请稍后再试'),
   ALLOWED_CHAT_IDS: EnvString.default(''),
+  /** 群聊场景要求每条触发消息必须带 ChatId（缺失则丢弃并告警，不回退私聊） */
+  REQUIRE_GROUP_CHAT_ID: EnvBool(true),
 
   // 出站并发上限
   LLM_CONCURRENCY: EnvInt(4),
