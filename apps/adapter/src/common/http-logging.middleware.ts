@@ -8,6 +8,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import { AppLogger } from './logger.js';
 import { requestContext } from './request-context.js';
+import { resolveClientIp } from './client-ip.js';
 
 const logger = new AppLogger('HTTP');
 
@@ -27,7 +28,7 @@ export function httpLoggingMiddleware(req: Request, res: Response, next: NextFun
           path: req.path,
           status: res.statusCode,
           costMs,
-          ip: req.ip,
+          ip: resolveClientIp(req),
           ua: req.headers['user-agent'],
         };
         const isQuiet = req.path === '/healthz' || req.path.startsWith('/docs');

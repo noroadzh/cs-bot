@@ -283,15 +283,16 @@ export class PlatformController {
   }
 
   @Post('tenants/:id/export')
-  @ApiOperation({ summary: '导出租户数据加密包' })
+  @ApiOperation({ summary: '导出租户数据加密包并签发一次性注销令牌' })
   async exportTenant(@Param('id') id: string) {
-    return { path: await this.offboarding.export(id) };
+    return this.offboarding.export(id);
   }
 
   @Post('tenants/:id/destroy')
-  @ApiOperation({ summary: '注销租户（双签 + 删除）' })
+  @ApiOperation({ summary: '注销租户（双签 + 令牌 → T+7 删除）' })
   async destroyTenant(@Param('id') id: string, @Body() body: Record<string, unknown>) {
     const approvals = Array.isArray(body.approvals) ? (body.approvals as string[]) : [];
-    return this.offboarding.destroy(id, approvals);
+    const token = typeof body.confirmToken === 'string' ? body.confirmToken : undefined;
+    return this.offboarding.destroy(id, approvals, token);
   }
 }

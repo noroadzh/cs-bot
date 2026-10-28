@@ -13,6 +13,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'path';
 import { spawn } from 'child_process';
 import { ConfigService } from '../../config/config.service.js';
+import { AppLogger } from '../../common/logger.js';
 import type { Tenant } from '../tenant.entity.js';
 import type { TenantProvisioner } from './provisioner.js';
 
@@ -34,6 +35,8 @@ export class ProvisionerError extends Error {
 }
 
 export class ShellProvisioner implements TenantProvisioner {
+  private readonly logger = new AppLogger('ShellProvisioner');
+
   constructor(private readonly cfg: { PLATFORM_COMPOSE_DIR?: string } = {}) {}
 
   /** compose 根目录：PLATFORM_COMPOSE_DIR（默认 data/tenants） */
@@ -87,7 +90,21 @@ export class ShellProvisioner implements TenantProvisioner {
     const project = ShellProvisioner.projectName(tenant.id);
     const net = `${project}-net`;
 
-    await fs.writeFile(join(nginxDir, 'nginx.conf'), this.nginxConf(host), 'utf8');
+    const adminCidrs = (ConfigService.instance.TENANT_ADMIN_ALLOW_CIDRS ?? '')
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+    await fs.writeFile(join(nginxDir, 'nginx.conf'), this.nginxConf(host, adminCidrs), 'utf8');
+    if (adminCidrs.length > 1 || (adminCidrs.length === 1 && adminCidrs[0])) {
+      this.logger.log({
+        detail: 'tenant-admin-console',
+        tenantId: tenant.id,
+        enabled: true,
+        cidrs: adminCidrs,
+      });
+    } else {
+      this.logger.log({ detail: 'tenant-admin-console', tenantId: tenant.id, enabled: false });
+    }
     await this.writeInitDb(initDir);
 
     const content = [
@@ -98,8 +115,9 @@ export class ShellProvisioner implements TenantProvisioner {
       '    image: nginx:1.27-alpine',
       '    restart: unless-stopped',
       '    ports:',
-      `      - "${port}:443"`,
-      `      - "${port + 1}:8443"`,
+      ...(adminCidrs.length > 0
+        ? [`      - "${port}:443"`, `      - "${port + 1}:8443"`]
+        : [`      - "${port}:443"`]),
       '    volumes:',
       `      - ${join(nginxDir, 'nginx.conf')}:/etc/nginx/nginx.conf:ro`,
       `      - ${join(nginxDir, 'certs')}:/etc/nginx/certs:ro`,
@@ -215,7 +233,7 @@ export class ShellProvisioner implements TenantProvisioner {
     return path;
   }
 
-  private nginxConf(host: string): string {
+  private nginxConf(host: string, adminCidrs: readonly string[] = []): string {
     return `events {}
 http {
   upstream csbot_adapter { server adapter:3000; }
@@ -232,13 +250,15 @@ http {
       proxy_set_header X-Forwarded-Proto $scheme;
     }
   }
-  # 租户 FastGPT 后台（初始化/知识运营），独立端口，FastGPT 自身登录保护
+${adminCidrs.length > 0 ? `  # 租户 FastGPT 后台（初始化/知识运营），仅允许配置的网段
   server {
     listen 8443 ssl;
     server_name ${host};
     ssl_certificate /etc/nginx/certs/fullchain.pem;
     ssl_certificate_key /etc/nginx/certs/privkey.pem;
     location / {
+      ${adminCidrs.map((c) => `allow ${c};`).join('\n      ')}
+      deny all;
       proxy_pass http://fastgpt:3000;
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
@@ -246,7 +266,7 @@ http {
       proxy_set_header X-Forwarded-Proto $scheme;
     }
   }
-}
+` : ''}}
 `;
   }
 

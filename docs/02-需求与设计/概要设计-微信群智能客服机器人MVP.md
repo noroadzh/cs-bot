@@ -450,12 +450,12 @@ triggers:
   | GET | /platform/tenants | 租户列表（状态/配额/订阅到期日/用量摘要） |
   | GET | /platform/tenants/:id | 租户详情（实例信息、用量趋势、订阅状态） |
   | POST | /platform/tenants/:id/renew | 续期（签发新证书并热加载） |
-  | POST | /platform/tenants/:id/quota | 调整配额（即时下发实例） |
+  | PATCH | /platform/tenants/:id/quota | 调整配额（即时下发实例） |
   | POST | /platform/tenants/:id/suspend、/resume | 暂停/恢复服务（违约、到期、应急） |
-  | POST | /platform/tenants/:id/export、/destroy | 导出数据包、发起注销删除（双签） |
+  | POST | /platform/tenants/:id/export、/destroy | 导出数据包并签发一次性 confirmToken；destroy 双签 + 令牌后进入 offboarding，T+7 由 sweep 删除 |
   | POST | /platform/upgrades | 批量升级（批次、金丝雀、回滚） |
   | GET | /platform/usage | 平台总览（租户数/资源水位/异常实例） |
-  | GET | /platform/audit | 运维访问审计日志查询 |
+  | GET | /platform/audit-log | 运维访问审计日志查询 |
 - **数据表**：`tenant`、`tenant_quota`、`tenant_usage_daily`、`platform_audit_log`（见 §7.4 平台侧表）。
 
 ## 6. 关键流程时序（ASCII）
@@ -555,7 +555,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | imported_count | integer | 实际入库条数 |
 | failed_count | integer | 入库失败条数 |
 | dataset_name | varchar(64) | 写入的 FastGPT collection 名（历史语料-{id}） |
-| status | varchar(16) | pending/file_check/parsing/pairing/review/importing/done/failed/rolled_back |
+| status | varchar(16) | uploaded/parsing/parsed/approved/partial/rejected/rolled_back/failed（内部阶段以 §7.1 计数列表达） |
 | error | text null | 失败原因（不含正文） |
 | created_by | varchar(32) | 管理员账号（Basic Auth 用户名，哈希存） |
 | created_at / finished_at | timestamptz | |

@@ -20,6 +20,7 @@ import type { TenantSyncService } from './tenant-sync.service.js';
 import { Optional } from '@nestjs/common';
 import { PlatformAuditService } from './platform-audit.service.js';
 import type { Tenant, TenantStatus } from './tenant.entity.js';
+import type { TenantOffboarding } from './tenant-offboarding.js';
 
 /** 每小时执行（3,600,000 ms） */
 const SWEEP_INTERVAL_MS = 3_600_000;
@@ -33,6 +34,8 @@ export interface SweepResult {
   expiredToGrace: string[];
   graceToPaused: string[];
   pausedFlagged: Array<{ tenantId: string; daysSinceExpiry: number }>;
+  offboardingDeleted: string[];
+  offboardingFailed: Array<{ tenantId: string; error: string }>;
   total: number;
 }
 
@@ -46,6 +49,7 @@ export class TenantExpirySweepService implements OnModuleDestroy {
     _config: ConfigService,
     @Optional() private readonly reminder?: SubscriptionReminder,
     @Optional() private readonly tenantSync?: TenantSyncService,
+    @Optional() private readonly offboarding?: TenantOffboarding,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
   }
@@ -94,6 +98,8 @@ export class TenantExpirySweepService implements OnModuleDestroy {
       expiredToGrace: [],
       graceToPaused: [],
       pausedFlagged: [],
+      offboardingDeleted: [],
+      offboardingFailed: [],
       total: 0,
     };
 
@@ -196,6 +202,14 @@ export class TenantExpirySweepService implements OnModuleDestroy {
           payload: { daysSinceExpiry },
         });
       }
+    }
+
+    // ---- 4. 到期注销：T+7 删除（单租户失败不影响其他租户） ----
+    if (this.offboarding) {
+      const due = await this.offboarding.destroyDue(new Date(nowMs));
+      result.offboardingDeleted = due.deleted;
+      result.offboardingFailed = due.failed;
+      result.total += due.deleted.length;
     }
 
     for (const id of [...result.expiredToGrace, ...result.graceToPaused]) {

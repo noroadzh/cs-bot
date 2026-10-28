@@ -24,17 +24,22 @@ describe('TenantStateMachine — legal transitions', () => {
     ['active', 'suspended'],
     ['active', 'terminated'],
     ['active', 'paused'],
+    ['active', 'offboarding'],
 
     ['grace', 'active'],
     ['grace', 'suspended'],
     ['grace', 'paused'],
     ['grace', 'terminated'],
+    ['grace', 'offboarding'],
 
     ['suspended', 'active'],
     ['suspended', 'terminated'],
+    ['suspended', 'offboarding'],
 
     ['paused', 'active'],
     ['paused', 'terminated'],
+    ['paused', 'offboarding'],
+    ['offboarding', 'terminated'],
 
     ['provisioning_failed', 'terminated'],
   ];
@@ -56,6 +61,12 @@ describe('TenantStateMachine — illegal transitions', () => {
     ['created', 'suspended'],
     ['created', 'terminated'],
     ['created', 'provisioning_failed'],
+
+    // offboarding 只能走向 terminated
+    ['offboarding', 'active'],
+    ['offboarding', 'grace'],
+    ['offboarding', 'suspended'],
+    ['offboarding', 'paused'],
 
     // provisioning 只能进 active / provisioning_failed
     ['provisioning', 'created'],

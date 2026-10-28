@@ -186,6 +186,11 @@ cp .env.template .env && chmod 600 .env && vim .env
 | LLM_TIMEOUT_MS | | 15000 | LLM 硬超时 |
 | ADMIN_USER / ADMIN_PASSWORD | ★ | admin / 强口令 | 管理接口 Basic Auth |
 | ALLOWED_ADMIN_IPS | ★ | 203.0.113.0/24 | 管理接口来源白名单 |
+| TRUSTED_PROXY_CIDRS | | 172.30.0.0/24 | 仅这些代理地址转发来的 X-Forwarded-For 被采信（默认 compose 子网） |
+| CSBOT_SUBNET | | 172.30.0.0/24 | compose 内部子网；与宿主网络冲突时修改 |
+| CSBOT_UID / CSBOT_GID | | 65532 / 65532 | 容器运行 UID/GID（默认非 root） |
+| DOCKER_GID | | 999 | 宿主 docker 组 GID（控制面访问 docker socket） |
+| TENANT_ADMIN_ALLOW_CIDRS | | （空） | 租户 FastGPT 管理口 8443 放行网段；空 = 不开放（M11） |
 | SLOW_REPLY_TEXT | | （默认话术） | 繁忙提示话术 |
 | MISS_RECORD_RETENTION_DAYS | | 90 | 未命中记录保留期 |
 | ASSET_MAX_FILE_MB / ASSET_MAX_VIDEO_MB | | 20 / 10 | 素材上限（增项 A） |
@@ -223,6 +228,12 @@ cp /path/license.lic license/ && chmod 600 license/license.lic
 
 ### 7.5 启动
 
+容器默认以 UID/GID 65532 非 root 运行；首次部署/升级后先校正宿主目录归属：
+
+```bash
+sudo ./deploy/init-perms.sh   # 将 data/logs/license/backup 归属到 CSBOT_UID:CSBOT_GID
+```
+
 ```bash
 docker compose up -d
 docker compose ps        # 期望 6 个容器全部 Up / healthy
@@ -241,6 +252,9 @@ docker compose ps        # 期望 6 个容器全部 Up / healthy
 | 005 | `apps/adapter/src/import/005-approved-qa.sql` | 审核通过 QA 语料表 | M10 |
 | 006 | `apps/adapter/src/import/006-import-job-stored-path.sql` | `import_job` 增加落盘路径列 | M10 |
 | 007 | `apps/adapter/src/platform/007-tenant.sql` | 租户 `tenant` / `tenant_quota` / `tenant_usage_daily` / `platform_audit_log` | M11 |
+| 013 | `apps/adapter/src/import/013-import-message-stage.sql` | 导入流式暂存表 | M10 |
+| 014 | `apps/adapter/src/import/014-import-dedup-counters.sql` | 条目去重键/会话元数据/阶段计数/导入租约 | M10 |
+| 015 | `apps/adapter/src/platform/015-tenant-offboarding.sql` | 注销令牌/T+7 计划/删除确认单 | M11 |
 
 > **应用方式**：全新安装时上述 SQL 已随 `docker compose` 挂载到 `pg` 容器的 `/docker-entrypoint-initdb.d/`，首启按编号自动执行；存量升级时 `docker exec -i pg psql -U <用户> -d <库>` 依次执行 `/app/migrate/*.sql`（镜像内按编号排序）。M10/M11 默认 `PLATFORM_ENABLED=false` 时不要求创建租户表，但建议随版本一并执行以保持结构一致。
 
@@ -334,6 +348,24 @@ curl -X POST -u admin:<口令> https://<域名>/admin/license/reload
 ```
 
 换机迁移：新服务器部署完成后按上述流程重新采集指纹 → 换发证书（交付方不收取开发费）。
+
+### 9.5 租户注销（SaaS）
+
+注销分两步，**不会立即删除数据**：
+
+```bash
+# 1) 导出加密包，返回 path / confirmToken / expiresAt（令牌仅显示一次，24h 有效）
+curl -X POST -u admin:<口令> https://<控制面>/platform/tenants/<id>/export
+
+# 2) 双签 + 令牌；进入 offboarding，返回 scheduledAt（T+7）
+curl -X POST -u admin:<口令> -H 'content-type: application/json' \
+  -d '{"approvals":["ops:alice","ops:bob"],"confirmToken":"<上一步的令牌>"}' \
+  https://<控制面>/platform/tenants/<id>/destroy
+```
+
+- T+7 由每小时 sweep 删除容器、数据库、备份、证书与密钥，并写入删除确认单（`tenant_destroy_confirmation`）与审计 `tenant.destroyed`
+- 重复调用 destroy 返回同一计划；offboarding 状态禁止续费/暂停/恢复/重新开通
+- 到期前需要运维确认 `offboarding` 计划与备份包已交付
 
 ## 10. 常见故障排查
 

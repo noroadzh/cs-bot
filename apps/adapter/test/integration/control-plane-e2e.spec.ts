@@ -19,6 +19,7 @@ import { TenantUsageService } from '../../src/platform/tenant-usage.service.js';
 import { PlatformAuditService } from '../../src/platform/platform-audit.service.js';
 import { UpgradeOrchestrator } from '../../src/platform/upgrade-orchestrator.js';
 import { TenantOffboarding } from '../../src/platform/tenant-offboarding.js';
+import { PgOffboardingRepo } from '../../src/platform/tenant-offboarding.pg.js';
 import { setConfig, resetConfig } from '../__setup__/test-helpers.js';
 
 const PG_URL = process.env.TEST_PG_URL;
@@ -102,6 +103,8 @@ suite('M11 控制面 e2e', () => {
       observe: async () => true,
     });
     offboarding = new TenantOffboarding({
+      repo: PgOffboardingRepo.fromPool(pool),
+      audit: auditSvc,
       exportPackage: async (id: string) => `data/tenants/${id}/export.enc`,
       deleteTenant: async (id: string) => {
         await pool.query(
@@ -146,13 +149,25 @@ suite('M11 控制面 e2e', () => {
     expect(up.upgraded).toContain(tenantId);
     expect(up.failed).toEqual([]);
 
-    const path = await offboarding.export(tenantId);
-    expect(path).toContain(tenantId);
+    const exported = await offboarding.export(tenantId);
+    expect(exported.path).toContain(tenantId);
+    expect(exported.confirmToken).toBeTruthy();
 
-    const destroyed = await offboarding.destroy(tenantId, ['ops:alice', 'ops:bob']);
-    expect(destroyed.deleted).toBe(true);
+    const scheduled = await offboarding.destroy(tenantId, ['ops:alice', 'ops:bob'], exported.confirmToken);
+    expect(scheduled.status).toBe('offboarding');
+    const still = await pool.query('SELECT status FROM tenant WHERE id=$1', [tenantId]);
+    expect(still.rows[0].status).toBe('offboarding');
+
+    const due = await offboarding.destroyDue(new Date(Date.now() + 8 * 86_400_000));
+    expect(due.deleted).toContain(tenantId);
     const row = await pool.query('SELECT status FROM tenant WHERE id=$1', [tenantId]);
     expect(row.rows[0].status).toBe('terminated');
+    const confirmation = await pool.query(
+      'SELECT tenant_id, approvals FROM tenant_destroy_confirmation WHERE tenant_id=$1',
+      [tenantId],
+    );
+    expect(confirmation.rows).toHaveLength(1);
+    expect(confirmation.rows[0].approvals).toHaveLength(2);
 
     const verify = await auditSvc.verifyChain();
     expect(verify.valid).toBe(true);

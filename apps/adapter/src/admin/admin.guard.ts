@@ -3,6 +3,7 @@ import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable } 
 import type { Request } from 'express';
 import { createHash } from 'crypto';
 import { ConfigService } from '../config/config.service.js';
+import { resolveClientIp } from '../common/client-ip.js';
 
 function ipToLong(ip: string): number {
   return ip.split('.').reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
@@ -31,7 +32,7 @@ export class AdminGuard implements CanActivate {
     ) {
       return true;
     }
-    const ip = (req.ip ?? '').replace('::ffff:', '');
+    const ip = resolveClientIp(req);
     const allowed = this.cfg.ALLOWED_ADMIN_IPS.split(',').map((s) => s.trim()).filter(Boolean);
     if (allowed.length > 0 && !allowed.some((cidr) => inCidr(ip, cidr))) {
       throw new HttpException({ errCode: 'AUTH_FORBIDDEN' }, HttpStatus.FORBIDDEN);

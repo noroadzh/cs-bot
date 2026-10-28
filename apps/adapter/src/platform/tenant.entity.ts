@@ -11,6 +11,7 @@ export type TenantStatus =
   | 'grace'
   | 'suspended'
   | 'paused'
+  | 'offboarding'
   | 'terminated'
   | 'provisioning_failed';
 
@@ -75,7 +76,11 @@ export type PlatformAuditAction =
   | 'tenant.expired-sweep'
   | 'tenant.paused-sweep'
   | 'tenant.sync'
-  | 'tenant.restart';
+  | 'tenant.restart'
+  | 'tenant.alert'
+  | 'tenant.export'
+  | 'tenant.destroy_scheduled'
+  | 'tenant.destroyed';
 
 export interface AuditAppendOpts {
   action: PlatformAuditAction;

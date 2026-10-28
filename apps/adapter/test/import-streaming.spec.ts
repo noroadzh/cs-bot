@@ -46,8 +46,8 @@ describe('StreamingQaPairing', () => {
     p.finish();
     const out = p.drain();
     expect(out.paired).toEqual([
-      { question: 'Q1', answer: 'ANSWER1' },
-      { question: 'Q3', answer: 'ANSWER3' },
+      { question: 'Q1', answer: 'ANSWER1', conversationId: 'c1', occurredAt: 0 },
+      { question: 'Q3', answer: 'ANSWER3', conversationId: 'c1', occurredAt: 100_000 },
     ]);
     expect(out.unpaired.map((m) => m.content)).toEqual(['Q2']);
   });

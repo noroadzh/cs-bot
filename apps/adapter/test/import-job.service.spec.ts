@@ -534,7 +534,7 @@ describe('ImportJobService 查询/删除', () => {
 
       expect(d).not.toBeNull();
       expect(d!.deletable).toBe(true);
-      expect(d!.itemCounts).toEqual({ pending: 6, approved: 2, rejected: 0, 'needs-fix': 0 });
+      expect(d!.itemCounts).toEqual({ pending: 6, approved: 2, modified: 0, rejected: 0, 'needs-fix': 0 });
     });
 
     it('job 不存在 → null，不打 items 查询', async () => {

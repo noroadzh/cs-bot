@@ -5,8 +5,10 @@
  */
 import axios from 'axios';
 import https from 'node:https';
-import { OnModuleDestroy } from '@nestjs/common';
+import { OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Pool } from 'pg';
+import { AppLogger } from '../common/logger.js';
+import type { PlatformAuditAction } from './tenant.entity.js';
 export interface InstanceHealth {
   tenantId: string;
   healthy: boolean;
@@ -28,11 +30,64 @@ export interface PlatformOverview {
   avgLlmFailRate: number;
 }
 
-export class PlatformMonitor implements OnModuleDestroy {
+export interface MonitorAudit {
+  append(entry: {
+    action: PlatformAuditAction;
+    actor: string;
+    tenantId: string | null;
+    payload: Record<string, unknown>;
+  }): Promise<unknown>;
+}
+
+export interface MonitorOptions {
+  /** 巡检间隔；<=0 关闭周期巡检 */
+  intervalMs?: number;
+  /** 连续失败多少次后重启 */
+  failureThreshold?: number;
+  /** 每租户每小时最多重启次数 */
+  maxRestartsPerHour?: number;
+  /** 告警去重窗口 */
+  alertWindowMs?: number;
+  /** 租户 id 列表（周期巡检必需） */
+  listTenants?: () => Promise<string[]>;
+  now?: () => number;
+}
+
+export class PlatformMonitor implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new AppLogger('PlatformMonitor');
+  private readonly intervalMs: number;
+  private readonly failureThreshold: number;
+  private readonly maxRestartsPerHour: number;
+  private readonly alertWindowMs: number;
+  private readonly listTenants?: () => Promise<string[]>;
+  private readonly now: () => number;
+  private timer: NodeJS.Timeout | null = null;
+  private running = false;
+  private readonly failures = new Map<string, number>();
+  private readonly restarts = new Map<string, number[]>();
+  private readonly lastAlert = new Map<string, number>();
+
   constructor(
     private readonly source: HealthSource,
     private readonly restart?: (tenantId: string) => Promise<void>,
-  ) {}
+    private readonly audit?: MonitorAudit,
+    opts: MonitorOptions = {},
+  ) {
+    this.intervalMs = opts.intervalMs ?? 60_000;
+    this.failureThreshold = Math.max(opts.failureThreshold ?? 2, 1);
+    this.maxRestartsPerHour = Math.max(opts.maxRestartsPerHour ?? 3, 0);
+    this.alertWindowMs = opts.alertWindowMs ?? 3_600_000;
+    this.listTenants = opts.listTenants;
+    this.now = opts.now ?? (() => Date.now());
+  }
+
+  onModuleInit(): void {
+    if (this.intervalMs <= 0 || !this.listTenants) return;
+    this.timer = setInterval(() => {
+      void this.tick();
+    }, this.intervalMs);
+    this.timer.unref?.();
+  }
 
   async collect(tenantIds: readonly string[]): Promise<{
     overview: PlatformOverview;
@@ -54,8 +109,55 @@ export class PlatformMonitor implements OnModuleDestroy {
     return { overview, instances };
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await (this.source as { close?: () => Promise<void> }).close?.().catch(() => undefined);
+  /** 周期巡检：连续失败达阈值才重启，并遵守每小时上限与告警去重 */
+  async tick(): Promise<void> {
+    if (this.running || !this.listTenants) return;
+    this.running = true;
+    try {
+      const ids = await this.listTenants();
+      if (ids.length === 0) return;
+      const { instances } = await this.collect(ids);
+      const now = this.now();
+      for (const inst of instances) {
+        const id = inst.tenantId;
+        if (inst.healthy) {
+          this.failures.delete(id);
+          continue;
+        }
+        const failures = (this.failures.get(id) ?? 0) + 1;
+        this.failures.set(id, failures);
+        if (failures < this.failureThreshold) continue;
+
+        if (!this.restart) {
+          await this.alert(id, 'unhealthy_no_restart_handler');
+          continue;
+        }
+        const history = (this.restarts.get(id) ?? []).filter((t) => now - t < 3_600_000);
+        if (history.length >= this.maxRestartsPerHour) {
+          await this.alert(id, 'restart_limit_reached', { restartsLastHour: history.length });
+          continue;
+        }
+        try {
+          await this.restart(id);
+          history.push(now);
+          this.restarts.set(id, history);
+          this.failures.set(id, 0);
+          await this.audit?.append({
+            action: 'tenant.restart',
+            actor: 'system:monitor',
+            tenantId: id,
+            payload: { consecutiveFailures: failures },
+          });
+          this.logger.warn({ detail: 'instance-restarted', tenantId: id, consecutiveFailures: failures });
+        } catch (err) {
+          await this.alert(id, 'restart_failed', { err: (err as Error).message });
+        }
+      }
+    } catch (err) {
+      this.logger.error({ detail: 'monitor-tick-failed', err: (err as Error).message });
+    } finally {
+      this.running = false;
+    }
   }
 
   /** 对异常实例执行重启（若注入了重启动作） */
@@ -71,6 +173,32 @@ export class PlatformMonitor implements OnModuleDestroy {
       }
     }
     return restarted;
+  }
+
+  private async alert(
+    tenantId: string,
+    reason: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<void> {
+    const now = this.now();
+    const last = this.lastAlert.get(tenantId) ?? 0;
+    if (now - last < this.alertWindowMs) return;
+    this.lastAlert.set(tenantId, now);
+    this.logger.error({ detail: 'instance-alert', tenantId, reason, ...extra });
+    await this.audit?.append({
+      action: 'tenant.alert',
+      actor: 'system:monitor',
+      tenantId,
+      payload: { reason, ...extra },
+    });
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    await (this.source as { close?: () => Promise<void> }).close?.().catch(() => undefined);
   }
 }
 

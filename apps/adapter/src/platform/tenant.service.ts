@@ -272,9 +272,9 @@ export class TenantService implements OnModuleDestroy {
       this.logger.timing({ detail: 'tenant-provision', tenantId, status: 'active' }, Date.now() - provisionStart);
       await this.pool.query(
         `UPDATE tenant SET status = 'active', host = $2, port = $3, database_url = $4,
-                tls_cert_ref = $5, secrets_ref = $6, updated_at = NOW()
+                tls_cert_ref = $5, secrets_ref = $6, last_provision_log = $7, updated_at = NOW()
          WHERE id = $1`,
-        [tenantId, tenant.host, tenant.port, tenant.databaseUrl, `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenantId}/nginx/certs`, secretsResult?.secretsRef ?? null],
+        [tenantId, tenant.host, tenant.port, tenant.databaseUrl, `${ConfigService.instance.PLATFORM_COMPOSE_DIR}/${tenantId}/nginx/certs`, secretsResult?.secretsRef ?? null, this.adminConsoleSummary()],
       );
       await this.audit.append({
         action: 'tenant.provision',
@@ -603,6 +603,14 @@ export class TenantService implements OnModuleDestroy {
   }
 
   /** 更新密钥后重启租户 adapter（FastGPT 初始化交接） */
+  private adminConsoleSummary(): string {
+    const cidrs = (ConfigService.instance.TENANT_ADMIN_ALLOW_CIDRS ?? '')
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+    return cidrs.length === 0 ? 'admin_console=off' : `admin_console=on:${cidrs.join('|')}`;
+  }
+
   async restart(tenantId: string, actor = 'system'): Promise<Tenant> {
     const tenant = await this.requireTenant(tenantId);
     await this.provisioner.restart(tenant);

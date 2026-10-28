@@ -31,6 +31,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   ADMIN_USER: EnvString.default('admin'),
   ADMIN_PASSWORD: EnvString.min(6),
   ALLOWED_ADMIN_IPS: EnvString.default('127.0.0.1/32'),
+  TRUSTED_PROXY_CIDRS: EnvString.default('127.0.0.1/32,::1/128'),
 
   // Mode
   USE_MOCK_LLM: EnvBool(true),
@@ -135,6 +136,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_MASTER_KEY: EnvString.optional().default(''),
   PLATFORM_TLS_PROVIDER: EnvString.default('fake'),
   PLATFORM_CERT_DIR: EnvString.default('data/tenants/certs'),
+  PLATFORM_BACKUP_DIR: EnvString.default('backup/tenants'),
   PLATFORM_CERT_CMD: EnvString.optional().default(''),
   LICENSE_ISSUER: EnvString.default('noop'),
   LICENSE_ISSUER_BIN: EnvString.default('tools/license-issuer/license-issuer'),
@@ -147,6 +149,10 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_INSTANCE_SCHEME: EnvString.default('https'),
   PLATFORM_VERIFY_TLS: EnvBool(true),
   PLATFORM_INSTANCE_TIMEOUT_MS: EnvInt(8000),
+  TENANT_ADMIN_ALLOW_CIDRS: EnvString.default(''),
+  PLATFORM_MONITOR_INTERVAL_MS: EnvInt(60000),
+  PLATFORM_RESTART_FAILURE_THRESHOLD: EnvInt(2),
+  PLATFORM_RESTART_MAX_PER_HOUR: EnvInt(3),
   PLATFORM_UPGRADE_SCRIPT: EnvString.default('scripts/tenant-upgrade.sh'),
   PLATFORM_CANARY_OBSERVE_MS: EnvInt(86_400_000),
   PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),

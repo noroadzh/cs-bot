@@ -220,4 +220,24 @@ describe('TenantExpirySweepService', () => {
       expect(result).toBeNull();
     });
   });
+
+  it('runs due offboarding deletions and reports failures', async () => {
+    mockSweep({});
+    const destroyDue = jest.fn(async () => ({
+      deleted: ['t9'],
+      failed: [{ tenantId: 't8', error: 'boom' }],
+    }));
+    const service = new TenantExpirySweepService(
+      { append: auditAppend() } as any,
+      {} as any,
+      undefined,
+      undefined,
+      { destroyDue } as any,
+    );
+    const result = await service.sweep();
+    expect(destroyDue).toHaveBeenCalledTimes(1);
+    expect(result.offboardingDeleted).toEqual(['t9']);
+    expect(result.offboardingFailed).toEqual([{ tenantId: 't8', error: 'boom' }]);
+    expect(result.total).toBe(1);
+  });
 });

@@ -265,7 +265,7 @@ all ok → 缓存 {valid:true, until, maxChats} TTL 1h；否则 exit(1)（日志
 
 ### 3.9 M10 历史导入（import/，增项 B）
 
-**任务状态机**：`file_check → parsing → pairing → review → importing → done | failed`（任一步失败可 `retry`，幂等按 `source_hash`）。
+**任务状态机**：`uploaded → parsing → parsed → {approved | partial | rejected | rolled_back} | failed`（任一步失败可 `retry`，幂等按条目级 `source_hash`）。内部阶段（文件校验/配对/入库）通过 `total_msgs/parsed_msgs/masked/blocked/dedup/approved/imported/failed` 计数表达，不额外引入对外状态值（契约冻结）。
 
 **解析器接口**
 

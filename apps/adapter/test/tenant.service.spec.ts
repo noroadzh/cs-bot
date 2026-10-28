@@ -272,6 +272,13 @@ describe('TenantService', () => {
       });
     });
 
+    it('offboarding 状态禁止续费', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [tenantRow({ status: 'offboarding' })] });
+      await expect(svc().renew('t1', 30)).rejects.toMatchObject({
+        response: { errCode: 'TENANT_RENEW_FORBIDDEN' },
+      });
+    });
+
     it('days 非正整数 → 400 TENANT_RENEW_INVALID', async () => {
       poolQuery.mockResolvedValueOnce({ rows: [tenantRow({ status: 'active' })] });
       await expect(svc().renew('t1', 0)).rejects.toMatchObject({

@@ -11,7 +11,8 @@ export type ImportJobStatus =
   | 'failed'
   | 'approved'
   | 'partial'
-  | 'rejected';
+  | 'rejected'
+  | 'rolled_back';
 
 export interface ImportJob {
   id: string;
@@ -25,6 +26,14 @@ export interface ImportJob {
   cleanedCount: number;
   pairedCount: number;
   unpairedCount: number;
+  totalMessages: number;
+  parsedMessages: number;
+  maskedCount: number;
+  blockedCount: number;
+  dedupCount: number;
+  approvedCount: number;
+  importedCount: number;
+  failedCount: number;
   /** approved 条目写入的 FastGPT 数据集名 */
   datasetName: string | null;
   sourceShape: string | null;
@@ -41,7 +50,7 @@ export interface ImportJobRow extends ImportJob {
   mimeType: string | null;
 }
 
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'needs-fix';
+export type ReviewStatus = 'pending' | 'approved' | 'modified' | 'rejected' | 'needs-fix';
 
 export interface ImportItem {
   id: string;
@@ -49,6 +58,10 @@ export interface ImportItem {
   question: string;
   answerRaw: string;
   answerRedacted: string;
+  /** 条目级幂等键（丢弃条目清空正文后仍保留） */
+  sourceHash: string | null;
+  sessionHash: string | null;
+  occurredAt: string | null;
   sensitiveFlags: string[];
   reviewStatus: ReviewStatus;
   reviewedAt: string | null;
@@ -69,7 +82,7 @@ export interface ImportItem {
  * approved/partial/rejected only set by review flow.
  */
 export const TERMINAL_JOB_STATUSES: ReadonlySet<ImportJobStatus> = new Set([
-  'approved', 'partial', 'rejected', 'failed',
+  'approved', 'partial', 'rejected', 'rolled_back', 'failed',
 ]);
 
 /**
@@ -107,4 +120,40 @@ export interface ImportItemListQuery {
   sensitive?: boolean;
   limit?: number;
   offset?: number;
+}
+
+export interface ImportJobPage {
+  items: ImportJob[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface ImportItemPage {
+  items: ImportItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** 详情视图：job 概要 + 审核分布 + 能否删除 */
+export interface ImportJobDetail {
+  job: ImportJob;
+  itemCounts: Record<ReviewStatus, number>;
+  deletable: boolean;
+}
+
+/** 建 job 后需带回调用方的运行时信息（不入库） */
+export interface ImportJobCreated {
+  job: ImportJob;
+  reused: boolean;
+  storedPath: string;
+  mimeType: string;
+}
+
+export interface CreateFromFileInput {
+  filename: string;
+  mimeType: string;
+  bytes: Buffer;
+  name?: string;
 }

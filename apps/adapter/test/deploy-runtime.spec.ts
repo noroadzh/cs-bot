@@ -25,8 +25,15 @@ describe('adapter runtime mounts', () => {
     expect(dockerfile).toContain('--chown=65532:65532 /app/data /app/data');
   });
 
-  it('adapter 用户可由 CSBOT_UID/GID 覆盖', () => {
-    expect(compose).toContain('user: "${CSBOT_UID:-0}:${CSBOT_GID:-0}"');
+  it('默认以非 root 运行且可由 CSBOT_UID/GID 覆盖', () => {
+    expect(compose).toContain('user: "${CSBOT_UID:-65532}:${CSBOT_GID:-65532}"');
+    expect(compose).not.toContain('${CSBOT_UID:-0}');
+  });
+
+  it('提供宿主目录权限校正脚本', () => {
+    const script = readFileSync(join(ROOT, 'deploy', 'init-perms.sh'), 'utf8');
+    expect(script).toContain('CSBOT_UID:-65532');
+    expect(script).toContain('chown -R');
   });
 
   it('独立控制面服务与独立数据库', () => {

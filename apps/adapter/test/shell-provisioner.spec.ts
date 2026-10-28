@@ -25,6 +25,7 @@ jest.mock('fs', () => ({
 
 import { ShellProvisioner, ProvisionerError } from '../src/platform/provisioner/shell-provisioner.js';
 import type { Tenant } from '../src/platform/tenant.entity.js';
+import { setConfig } from './__setup__/test-helpers.js';
 
 function tenant(over: Partial<Tenant> = {}): Tenant {
   return {
@@ -209,10 +210,9 @@ describe('ShellProvisioner.render', () => {
     expect(content).toContain('name: csbot-t-' + t.id);
     expect(content).toContain('TENANT_ID=' + t.id);
     expect(content).toContain('"18001:443"');
-    expect(content).toContain('"18002:8443"');
+    expect(content).not.toContain('"18002:8443"');
     const nginxCall = fsWriteFile.mock.calls.find(([p]) => String(p).endsWith('nginx.conf')) as [string, string];
-    expect(nginxCall[1]).toContain('listen 8443 ssl;');
-    expect(nginxCall[1]).toContain('proxy_pass http://fastgpt:3000;');
+    expect(nginxCall[1]).not.toContain('listen 8443 ssl;');
     // 六服务与资源隔离（概设 M11）
     const net = 'csbot-t-' + t.id + '-net';
     expect(content).toContain(net);
@@ -225,5 +225,24 @@ describe('ShellProvisioner.render', () => {
     expect(content).toContain('/app/license:ro');
     expect(content).toContain('docker-entrypoint-initdb.d');
     expect(content).toContain('networks:');
+  });
+
+  it('TENANT_ADMIN_ALLOW_CIDRS 非空时开放 8443 并写入 allow/deny', async () => {
+    fsWriteFile.mockClear();
+    fsMkdir.mockClear();
+    setConfig({ TENANT_ADMIN_ALLOW_CIDRS: '203.0.113.0/24,10.1.0.0/16' });
+    try {
+      await p.render(tenant());
+      const [path, content] = fsWriteFile.mock.calls.at(-1) as [string, string];
+      expect(path).toContain('docker-compose.yml');
+      expect(content).toContain('"18002:8443"');
+      const nginxCall = fsWriteFile.mock.calls.find(([p]) => String(p).endsWith('nginx.conf')) as [string, string];
+      expect(nginxCall[1]).toContain('listen 8443 ssl;');
+      expect(nginxCall[1]).toContain('allow 203.0.113.0/24;');
+      expect(nginxCall[1]).toContain('allow 10.1.0.0/16;');
+      expect(nginxCall[1]).toContain('deny all;');
+    } finally {
+      setConfig();
+    }
   });
 });

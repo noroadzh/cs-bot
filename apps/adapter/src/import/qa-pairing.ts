@@ -10,6 +10,10 @@ import type { CleanMessage } from './import-cleaner.js';
 export interface PairedItem {
   question: string;
   answer: string;
+  /** 会话标识（直接配对格式为 undefined） */
+  conversationId?: string;
+  /** 问题首条消息的原始时间（毫秒） */
+  occurredAt?: number;
 }
 
 export interface PairResult {
@@ -82,7 +86,13 @@ export function pairWindow(
       qBuf.length > 0 &&
       m.content.trim().length >= minAnswerChars
     ) {
-      paired.push({ question: qBuf.join(' '), answer: m.content });
+      const first = pendingCustomers[0];
+      paired.push({
+        question: qBuf.join(' '),
+        answer: m.content,
+        conversationId: first?.conversationId,
+        occurredAt: first?.occurredAt,
+      });
       qBuf = [];
       pendingCustomers = [];
     }

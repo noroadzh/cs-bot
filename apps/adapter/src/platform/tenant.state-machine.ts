@@ -8,6 +8,7 @@
  *   grace             → active | suspended | paused
  *   suspended         → active | terminated
  *   paused            → active | terminated
+ *   active|grace|suspended|paused → offboarding → terminated
  *   provisioning_failed → terminated
  *
  * 任何非法转移抛 IllegalTenantTransition（HTTP 409）。
@@ -34,11 +35,12 @@ const TRANSITIONS: Record<TenantStatus, readonly TenantStatus[]> = {
   created: ['provisioning'],
   trialing: ['active', 'terminated'],
   provisioning: ['active', 'provisioning_failed'],
-  active: ['grace', 'suspended', 'terminated', 'paused'],
-  grace: ['active', 'suspended', 'paused', 'terminated'],
+  active: ['grace', 'suspended', 'terminated', 'paused', 'offboarding'],
+  grace: ['active', 'suspended', 'paused', 'terminated', 'offboarding'],
   // suspended 与 paused 互为别名（概设用 suspended，旧数据用 paused）
-  suspended: ['active', 'terminated'],
-  paused: ['active', 'terminated'],
+  suspended: ['active', 'terminated', 'offboarding'],
+  paused: ['active', 'terminated', 'offboarding'],
+  offboarding: ['terminated'],
   terminated: [],
   provisioning_failed: ['provisioning', 'terminated'],
 };

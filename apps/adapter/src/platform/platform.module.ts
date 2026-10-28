@@ -7,6 +7,8 @@
  */
 import { DynamicModule, Module } from '@nestjs/common';
 import { promises as fs } from 'node:fs';
+import { join as joinPath } from 'node:path';
+import { Pool } from 'pg';
 import { join } from 'node:path';
 import { AdminGuard } from '../admin/admin.guard.js';
 import { ConfigService } from '../config/config.service.js';
@@ -24,6 +26,7 @@ import { PlatformMonitor, HttpHealthSource } from './platform-monitor.js';
 import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
 import { ShellUpgradeDeps } from './upgrade-runner.js';
 import { TenantOffboarding } from './tenant-offboarding.js';
+import { PgOffboardingRepo } from './tenant-offboarding.pg.js';
 import { SubscriptionReminder, WebhookNotifier } from './subscription-reminder.js';
 
 @Module({})
@@ -66,14 +69,23 @@ export class PlatformModule {
         },
         {
           provide: PlatformMonitor,
-          useFactory: () =>
+          useFactory: (tenants: TenantService, audit: PlatformAuditService) =>
             new PlatformMonitor(
               new HttpHealthSource(ConfigService.instance.DATABASE_URL, {
                 scheme: ConfigService.instance.PLATFORM_INSTANCE_SCHEME ?? 'https',
                 verifyTls: ConfigService.instance.PLATFORM_VERIFY_TLS !== false,
                 timeoutMs: ConfigService.instance.PLATFORM_INSTANCE_TIMEOUT_MS ?? 8000,
               }),
+              (id: string) => tenants.restart(id, 'system:monitor').then(() => undefined),
+              audit,
+              {
+                intervalMs: ConfigService.instance.PLATFORM_MONITOR_INTERVAL_MS,
+                failureThreshold: ConfigService.instance.PLATFORM_RESTART_FAILURE_THRESHOLD,
+                maxRestartsPerHour: ConfigService.instance.PLATFORM_RESTART_MAX_PER_HOUR,
+                listTenants: async () => (await tenants.list()).rows.map((t) => t.id),
+              },
             ),
+          inject: [TenantService, PlatformAuditService],
         },
         {
           provide: UpgradeOrchestrator,
@@ -89,8 +101,11 @@ export class PlatformModule {
         },
         {
           provide: TenantOffboarding,
-          useFactory: (packager: ExportPackager, tenants: TenantService) =>
-            new TenantOffboarding({
+          useFactory: (packager: ExportPackager, tenants: TenantService, audit: PlatformAuditService) => {
+            const pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 2 });
+            return new TenantOffboarding({
+              repo: PgOffboardingRepo.fromPool(pool),
+              audit,
               exportPackage: async (tenantId: string) => {
                 const detail = await tenants.getDetail(tenantId);
                 const dir = join(ConfigService.instance.PLATFORM_COMPOSE_DIR, tenantId);
@@ -112,10 +127,15 @@ export class PlatformModule {
                 return out;
               },
               deleteTenant: async (tenantId: string) => {
-                await tenants.terminate(tenantId, 'system');
+                await tenants.terminate(tenantId, 'system:sweep');
+                const cfg = ConfigService.instance;
+                // compose 目录包含实例 compose、数据卷目录、nginx 证书副本与 secrets.enc
+                await fs.rm(joinPath(cfg.PLATFORM_COMPOSE_DIR, tenantId), { recursive: true, force: true });
+                await fs.rm(joinPath(cfg.PLATFORM_BACKUP_DIR, tenantId), { recursive: true, force: true });
               },
-            }),
-          inject: [ExportPackager, TenantService],
+            });
+          },
+          inject: [ExportPackager, TenantService, PlatformAuditService],
         },
       ],
       exports: [TenantService, TenantQuotaService, PlatformAuditService],

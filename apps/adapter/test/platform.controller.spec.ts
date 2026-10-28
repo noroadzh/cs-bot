@@ -27,9 +27,14 @@ function makeCtrl() {
     })),
   };
   const offboarding = {
-    export: jest.fn(async (id: string) => `data/tenants/${id}/export.enc`),
-    destroy: jest.fn(async (_id: string, approvals: string[]) => ({
-      deleted: true,
+    export: jest.fn(async (id: string) => ({
+      path: `data/tenants/${id}/export.enc`,
+      confirmToken: 'tok',
+      expiresAt: '2026-10-29T00:00:00.000Z',
+    })),
+    destroy: jest.fn(async (_id: string, approvals: string[], _token?: string) => ({
+      status: 'offboarding',
+      scheduledAt: '2026-11-04T00:00:00.000Z',
       approvals: approvals.length,
     })),
   };
@@ -68,17 +73,21 @@ describe('PlatformController 升级/监控/注销', () => {
     expect((r as any).overview.tenantCount).toBe(2);
   });
 
-  it('POST /platform/tenants/:id/export 返回包路径', async () => {
+  it('POST /platform/tenants/:id/export 返回包路径与一次性令牌', async () => {
     const { ctrl, offboarding } = makeCtrl();
     const r = await ctrl.exportTenant('t1');
     expect(offboarding.export).toHaveBeenCalledWith('t1');
-    expect(r).toEqual({ path: 'data/tenants/t1/export.enc' });
+    expect(r).toEqual({
+      path: 'data/tenants/t1/export.enc',
+      confirmToken: 'tok',
+      expiresAt: '2026-10-29T00:00:00.000Z',
+    });
   });
 
-  it('POST /platform/tenants/:id/destroy 透传双签', async () => {
+  it('POST /platform/tenants/:id/destroy 透传双签与令牌', async () => {
     const { ctrl, offboarding } = makeCtrl();
-    const r = await ctrl.destroyTenant('t1', { approvals: ['ops:a', 'ops:b'] });
-    expect(offboarding.destroy).toHaveBeenCalledWith('t1', ['ops:a', 'ops:b']);
-    expect(r.deleted).toBe(true);
+    const r = await ctrl.destroyTenant('t1', { approvals: ['ops:a', 'ops:b'], confirmToken: 'tok' });
+    expect(offboarding.destroy).toHaveBeenCalledWith('t1', ['ops:a', 'ops:b'], 'tok');
+    expect(r.status).toBe('offboarding');
   });
 });

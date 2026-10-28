@@ -126,6 +126,13 @@ export class ImportController {
     });
   }
 
+  /** POST /admin/import-jobs/lock/release — 崩溃后强制释放导入租约 */
+  @HttpCode(HttpStatus.OK)
+  @Post('lock/release')
+  async releaseImportLock() {
+    return this.service.forceReleaseImportLock();
+  }
+
   /** GET /admin/import-jobs/counts — 各状态 job 计数 */
   @Get('counts')
   async countJobs() {
@@ -185,16 +192,33 @@ export class ImportController {
     });
   }
 
-  /** PATCH /admin/import-jobs/:id/items/:itemId — 逐条审核 */
+  /** PATCH /admin/import-jobs/:id/items/:itemId — 逐条审核（支持 modified） */
   @Patch(':id/items/:itemId')
   async reviewItem(
     @Param('id') jobId: string,
     @Param('itemId') itemId: string,
-    @Body() body: { reviewStatus: 'pending' | 'approved' | 'rejected' | 'needs-fix'; note?: string },
+    @Body()
+    body: {
+      reviewStatus?: ReviewStatus;
+      review_status?: ReviewStatus;
+      note?: string;
+      reviewer_note?: string;
+      question?: string;
+      answer?: string;
+    },
   ) {
+    const reviewStatus = body.reviewStatus ?? body.review_status;
+    if (!reviewStatus) {
+      throw new BadRequestException({
+        errCode: 'IMPORT_REVIEW_STATUS_REQUIRED',
+        detail: 'reviewStatus is required',
+      });
+    }
     return this.service.reviewItem(jobId, itemId, {
-      reviewStatus: body.reviewStatus,
-      note: body.note,
+      reviewStatus,
+      note: body.note ?? body.reviewer_note,
+      question: body.question,
+      answer: body.answer,
     });
   }
 
