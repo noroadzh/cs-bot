@@ -12,12 +12,16 @@ export interface UpgradeDeps {
   rollback(tenantId: string): Promise<void>;
   /** 金丝雀观察（生产可 sleep 24h；测试返回是否通过） */
   observe(tenantId: string): Promise<boolean>;
+  /** 升级通知（可选；生产可发 webhook/邮件） */
+  notify?(tenantIds: readonly string[], windowStart: Date): Promise<void>;
 }
 
 export interface UpgradeResult {
   upgraded: string[];
   failed: string[];
   rolledBack: string[];
+  deferred?: boolean;
+  windowStart?: string;
 }
 
 export class UpgradeOrchestrator {
@@ -25,9 +29,30 @@ export class UpgradeOrchestrator {
     private readonly deps: UpgradeDeps,
     private readonly canaryId?: string,
     private readonly batchPct = 10,
+    private readonly opts: {
+      window?: string;
+      noticeDays?: number;
+      now?: () => Date;
+    } = {},
   ) {}
 
-  async run(tenantIds: readonly string[], tag: string): Promise<UpgradeResult> {
+  async run(tenantIds: readonly string[], tag: string, force = false): Promise<UpgradeResult> {
+    const now = this.opts.now ? this.opts.now() : new Date();
+    const window = parseWindow(this.opts.window ?? '02:00-04:00', now);
+    if (!force && !(this.opts.noticeDays === 0 && inWindow(now, window))) {
+      const noticeMs = (this.opts.noticeDays ?? 3) * 86_400_000;
+      let scheduled = nextWindow(now, window);
+      if (scheduled.getTime() <= now.getTime()) {
+        scheduled = new Date(scheduled.getTime() + 86_400_000);
+      }
+      // 提前通知：窗口不得早于 now + noticeDays；不足则按整天顺延
+      while (scheduled.getTime() - now.getTime() < noticeMs) {
+        scheduled = new Date(scheduled.getTime() + 86_400_000);
+      }
+      if (this.deps.notify) await this.deps.notify(tenantIds, scheduled);
+      return { upgraded: [], failed: [], rolledBack: [], deferred: true, windowStart: scheduled.toISOString() };
+    }
+    if (this.deps.notify) await this.deps.notify(tenantIds, now);
     const upgraded: string[] = [];
     const failed: string[] = [];
     const rolledBack: string[] = [];
@@ -86,4 +111,29 @@ export class UpgradeOrchestrator {
       return false;
     }
   }
+}
+
+
+interface WindowTimes { start: number; end: number }
+
+function parseWindow(spec: string, day: Date): WindowTimes {
+  const [a, b] = spec.split('-');
+  const parse = (v: string) => {
+    const [h, m] = v.split(':').map(Number);
+    const d = new Date(day);
+    d.setHours(h, m ?? 0, 0, 0);
+    return d.getTime();
+  };
+  return { start: parse(a), end: parse(b) };
+}
+
+function inWindow(now: Date, w: WindowTimes): boolean {
+  const t = now.getTime();
+  return t >= w.start && t < w.end;
+}
+
+function nextWindow(now: Date, w: WindowTimes): Date {
+  const d = new Date(w.start);
+  if (now.getTime() >= w.end) d.setDate(d.getDate() + 1);
+  return d;
 }

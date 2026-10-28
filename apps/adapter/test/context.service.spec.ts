@@ -30,6 +30,23 @@ describe('ContextService', () => {
     expect(rounds.length).toBe(10); // 5 rounds * 2 messages
   });
 
+  it('CONTEXT_ROUNDS=3 时只保留 3 轮', async () => {
+    setConfig({ CONTEXT_ROUNDS: 3 });
+    let stored = '[]';
+    mockRedisInstance.get.mockImplementation(() => Promise.resolve(stored));
+    mockRedisInstance.multi.mockReturnValue({
+      set: function (this: any, _k: string, v: string, ..._a: any[]) { stored = v; return this; },
+      expire: function (this: any, ..._a: any[]) { return this; },
+      exec: jest.fn().mockResolvedValue([]),
+    });
+    const svc = new ContextService({} as any);
+    for (let i = 0; i < 5; i += 1) {
+      await svc.append('c3', 'u3', { question: `q${i}`, answer: `a${i}` });
+    }
+    expect(JSON.parse(stored)).toHaveLength(6);
+    setConfig();
+  });
+
   it('TTL 为 600 秒（默认）', async () => {
     let capturedEx: string = '';
     let capturedTtl: number = 0;

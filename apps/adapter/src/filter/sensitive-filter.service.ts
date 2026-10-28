@@ -61,10 +61,6 @@ export class SensitiveFilterService implements OnModuleInit, OnModuleDestroy {
     if (hits.length === 0) return text;
     const hitWords = [...new Set(hits.flatMap(([, matched]) => matched).filter(Boolean))];
     this.logger.warn({ detail: 'filter-hit', count: hitWords.length, hitWords });
-    let result = text;
-    for (const word of hitWords) {
-      result = result.replace(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '[内容已过滤]');
-    }
-    return result;
+    return '抱歉，该内容不便回复，请联系人工客服。';
   }
 }

@@ -429,7 +429,7 @@ triggers:
 - **配额与计量（Metering）**：
   - 配额维度：群数量上限、日消息量、文档数/QA 对数、素材存储 MB、LLM token 月度上限（可选）。
   - 采集：适配层每日汇总上报（只上报计数与资源摘要，**不上报正文**）→ 控制面写 `tenant_usage_daily`；实时拦截在适配层本地（本地计数器 + 配额下发）。
-  - 行为：80% 预警（通知租户与运营）、100% 拒新群/限流（已服务群不受影响）；配额变更即时下发（接口或每日拉取）。
+  - 行为：80% 预警（通知租户与运营）；群数达上限拒绝新群；日消息量达上限停止受理新消息并回配额提示（已有会话保留但不进入问答，与 `Daily message quota enforcement` 规格一致）；配额变更即时下发（接口或每日拉取）。
 - **订阅与授权管控**：
   - 订阅状态机：trialing → active → grace(7天只读) → suspended(受限模式) → terminated。
   - 到期流程：T-30/15/7 天提醒（邮件 + 运维群）→ 到期进宽限期（只读：问答可用、不可改知识库/加群）→ 宽限期满签发失效证书或直接将 license 置过期 → 群内仅回续期话术（复用 M9 受限模式，零 LLM 消耗）。
@@ -611,7 +611,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 |---|---|---|
 | tenant_id | varchar(16) PK | |
 | max_chats / max_msgs_per_day | integer | 群数上限、日消息量上限 |
-| max_docs / max_qa / max_asset_mb | integer | 知识库容量与素材存储上限 |
+| max_docs / max_qa / max_asset_mb | integer | 文档数 / QA 对数 / 素材容量上限（0=不限） |
 | llm_token_monthly | bigint null | 月度 token 上限（可选，默认不限） |
 | updated_at | timestamptz | 变更即下发实例 |
 
@@ -622,7 +622,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | msgs_in / msgs_triggered / qa_hit / qa_miss | integer | 消息与命中计数（**无正文**） |
 | llm_tokens | bigint | LLM 消耗估算 |
 | active_chats | integer | 当日在服群数 |
-| asset_mb / doc_count / qa_count | numeric | 容量水位快照 |
+| asset_mb / doc_count / qa_count | numeric | 容量水位快照（由适配层日报上报） |
 索引：`(stat_date)`。
 
 **platform_audit_log（运维审计，只追加）**

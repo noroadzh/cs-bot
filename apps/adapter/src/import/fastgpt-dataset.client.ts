@@ -18,6 +18,8 @@ export interface DatasetClient {
   writeBatch(datasetId: string, items: readonly DatasetQaPair[]): Promise<string[]>;
   /** 删除整个数据集（批次回滚） */
   deleteDataset(name: string): Promise<void>;
+  /** 按持久化 datasetId 删除（进程重启后仍可用） */
+  deleteDatasetById?(datasetId: string): Promise<void>;
 }
 
 /** 默认 HTTP 实现 */
@@ -38,10 +40,25 @@ export class HttpFastGptDatasetClient implements DatasetClient {
       });
   }
 
+  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { response?: { status?: number } }).response?.status;
+        if (status !== undefined && status < 500) throw err;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+      }
+    }
+    throw lastErr;
+  }
+
   async ensureDataset(name: string): Promise<string> {
     const cached = this.nameToId.get(name);
     if (cached) return cached;
-    const res = await this.http.post('/api/v1/core/dataset/create', { name });
+    const res = await this.withRetry(() => this.http.post('/api/v1/core/dataset/create', { name }));
     const id = String(res.data?.data?._id ?? res.data?.data?.id ?? '');
     this.nameToId.set(name, id);
     return id;
@@ -49,10 +66,9 @@ export class HttpFastGptDatasetClient implements DatasetClient {
 
   async writeBatch(datasetId: string, items: readonly DatasetQaPair[]): Promise<string[]> {
     const data = items.map((it) => ({ q: it.question, a: it.answer }));
-    const res = await this.http.post('/api/v1/core/dataset/data/pushData', {
-      datasetId,
-      data,
-    });
+    const res = await this.withRetry(() =>
+      this.http.post('/api/v1/core/dataset/data/pushData', { datasetId, data }),
+    );
     const ids = (res.data?.data?.insertLen !== undefined
       ? Array.from({ length: items.length }, (_, i) => `batch-${Date.now()}-${i}`)
       : (res.data?.data?.ids as string[] | undefined)) ?? [];
@@ -62,8 +78,12 @@ export class HttpFastGptDatasetClient implements DatasetClient {
   async deleteDataset(name: string): Promise<void> {
     const id = this.nameToId.get(name);
     if (!id) return;
-    await this.http.post('/api/v1/core/dataset/delete', { datasetId: id });
+    await this.deleteDatasetById(id);
     this.nameToId.delete(name);
+  }
+
+  async deleteDatasetById(datasetId: string): Promise<void> {
+    await this.withRetry(() => this.http.post('/api/v1/core/dataset/delete', { datasetId }));
   }
 }
 
@@ -91,5 +111,9 @@ export class InMemoryDatasetClient implements DatasetClient {
 
   async deleteDataset(name: string): Promise<void> {
     this.datasets.delete(name);
+  }
+
+  async deleteDatasetById(datasetId: string): Promise<void> {
+    this.datasets.delete(datasetId);
   }
 }

@@ -177,4 +177,14 @@ describe('MissExportService', () => {
       await expect(svc.exportXlsx(30, makeRes())).resolves.toBeUndefined();
     });
   });
+
+  it('queryRecords 支持 from/to 范围并写入 SQL 参数', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [] });
+    const svc = new MissExportService({} as any);
+    await svc.queryRecords(90, { from: '2026-01-01', to: '2026-01-31' });
+    const [sql, params] = poolQuery.mock.calls[0];
+    expect(sql).toContain('created_at >= $1');
+    expect(sql).toContain('created_at <= $2');
+    expect(params).toEqual(['2026-01-01', '2026-01-31']);
+  });
 });

@@ -3,7 +3,7 @@
  * Spec M10 §1.4.2 / import-review: 5 类正则 → 占位符替换，命中 flag 写入。
  *
  * 占位符格式: <TYPE:n> —— n 为该 type 在本 redact 调用内的第几次命中（从 1 起）
- *  - 5 类：PHONE / ID / CARD / EMAIL / URL
+ *  - 7 类：PHONE / ID / CARD / EMAIL / URL / ADDRESS / NAME
  *  - 关闭策略：MOCK_REDACTION=true 时全部跳过（测试用）
  *
  * 设计点：
@@ -16,11 +16,13 @@
  */
 const COMBINED_RE = new RegExp(
   [
+    '(?<address>[\\u4e00-\\u9fa5]{2,}(?:省|市|区|县)[\\u4e00-\\u9fa5A-Za-z0-9]+(?:路|街|道|号|小区|大厦|楼|室)[\\u4e00-\\u9fa5A-Za-z0-9\\-#]*)',
     '(?<url>https?:\\/\\/[^\\s<>"\']+)',
     '(?<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})',
     '(?<id>\\b\\d{17}[\\dXx]\\b)',
     '(?<card>\\b\\d{16,19}\\b)',
     '(?<phone>(?<!\\d)1[3-9]\\d{9}(?!\\d))',
+    '(?<name>(?<=姓名[:：\\s]|联系人[:：\\s]|收货人[:：\\s]|客户姓名[:：\\s])[\\u4e00-\\u9fa5]{2,4})',
   ].join('|'),
   'g',
 );
@@ -32,6 +34,8 @@ const GROUP_META: Record<string, { type: string; flag: string }> = {
   card: { type: 'CARD', flag: 'card' },
   email: { type: 'EMAIL', flag: 'email' },
   url: { type: 'URL', flag: 'url' },
+  address: { type: 'ADDRESS', flag: 'address' },
+  name: { type: 'NAME', flag: 'name' },
 };
 
 export interface RedactionResult {

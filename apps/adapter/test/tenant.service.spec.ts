@@ -272,6 +272,18 @@ describe('TenantService', () => {
       });
     });
 
+    it('续期前签发绑定指纹的新 license', async () => {
+      poolQuery
+        .mockResolvedValueOnce({ rows: [tenantRow({ status: 'active' })] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [tenantRow({ status: 'active' })] });
+      const issue: any = jest.fn(async () => undefined);
+      const instance = svc();
+      instance.setLicenseIssuer({ issue } as any);
+      await instance.renew('t1', 30, 'op-1');
+      expect(issue).toHaveBeenCalledWith(expect.objectContaining({ id: 't1', expiresAtMs: expect.any(Number) }));
+    });
+
     it('offboarding 状态禁止续费', async () => {
       poolQuery.mockResolvedValueOnce({ rows: [tenantRow({ status: 'offboarding' })] });
       await expect(svc().renew('t1', 30)).rejects.toMatchObject({
@@ -437,6 +449,17 @@ describe('TenantService', () => {
       await expect(svc().getDetail('missing')).rejects.toMatchObject({
         response: { errCode: 'TENANT_NOT_FOUND' },
       });
+    });
+  });
+
+  describe('shell access audit', () => {
+    it('writes shell_access with duration and reason', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [tenantRow()] });
+      const audit = auditAppend();
+      await svc(audit).recordShellAccess('t1', 5000, 'ops');
+      expect(audit).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'shell_access', actor: 'ops', tenantId: 't1', payload: { tenantId: 't1', durationMs: 5000 },
+      }));
     });
   });
 });

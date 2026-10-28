@@ -1,0 +1,6 @@
+# 可选 override：仅在需要远程访问控制面时叠加使用
+#   docker compose -f docker-compose.yml -f docker-compose.control-plane-expose.yml up -d
+services:
+  control-plane:
+    ports:
+      - "${CONTROL_PLANE_BIND:?set a management address}:3100:3100"

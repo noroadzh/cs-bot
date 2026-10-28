@@ -22,6 +22,7 @@ import {
   TENANT_MSG_LIMIT_TEXT,
 } from '../license/license-gate.service.js';
 import { AppLogger } from '../common/logger.js';
+import { ImageTaskQueue } from '../media/image-task-queue.js';
 import { ErrCode } from '@cs-bot/shared';
 import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
 import { WecomCallbackQueryDto, WecomCallbackBodyDto } from './dto/wecom-callback.dto.js';
@@ -44,6 +45,7 @@ const GATE_TEXTS: Record<string, string> = {
 @Controller('wecom')
 export class WecomController {
   private readonly logger = new AppLogger('WecomController');
+  private readonly imageQueue = new ImageTaskQueue();
 
   constructor(
     private readonly crypto: WecomCrypto,
@@ -173,43 +175,21 @@ export class WecomController {
       return;
     }
 
-    // 6.1 / 6.2 / 6.3 Image message handling: if the inbound message carries a
-    // MediaId and no text Content, download the bytes and run image recognition
-    // before dispatching to the routing pipeline. The recognition description is
-    // injected as Content so the QA engine sees a normal text query. Failures
-    // must not block message routing.
-    // PRD FR-9 规则 2: 识别失败或超时回复引导话术，不把占位文本发给 QA
+    // 图片：先 ack，再异步下载/识别/发送；识别结果非 [NO_TEXT] 才进入问答链路。
     const GUIDANCE_TEXT = '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～';
     const parsedMsg = msg as any;
     if (!parsedMsg.Content && parsedMsg.MediaId && parsedMsg.MsgType === 'image') {
       this.usageService.increment('imagesReceived');
-      try {
-        const buf = await this.wecomClient.downloadMedia(parsedMsg.MediaId);
-        const maxBytes = ConfigService.instance.MAX_IMAGE_BYTES ?? 10 * 1024 * 1024;
-        if (buf.length > maxBytes) {
-          throw new Error(`image too large: ${buf.length} > ${maxBytes}`);
-        }
-        const description = await this.recognizeService.recognizeImage(buf, 'image/jpeg');
-        if (description) {
-          this.usageService.increment('imagesRecognized');
-          parsedMsg.Content = description;
-          parsedMsg.Recognition = description;
-        } else {
-          // 识别返回空（无有效内容 / 超时 / 失败）→ 跳过 routing，直接回复引导话术
-          this.usageService.increment('imagesSkipped');
-          await this.sendGuidanceAndSkipRouting(parsedMsg, traceId, GUIDANCE_TEXT);
-          // 图片分支由本方法接管响应：必须显式 ack，否则企微侧请求挂起重试。
-          res.status(HttpStatus.OK).send('');
-          return;
-        }
-      } catch (err) {
-        // 识别过程抛异常 → 跳过 routing，直接回复引导话术
-        this.usageService.increment('imagesSkipped');
-        this.logger.warn({ traceId, detail: 'image-recognize-failed', err: (err as Error).message });
+      const key = String(parsedMsg.MsgId ?? parsedMsg.MediaId);
+      const result = this.imageQueue.enqueue(key, () =>
+        this.processImage(parsedMsg, traceId, GUIDANCE_TEXT),
+      );
+      res.status(HttpStatus.OK).send('');
+      if (result === 'full') {
+        this.logger.warn({ traceId, detail: 'image-queue-full', key });
         await this.sendGuidanceAndSkipRouting(parsedMsg, traceId, GUIDANCE_TEXT);
-        res.status(HttpStatus.OK).send('');
-        return;
       }
+      return;
     }
 
     // 群聊（appchat）不支持被动回复，必须立即 ack 后走主动发送；
@@ -218,6 +198,34 @@ export class WecomController {
     this.routingService.dispatch(msg, traceId).catch((err) => {
       this.logger.error({ traceId, err: (err as Error).message });
     });
+  }
+
+  /** 图片异步处理：下载 → 识别 → 进入问答或引导话术 */
+  private async processImage(
+    msg: { MediaId?: string; MsgId?: string; ChatId?: string; FromUserName?: string },
+    traceId: string,
+    guidance: string,
+  ): Promise<void> {
+    try {
+      const buf = await this.wecomClient.downloadMedia(String(msg.MediaId));
+      const maxBytes = ConfigService.instance.MAX_IMAGE_BYTES ?? 10 * 1024 * 1024;
+      if (buf.length > maxBytes) throw new Error(`image too large: ${buf.length} > ${maxBytes}`);
+      const description = (await this.recognizeService.recognizeImage(buf, detectImageMime(buf))).trim();
+      if (!description || description.toUpperCase() === '[NO_TEXT]') {
+        this.usageService.increment('imagesSkipped');
+        await this.sendGuidanceAndSkipRouting(msg, traceId, guidance);
+        return;
+      }
+      this.usageService.increment('imagesRecognized');
+      const inbound = msg as any;
+      inbound.Content = description;
+      inbound.Recognition = description;
+      await this.routingService.dispatch(inbound, traceId);
+    } catch (err) {
+      this.usageService.increment('imagesSkipped');
+      this.logger.warn({ traceId, detail: 'image-recognize-failed', err: (err as Error).message });
+      await this.sendGuidanceAndSkipRouting(msg, traceId, guidance);
+    }
   }
 
   /**
@@ -240,4 +248,18 @@ export class WecomController {
       this.logger.error({ traceId, chatId, detail: 'guidance-send-fail', err: (err as Error).message });
     }
   }
+}
+
+function detectImageMime(buf: Buffer): string {
+  if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return 'image/png';
+  }
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.subarray(0, 6).toString('ascii') === 'GIF87a' || buf.subarray(0, 6).toString('ascii') === 'GIF89a') {
+    return 'image/gif';
+  }
+  if (buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP') {
+    return 'image/webp';
+  }
+  return 'image/jpeg';
 }

@@ -26,11 +26,12 @@ export class MissController {
     const format = query.format;
     const days = query.days;
     const daysNum = parseInt(days ?? '90', 10);
+    const range = query.from || query.to ? { from: query.from, to: query.to } : undefined;
     if ((format ?? 'json').toLowerCase() === 'xlsx') {
-      await this.exportService.exportXlsx(daysNum, res as unknown as NodeJS.WritableStream & { setHeader?: (k: string, v: string) => void });
+      await this.exportService.exportXlsx(daysNum, res as unknown as NodeJS.WritableStream & { setHeader?: (k: string, v: string) => void }, range);
       return;
     }
-    const rows = await this.exportService.queryRecords(daysNum);
+    const rows = await this.exportService.queryRecords(daysNum, range);
     res.setHeader('Content-Type', 'application/json');
     res.json({ total: rows.length, rows });
   }

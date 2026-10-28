@@ -7,6 +7,7 @@
  */
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import axios from 'axios';
 import type { UpgradeDeps } from './upgrade-orchestrator.js';
 
 const execFileP = promisify(execFile);
@@ -16,6 +17,7 @@ export class ShellUpgradeDeps implements UpgradeDeps {
     private readonly script: string,
     private readonly timeoutMs = 120_000,
     private readonly observeMs = 0,
+    private readonly opsWebhookUrl = '',
   ) {}
 
   private async run(...args: string[]): Promise<void> {
@@ -44,6 +46,16 @@ export class ShellUpgradeDeps implements UpgradeDeps {
 
   async rollback(tenantId: string): Promise<void> {
     await this.run('rollback', tenantId);
+  }
+
+  async notify(tenantIds: readonly string[], windowStart: Date): Promise<void> {
+    if (!this.opsWebhookUrl) return;
+    const content = `[升级通知] ${tenantIds.length} 个租户计划于 ${windowStart.toISOString()} 升级，请提前 3 个工作日通知租户。`;
+    try {
+      await axios.post(this.opsWebhookUrl, { msgtype: 'text', text: { content } }, { timeout: 5000 });
+    } catch {
+      /* 通知失败不阻断升级编排 */
+    }
   }
 
   async observe(tenantId: string): Promise<boolean> {

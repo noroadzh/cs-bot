@@ -38,7 +38,7 @@ suite('独立控制面 e2e', () => {
     const controlUrl = dbUrl(PG_URL!, DB);
     control = new Pool({ connectionString: controlUrl, max: 2 });
     const pool = control;
-    for (const f of ['007-tenant.sql', '008-control-plane.sql', '011-usage-counters.sql', '012-tenant-ports.sql']) {
+    for (const f of ['007-tenant.sql', '008-control-plane.sql', '011-usage-counters.sql', '012-tenant-ports.sql', '016-runtime-gaps.sql']) {
       await pool.query(readFileSync(join(process.cwd(), 'src/platform', f), 'utf8'));
     }
 
@@ -84,7 +84,7 @@ suite('独立控制面 e2e', () => {
     const created = await request(app.getHttpServer())
       .post('/platform/tenants')
       .set('Authorization', adminAuth)
-      .send({ name: 'CP-E2E', contact: 'cp@example.com' });
+      .send({ name: 'CP-E2E', contact: 'cp@example.com', reason: 'e2e create' });
     expect(created.status).toBe(201);
     createdId = created.body.id;
     expect(createdId).toBeTruthy();

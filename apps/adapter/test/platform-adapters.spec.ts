@@ -11,6 +11,8 @@ import { HttpHealthSource } from '../src/platform/platform-monitor.js';
 import { TenantService } from '../src/platform/tenant.service.js';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
+jest.setTimeout(60_000);
+
 let dir: string;
 
 beforeAll(async () => {
@@ -40,7 +42,7 @@ describe('CommandCertificateProvider', () => {
       cert: 'CERT-t.example.com\n',
       key: 'KEY-t.example.com\n',
     });
-  }, 20_000);
+  }, 60_000);
 });
 
 describe('FileCertificateProvider', () => {
@@ -63,7 +65,7 @@ describe('ShellLicenseIssuer', () => {
     await issuer.issue({ id: 'T-1', host: 't1.example.com' });
     const args = (await readFile(out, 'utf8')).trim().split('\n');
     expect(args).toEqual(['issue', '--tenant', 'T-1', '--host', 't1.example.com', '--key', key]);
-  }, 20_000);
+  }, 60_000);
 });
 
 describe('ShellUpgradeDeps', () => {

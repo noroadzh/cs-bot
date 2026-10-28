@@ -33,6 +33,9 @@ import {
 } from './near-duplicate.js';
 import { buildJobManifest } from './import-manifest.js';
 import { ImportLock } from './import-lock.js';
+import { ImportTaskQueue } from './import-task-queue.js';
+import { shouldPauseImport } from './import-memory.js';
+import { listUnpaired, pairUnpaired } from './import-unpaired.js';
 import { runParseJob, type ParseHost } from './import-parse.js';
 import { createFromFile, createFromUrl, type CreateHost } from './import-create.js';
 import { approveAll, reviewItem, type ReviewHost } from './import-review.js';
@@ -116,6 +119,8 @@ export class ImportJobService implements OnModuleInit {
   private readonly logger = new AppLogger('ImportJobService');
   private readonly pool: Pool;
   private readonly lock: ImportLock;
+  private readonly tasks = new ImportTaskQueue();
+  private importBaselineRss = 0;
 
   constructor(
     _config: ConfigService,
@@ -126,6 +131,9 @@ export class ImportJobService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
+    await this.pool
+      .query("UPDATE import_job SET status='failed', parse_error='interrupted by restart', updated_at=NOW() WHERE status='parsing'")
+      .catch(() => undefined);
     await this.lock.resetOnBoot();
   }
 
@@ -218,6 +226,41 @@ export class ImportJobService implements OnModuleInit {
   // 查询
   // -------------------------------------------------------------------------
 
+  /**
+   * 异步启动解析：校验状态 + 抢租约 + 入队，立即返回当前 job；HTTP 层返回 202。
+   */
+  async startParse(jobId: string): Promise<ImportJob> {
+    const job = await getJob(this.pool, jobId);
+    if (job === null) {
+      throw new HttpException(
+        { errCode: 'IMPORT_JOB_NOT_FOUND', detail: `import job ${jobId} not found` },
+        HttpStatus.NOT_FOUND,
+      );
+    }
+    if (job.status !== 'uploaded') {
+      throw new HttpException(
+        { errCode: 'IMPORT_BAD_STATE', detail: `import job is ${job.status}, expected uploaded`, status: job.status },
+        HttpStatus.CONFLICT,
+      );
+    }
+    await this.lock.acquire(jobId, 'parsing');
+    const accepted = this.tasks.enqueue(async () => {
+      try {
+        await runParseJob(this as unknown as ParseHost, jobId);
+      } finally {
+        await this.lock.release(jobId);
+      }
+    });
+    if (!accepted) {
+      await this.lock.release(jobId);
+      throw new HttpException(
+        { errCode: 'IMPORT_BUSY', detail: 'import task queue is full' },
+        HttpStatus.CONFLICT,
+      );
+    }
+    return job;
+  }
+
   async getJob(jobId: string): Promise<ImportJob | null> {
     return getJob(this.pool, jobId);
   }
@@ -240,6 +283,19 @@ export class ImportJobService implements OnModuleInit {
 
   async countItemsByStatus(jobId: string): Promise<Record<ReviewStatus, number>> {
     return countItemsByStatus(this.pool, jobId);
+  }
+
+  listUnpaired(jobId: string, limit = 50, offset = 0) {
+    return listUnpaired(this.pool, jobId, limit, offset);
+  }
+
+  pairUnpaired(jobId: string, customerMessageId: string, serviceMessageId: string) {
+    return pairUnpaired(
+      { pool: this.pool, redactor: this.redactor, blacklist: this.getBlacklist() },
+      jobId,
+      customerMessageId,
+      serviceMessageId,
+    );
   }
 
   async deleteJob(jobId: string): Promise<{ deletedItems: number }> {
@@ -284,12 +340,17 @@ export class ImportJobService implements OnModuleInit {
 
   /** 导入内存保护：RSS 超过限额 80% 时暂停，恢复后继续（保留进度） */
   private async guardMemory(): Promise<void> {
-    const limitMb = ConfigService.instance.IMPORT_MEMORY_LIMIT_MB ?? 512;
-    while (isMemoryHigh(process.memoryUsage().rss, limitMb)) {
+    const configured = ConfigService.instance.IMPORT_MEMORY_LIMIT_MB ?? 512;
+    if (this.importBaselineRss === 0) this.importBaselineRss = process.memoryUsage().rss;
+    for (;;) {
+      const rss = process.memoryUsage().rss;
+      const incrementalMb = (rss - this.importBaselineRss) / 1024 / 1024;
+      if (!shouldPauseImport(rss, this.importBaselineRss, configured)) return;
       this.logger.warn({
         detail: 'import-memory-pause',
-        rssMb: Math.round(process.memoryUsage().rss / 1024 / 1024),
-        limitMb,
+        rssMb: Math.round(rss / 1024 / 1024),
+        incrementalMb: Math.round(incrementalMb),
+        limitMb: configured,
       });
       await new Promise((r) => setTimeout(r, 5000));
     }
@@ -447,6 +508,7 @@ export class ImportJobService implements OnModuleInit {
       [jobId, message.slice(0, 1000), new Date().toISOString()],
     );
     await this.refreshImportCounters(jobId).catch(() => undefined);
+    await this.cleanupSource(jobId).catch(() => undefined);
     return (await this.getJob(jobId))!;
   }
 

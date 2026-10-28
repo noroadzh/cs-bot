@@ -27,6 +27,31 @@ export class WebhookNotifier implements Notifier {
   }
 }
 
+export class EmailWebhookNotifier implements Notifier {
+  constructor(private readonly url: string, private readonly timeoutMs = 5000) {}
+
+  async send(target: string, subject: string, body: string): Promise<void> {
+    if (!this.url) return;
+    try {
+      await axios.post(
+        this.url,
+        { to: target, subject, body },
+        { timeout: this.timeoutMs },
+      );
+    } catch {
+      /* 邮件网关失败不影响主流程 */
+    }
+  }
+}
+
+export class MultiNotifier implements Notifier {
+  constructor(private readonly notifiers: readonly Notifier[]) {}
+
+  async send(target: string, subject: string, body: string): Promise<void> {
+    await Promise.all(this.notifiers.map((n) => n.send(target, subject, body)));
+  }
+}
+
 export interface ReminderTenant {
   id: string;
   name: string;

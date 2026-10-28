@@ -43,6 +43,7 @@ export function mapJob(row: Record<string, unknown>): ImportJob {
     importedCount: Number(row.imported_count ?? 0),
     failedCount: Number(row.failed_count ?? 0),
     datasetName: row.dataset_name == null ? null : String(row.dataset_name),
+    datasetId: row.dataset_id == null ? null : String(row.dataset_id),
     sourceShape: row.source_shape == null ? null : String(row.source_shape),
     createdAt: new Date(row.created_at as string).toISOString(),
     updatedAt: new Date(row.updated_at as string).toISOString(),

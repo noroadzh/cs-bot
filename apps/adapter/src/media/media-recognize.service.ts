@@ -31,7 +31,7 @@ export class MediaRecognizeService {
     } else {
       this.api = axios.create({
         baseURL: cfg.QWEN_VL_BASE_URL,
-        timeout: cfg.LLM_TIMEOUT_MS,
+        timeout: 10_000,
         headers: { Authorization: `Bearer ${cfg.QWEN_VL_API_KEY}` },
       });
     }
@@ -55,7 +55,7 @@ export class MediaRecognizeService {
     try {
       const resp = await axios.get<ArrayBuffer>(url, {
         responseType: 'arraybuffer',
-        timeout: ConfigService.instance.LLM_TIMEOUT_MS,
+        timeout: 10_000,
       });
       const buf = Buffer.from(resp.data);
       // MIME 取自响应头而非写死：企微下载的图可能是 png/webp，写死 jpeg 会让识别走错分支。
@@ -77,13 +77,13 @@ export class MediaRecognizeService {
       const resp = await vlSemaphore().run(() => this.api!.post(
         '/v1/chat/completions',
         {
-          model: 'qwen-vl-plus',
+          model: ConfigService.instance.QWEN_VL_MODEL || 'qwen-vl-plus',
           messages: [
             {
               role: 'user',
               content: [
                 { type: 'image_url', image_url: { url: dataUrl } },
-                { type: 'text', text: '请用一段中文简短描述这张图片的主要内容。' },
+                { type: 'text', text: '提取图片中与咨询/操作相关的文字，归纳为一句中文问题；无有效内容时仅返回 [NO_TEXT]' },
               ],
             },
           ],

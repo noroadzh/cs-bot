@@ -191,6 +191,10 @@ cp .env.template .env && chmod 600 .env && vim .env
 | CSBOT_UID / CSBOT_GID | | 65532 / 65532 | 容器运行 UID/GID（默认非 root） |
 | DOCKER_GID | | 999 | 宿主 docker 组 GID（控制面访问 docker socket） |
 | TENANT_ADMIN_ALLOW_CIDRS | | （空） | 租户 FastGPT 管理口 8443 放行网段；空 = 不开放（M11） |
+| CONTROL_PLANE_BIND | | （空） | 远程访问控制面时才设置管理地址，并叠加 `docker-compose.control-plane-expose.yml` |
+| PLATFORM_UPGRADE_WINDOW | | 02:00-04:00 | 批量升级低峰窗口 |
+| PLATFORM_UPGRADE_NOTICE_DAYS | | 3 | 升级前提前通知天数 |
+| EMAIL_WEBHOOK_URL | | （空） | 到期提醒邮件网关 Webhook（与 OPS_WEBHOOK_URL 并用） |
 | SLOW_REPLY_TEXT | | （默认话术） | 繁忙提示话术 |
 | MISS_RECORD_RETENTION_DAYS | | 90 | 未命中记录保留期 |
 | ASSET_MAX_FILE_MB / ASSET_MAX_VIDEO_MB | | 20 / 10 | 素材上限（增项 A） |
@@ -212,6 +216,7 @@ cp .env.template .env && chmod 600 .env && vim .env
 | USAGE_PERIOD | | daily | 计量周期：daily / weekly / monthly |
 | QWEN_VL_BASE_URL | | - | 视觉模型端点（增项 A；为空则走 mock） |
 | QWEN_VL_API_KEY | | - | 视觉模型 Key（增项 A） |
+| QWEN_VL_MODEL | | qwen-vl-plus | 视觉模型名称（增项 A） |
 | QWEN_VL_MODEL | | qwen-vl-max | 视觉模型名称（增项 A） |
 | MAX_ASSET_REFS | | 2 | 单次回复最大引用素材数（增项 A） |
 | ASSET_MAX_FILE_MB | | 20 | 素材上限（增项 A） |
@@ -236,7 +241,15 @@ sudo ./deploy/init-perms.sh   # 将 data/logs/license/backup 归属到 CSBOT_UID
 
 ```bash
 docker compose up -d
-docker compose ps        # 期望 6 个容器全部 Up / healthy
+docker compose ps        # 期望 6 个基线容器 + control-plane 全部 Up / healthy
+```
+
+控制面默认不发布主机端口。需要远程访问时：
+
+```bash
+# 只绑定管理网段地址
+CONTROL_PLANE_BIND=10.0.0.5 docker compose \
+  -f docker-compose.yml -f docker-compose.control-plane-expose.yml up -d
 ```
 
 ### 7.5.1 数据库迁移（追加式 SQL）
@@ -255,6 +268,7 @@ docker compose ps        # 期望 6 个容器全部 Up / healthy
 | 013 | `apps/adapter/src/import/013-import-message-stage.sql` | 导入流式暂存表 | M10 |
 | 014 | `apps/adapter/src/import/014-import-dedup-counters.sql` | 条目去重键/会话元数据/阶段计数/导入租约 | M10 |
 | 015 | `apps/adapter/src/platform/015-tenant-offboarding.sql` | 注销令牌/T+7 计划/删除确认单 | M11 |
+| 016 | `apps/adapter/src/platform/016-runtime-gaps.sql` | dataset 标识、凭证交接标记、容量配额/用量、升级通知 | M10/M11 |
 
 > **应用方式**：全新安装时上述 SQL 已随 `docker compose` 挂载到 `pg` 容器的 `/docker-entrypoint-initdb.d/`，首启按编号自动执行；存量升级时 `docker exec -i pg psql -U <用户> -d <库>` 依次执行 `/app/migrate/*.sql`（镜像内按编号排序）。M10/M11 默认 `PLATFORM_ENABLED=false` 时不要求创建租户表，但建议随版本一并执行以保持结构一致。
 
@@ -304,6 +318,8 @@ docker exec adapter logrotate -f /etc/logrotate.conf   # 手动切割（自动�
 
 ### 9.2 备份（每日 02:00 自动，保留 7 天）
 
+备份包含 adapter/FastGPT/控制面三个数据库的 pg_dump、Mongo、assets 与租户实例；控制面库文件名为 `pg_control_<date>.sql`。
+
 内容：两个 database 的 pg_dump + mongodump + `data/assets` 打包 → `/opt/cs-bot/backup/`。
 验证备份可执行：`docker exec adapter /app/scripts/backup.sh`（手动触发一次，确认产物生成）。
 
@@ -351,21 +367,34 @@ curl -X POST -u admin:<口令> https://<域名>/admin/license/reload
 
 ### 9.5 租户注销（SaaS）
 
-注销分两步，**不会立即删除数据**：
+注销分两步，**不会立即删除数据**；导出包包含知识库文档、assets 文件字节、租户数据库 dump 与配置，并在 T+7 前可解密校验：
 
 ```bash
 # 1) 导出加密包，返回 path / confirmToken / expiresAt（令牌仅显示一次，24h 有效）
-curl -X POST -u admin:<口令> https://<控制面>/platform/tenants/<id>/export
+curl -X POST -u admin:<口令> -H 'content-type: application/json' \
+  -d '{"reason":"contract ended"}' \
+  https://<控制面>/platform/tenants/<id>/export
 
 # 2) 双签 + 令牌；进入 offboarding，返回 scheduledAt（T+7）
 curl -X POST -u admin:<口令> -H 'content-type: application/json' \
-  -d '{"approvals":["ops:alice","ops:bob"],"confirmToken":"<上一步的令牌>"}' \
+  -d '{"approvals":["ops:alice","ops:bob"],"confirmToken":"<上一步的令牌>","reason":"tenant confirmed receipt"}' \
   https://<控制面>/platform/tenants/<id>/destroy
 ```
 
 - T+7 由每小时 sweep 删除容器、数据库、备份、证书与密钥，并写入删除确认单（`tenant_destroy_confirmation`）与审计 `tenant.destroyed`
 - 重复调用 destroy 返回同一计划；offboarding 状态禁止续费/暂停/恢复/重新开通
 - 到期前需要运维确认 `offboarding` 计划与备份包已交付
+- 开通后生成的管理员/FastGPT 根口令通过 `POST /platform/tenants/<id>/credentials/handoff` 一次性领取，二次读取返回 410；日志与审计不含明文
+
+
+### 9.6 导入、图片与本地模型运维
+
+- **导入**：源文件落盘权限 0600，任务失败/结束即删除；解析为后台任务，接口返回 202 后用 `GET /admin/import-jobs/:id` 轮询；未配对消息用 `GET .../unpaired` 查看、`POST .../unpaired/pair` 补配；脱敏覆盖手机号/身份证/银行卡/邮箱/URL/地址/姓名。
+- **图片**：回调先 ack，识别异步执行；识别超时 10s，模型取 `QWEN_VL_MODEL`，提示词要求提取咨询问题，无内容返回 `[NO_TEXT]` 并回引导话术。
+- **本地模型**：所有模式均走 FastGPT RAG，`MODEL_MODE` 只控制模型通道与云回退；local 模式禁止云出口，hybrid 在 FastGPT 失败时回落，恢复需连续 5 分钟健康。
+- **审计**：平台变更请求需带 `reason`（body 或 `X-Operator-Reason`）；审计保留 180 天，清理前用 `scripts/export-audit.mjs` 导出异地留存。
+- **升级**：默认窗口 02:00–04:00，提前 3 个工作日通知；紧急升级需显式 force 并记审计。
+- **凭证**：开通后 `POST /platform/tenants/:id/credentials/handoff` 一次性领取生成口令，二次读取 410。
 
 ## 10. 常见故障排查
 

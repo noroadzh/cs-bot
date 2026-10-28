@@ -11,6 +11,23 @@ import type { Writable } from 'stream';
 import { ConfigService } from '../config/config.service.js';
 import { maskPII } from '@cs-bot/shared';
 
+export interface MissRange {
+  from?: string;
+  to?: string;
+}
+
+function buildWhere(days: number, range?: MissRange): { sql: string; params: unknown[] } {
+  if (range?.from || range?.to) {
+    const parts: string[] = [];
+    const params: unknown[] = [];
+    if (range.from) { params.push(range.from); parts.push(`created_at >= $${params.length}::timestamptz`); }
+    if (range.to) { params.push(range.to); parts.push(`created_at <= $${params.length}::timestamptz`); }
+    return { sql: parts.join(' AND '), params };
+  }
+  const daysNum = Number.isFinite(days) && days > 0 ? Math.trunc(days) : 90;
+  return { sql: `created_at >= now() - interval '${daysNum} days'`, params: [] };
+}
+
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 const HEADER = ['traceId', 'chatId', 'userId', 'question', 'score', 'engine', 'mediaType', 'status', 'createdAt'] as const;
@@ -21,16 +38,18 @@ const FETCH_BATCH = 2000;
 export class MissExportService {
   constructor(_config: ConfigService) {}
 
-  async queryRecords(days = 90): Promise<any[]> {
+  async queryRecords(days = 90, range?: MissRange): Promise<any[]> {
     const pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL });
     try {
+      const where = buildWhere(days, range);
       const result = await pool.query(
         `SELECT trace_id, chat_id, user_id, question, score, engine,
                 media_type AS "mediaType", status, created_at
          FROM miss_record
-         WHERE created_at >= now() - interval '${days} days'
+         WHERE ${where.sql}
          ORDER BY created_at DESC
          LIMIT ${EXPORT_LIMIT}`,
+        where.params,
       );
       return result.rows;
     } finally {
@@ -43,10 +62,10 @@ export class MissExportService {
    * 内存中始终只保持一个批次的数据。
    * 客户端提前断开导致的流错误被捕获并降级为 WARN，不向上抛出。
    */
-  async exportXlsx(days: number, res: NodeJS.WritableStream & { setHeader?: (k: string, v: string) => void }): Promise<void> {
+  async exportXlsx(days: number, res: NodeJS.WritableStream & { setHeader?: (k: string, v: string) => void }, range?: MissRange): Promise<void> {
     const cfg = ConfigService.instance;
     const now = new Date();
-    const from = new Date(now.getTime() - days * 86400000);
+    const from = range?.from ? new Date(range.from) : new Date(now.getTime() - days * 86400000);
     const ymd = (d: Date) => d.toISOString().slice(0, 10);
 
     res.setHeader?.('Content-Type', XLSX_MIME);
@@ -61,13 +80,14 @@ export class MissExportService {
     let client: PoolClient | null = null;
     try {
       client = await pool.connect();
+      const where = buildWhere(days, range);
       await client.query(`DECLARE cur CURSOR FOR
         SELECT trace_id, chat_id, user_id, question, score, engine,
                media_type AS "mediaType", status, created_at
         FROM miss_record
-        WHERE created_at >= now() - interval '${days} days'
+        WHERE ${where.sql}
         ORDER BY created_at DESC
-        LIMIT ${EXPORT_LIMIT}`);
+        LIMIT ${EXPORT_LIMIT}`, where.params);
       // eslint-disable-next-line no-constant-condition
       while (true) {
         const batch = await client.query<Record<string, unknown>>(`FETCH ${FETCH_BATCH} FROM cur`);

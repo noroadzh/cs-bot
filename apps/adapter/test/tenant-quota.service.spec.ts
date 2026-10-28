@@ -57,6 +57,7 @@ describe('TenantQuotaService', () => {
 
   describe('setQuota', () => {
     it('空 patch → 400 TENANT_QUOTA_INVALID', async () => {
+
       await expect(svc().setQuota('t1', {})).rejects.toMatchObject({
         response: { errCode: 'TENANT_QUOTA_INVALID' },
       });
@@ -148,6 +149,16 @@ describe('TenantQuotaService', () => {
   });
 
   // ---- getQuota / ensureDefaultQuota ----
+
+    it('容量维度 maxDocs/maxQa/maxAssetMb 可更新', async () => {
+      poolQuery
+        .mockResolvedValueOnce({ rows: [quotaRow()] })
+        .mockResolvedValueOnce({ rows: [quotaRow({ max_docs: 2000, max_qa: 5000, max_asset_mb: 4096 })] });
+      const out = await svc().setQuota('t1', { maxDocs: 2000, maxQa: 5000, maxAssetMb: 4096 });
+      expect(out.maxDocs).toBe(2000);
+      expect(out.maxQa).toBe(5000);
+      expect(out.maxAssetMb).toBe(4096);
+    });
 
   describe('getQuota', () => {
     it('有行 → 映射返回', async () => {

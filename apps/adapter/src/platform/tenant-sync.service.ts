@@ -45,7 +45,7 @@ export class TenantSyncService implements OnModuleDestroy {
       const row = t.rows[0];
       if (!row.host || !row.port) return;
       const q = await this.pool.query(
-        `SELECT max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month
+        `SELECT max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, max_docs, max_qa, max_asset_mb
          FROM tenant_quota WHERE tenant_id = $1`,
         [tenantId],
       );
@@ -65,6 +65,9 @@ export class TenantSyncService implements OnModuleDestroy {
           maxApiCalls: Number(q.rows[0]?.max_api_calls ?? 0),
           maxUsers: Number(q.rows[0]?.max_users ?? 0),
           maxLlmTokensPerMonth: Number(q.rows[0]?.max_llm_tokens_per_month ?? 0),
+          maxDocs: Number(q.rows[0]?.max_docs ?? 0),
+          maxQa: Number(q.rows[0]?.max_qa ?? 0),
+          maxAssetMb: Number(q.rows[0]?.max_asset_mb ?? 0),
         },
       };
       await this.client.sync({ id: tenantId, host: String(row.host), port: Number(row.port) }, token, payload);

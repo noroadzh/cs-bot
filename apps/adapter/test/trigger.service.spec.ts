@@ -7,6 +7,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
+import { TriggerService } from '../src/routing/trigger.service.js';
 
 const KEYWORDS_FILE = join(tmpdir(), 'csbot-test-keywords.yml');
 const BOT_USER_ID = 'bot-user-id';
@@ -139,5 +140,13 @@ describe('TriggerService', () => {
     unlinkSync(KEYWORDS_FILE);
     expect(svc.reload()).toBe(2); // 保持上次数量
     expect(svc.evaluate(makeMsg({ text: '物流到哪了' }))).toEqual({ triggered: true, reason: 'keyword' });
+  });
+
+  it('支持 triggers.prefixes 配置并参与前缀匹配', () => {
+    writeFileSync(KEYWORDS_FILE, 'triggers:\n  prefixes:\n    - 客服：\n', 'utf8');
+    const svc = new TriggerService({} as any);
+    expect(svc.reload()).toBe(1);
+    const msg = { MsgType: 'text', Content: '客服：怎么退款', text: '客服：怎么退款', mentioned: false, FromUserName: 'u1' } as any;
+    expect(svc.evaluate(msg)).toMatchObject({ triggered: true, reason: 'keyword' });
   });
 });

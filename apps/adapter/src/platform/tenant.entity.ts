@@ -49,6 +49,9 @@ export interface TenantQuota {
   maxUsers: number;
   /** LLM token 月度上限（0 = 不限） */
   maxLlmTokensPerMonth: number;
+  maxDocs: number;
+  maxQa: number;
+  maxAssetMb: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -80,7 +83,9 @@ export type PlatformAuditAction =
   | 'tenant.alert'
   | 'tenant.export'
   | 'tenant.destroy_scheduled'
-  | 'tenant.destroyed';
+  | 'tenant.destroyed'
+  | 'tenant.credentials'
+  | 'shell_access';
 
 export interface AuditAppendOpts {
   action: PlatformAuditAction;
@@ -117,6 +122,9 @@ export interface TenantQuotaPatch {
   maxApiCalls?: number;
   maxUsers?: number;
   maxLlmTokensPerMonth?: number;
+  maxDocs?: number;
+  maxQa?: number;
+  maxAssetMb?: number;
 }
 
 export interface QuotaConsumeKind {
@@ -131,6 +139,9 @@ export interface UsageDelta {
   apiCallCount: number;
   storageBytes: number;
   userCount: number;
+  docCount?: number;
+  qaCount?: number;
+  assetMb?: number;
 }
 
 export interface PlatformAuditLog {
@@ -152,6 +163,9 @@ export interface TenantDetail {
     apiCallCount: number;
     storageBytes: number;
     userCount: number;
+    docCount: number;
+    qaCount: number;
+    assetMb: number;
   };
 }
 
@@ -168,6 +182,9 @@ export interface UsageDayRow {
   apiCallCount: number;
   storageBytes: number;
   userCount: number;
+  docCount: number;
+  qaCount: number;
+  assetMb: number;
 }
 
 export interface UsageQueryResult {
@@ -177,5 +194,8 @@ export interface UsageQueryResult {
     apiCallCount: number;
     storageBytes: number;
     userCount: number;
+    docCount: number;
+    qaCount: number;
+    assetMb: number;
   };
 }

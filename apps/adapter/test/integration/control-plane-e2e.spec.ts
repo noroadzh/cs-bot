@@ -145,7 +145,7 @@ suite('M11 控制面 e2e', () => {
     expect(q.maxChats).toBe(2);
     expect(pushed.some((p) => p.id === tenantId && p.maxChats === 2)).toBe(true);
 
-    const up = await upgrade.run([tenantId], 'v2');
+    const up = await upgrade.run([tenantId], 'v2', true);
     expect(up.upgraded).toContain(tenantId);
     expect(up.failed).toEqual([]);
 

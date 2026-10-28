@@ -221,7 +221,7 @@ suite('验收：mock 全栈问答链路', () => {
 
     await waitFor(async () => (await missCount()) === before + 1);
     await waitFor(() => ax().sendCalls >= 1);
-    expect(ax().sent.join('\n')).toContain('暂时没有合适答案');
+    expect(ax().sent.join('\n')).toContain('抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。');
 
     const row = await pool.query(
       `SELECT chat_id, question, score, engine FROM miss_record WHERE chat_id = 'chat-low' ORDER BY created_at DESC LIMIT 1`,

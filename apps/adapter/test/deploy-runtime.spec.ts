@@ -43,4 +43,17 @@ describe('adapter runtime mounts', () => {
     expect(compose).toContain('init-control-db.sh');
     expect(dockerfile).toContain('COPY --from=builder /app/scripts /app/scripts');
   });
+
+  it('控制面默认不发布公网端口，提供显式 override', () => {
+    expect(compose).not.toContain('3100:3100');
+    const override = readFileSync(join(ROOT, 'deploy', 'docker-compose.control-plane-expose.yml'), 'utf8');
+    expect(override).toContain('CONTROL_PLANE_BIND');
+    expect(override).toContain('3100:3100');
+  });
+
+  it('每日备份包含控制面库', () => {
+    const backup = readFileSync(join(ROOT, 'deploy', 'backup.sh'), 'utf8');
+    expect(backup).toContain('pg_control_');
+    expect(backup).toContain('CONTROL_PLANE_DB');
+  });
 });

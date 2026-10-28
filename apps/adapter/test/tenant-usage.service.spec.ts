@@ -92,6 +92,7 @@ describe('TenantUsageService', () => {
       poolQuery.mockResolvedValueOnce({ rows: [] });
       await expect(svc().upsertCount('t1', {
         chatCount: 0, apiCallCount: 0, storageBytes: 0, userCount: 0,
+        docCount: 0, qaCount: 0, assetMb: 0,
       })).resolves.not.toThrow();
       expect(poolQuery).toHaveBeenCalled();
     });
@@ -140,6 +141,7 @@ describe('TenantUsageService', () => {
       expect(result.rows).toHaveLength(0);
       expect(result.totals).toEqual({
         chatCount: 0, apiCallCount: 0, storageBytes: 0, userCount: 0,
+        docCount: 0, qaCount: 0, assetMb: 0,
       });
     });
   });
@@ -171,5 +173,15 @@ describe('TenantUsageService', () => {
       expect(result.userCount).toBe(0);
       expect(result.day).toBe(new Date().toISOString().slice(0, 10));
     });
+  });
+
+  it('upsertReport 持久化容量字段', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [] });
+    await svc().upsertReport('t1', '2026-10-28', {
+      msgsIn: 10, triggered: 8, hit: 6, miss: 2, tokens: 100, activeChats: 3,
+      docCount: 4, qaCount: 5, assetMb: 6,
+    });
+    const params = poolQuery.mock.calls[0][1] as unknown[];
+    expect(params).toEqual(expect.arrayContaining([4, 5, 6]));
   });
 });

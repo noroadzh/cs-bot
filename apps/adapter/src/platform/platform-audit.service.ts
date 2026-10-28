@@ -15,6 +15,7 @@ import { createHash } from 'crypto';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import type { PlatformAuditLog, PlatformAuditAction } from './tenant.entity.js';
+import { requestContext } from '../common/request-context.js';
 
 export interface AuditAppendOpts {
   action: PlatformAuditAction;
@@ -91,13 +92,16 @@ export class PlatformAuditService implements OnModuleDestroy {
       );
       const prevHash = lastRes.rows.length > 0 ? String(lastRes.rows[0].hash) : '';
 
+      const payload: Record<string, unknown> = { ...opts.payload };
+      const reason = requestContext.getStore()?.auditReason;
+      if (reason && payload.reason === undefined) payload.reason = reason;
       const createdAt = new Date().toISOString();
       const hash = computeHash({
         prev_hash: prevHash,
         action: opts.action,
         actor: opts.actor,
         tenant_id: opts.tenantId ?? '',
-        payload: opts.payload,
+        payload,
         created_at: createdAt,
       });
 
@@ -109,7 +113,7 @@ export class PlatformAuditService implements OnModuleDestroy {
           opts.tenantId ?? null,
           opts.action,
           opts.actor,
-          JSON.stringify(opts.payload),
+          JSON.stringify(payload),
           prevHash,
           hash,
           createdAt,

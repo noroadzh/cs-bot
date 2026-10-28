@@ -215,7 +215,7 @@ describe('ImportJobService.createFromFile', () => {
       // 注：service 用 randomUUID 真实生成 id 落盘，RETURNING 占位 id 是 'job-0001'。
       // storedPath 用真实生成 id，断言格式即可。
       expect(res.storedPath).toMatch(/data[\\/]import[\\/][0-9a-f-]+[\\/]source\.csv$/);
-      expect(fsWriteFile).toHaveBeenCalledWith(res.storedPath, CSV_BYTES);
+      expect(fsWriteFile).toHaveBeenCalledWith(res.storedPath, CSV_BYTES, { mode: 0o600 });
       // name 去掉首尾空白；缺省时回落到 filename
       expect(poolQuery).toHaveBeenCalledWith(
         expect.stringContaining('INSERT INTO import_job'),

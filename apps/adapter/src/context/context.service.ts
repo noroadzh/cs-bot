@@ -11,6 +11,7 @@ export class ContextService {
   private readonly logger = new AppLogger('ContextService');
   private readonly redis: Redis;
   private readonly ttl: number;
+  private readonly rounds: number;
 
   constructor(_config: ConfigService) {
     const cfg = ConfigService.instance;
@@ -19,6 +20,7 @@ export class ContextService {
       password: cfg.REDIS_PASSWORD || undefined, lazyConnect: true,
     });
     this.ttl = cfg.CONTEXT_TTL_SEC;
+    this.rounds = cfg.CONTEXT_ROUNDS ?? 5;
   }
 
   private key(chatId: string, userId: string): string { return `ctx:${chatId}:${userId}`; }
@@ -36,7 +38,7 @@ export class ContextService {
     const rounds = await this.get(chatId, userId);
     rounds.push({ role: 'user', content: round.question });
     rounds.push({ role: 'assistant', content: round.answer });
-    const trimmed = rounds.slice(-10);
+    const trimmed = rounds.slice(-(this.rounds * 2));
     try {
       const multi = this.redis.multi();
       multi.set(key, JSON.stringify(trimmed), 'EX', this.ttl);

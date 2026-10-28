@@ -33,6 +33,10 @@ if docker compose -f deploy/docker-compose.yml ps pg >/dev/null 2>&1; then
   docker compose -f deploy/docker-compose.yml exec -T pg \
     pg_dump -U "${POSTGRES_USER:-cs}" -d "fastgpt" \
     > "$BACKUP_DIR/$DATE/pg_fastgpt_${DATE}.sql" 2>/dev/null || log "fastgpt pg skip"
+  docker compose -f deploy/docker-compose.yml exec -T pg \
+    pg_dump -U "${POSTGRES_USER:-cs}" -d "${CONTROL_PLANE_DB:-csbot_control}" \
+    > "$BACKUP_DIR/$DATE/pg_control_${DATE}.sql" \
+    || fail "pg_dump control-plane"
 else
   log "pg not running, skip"
 fi

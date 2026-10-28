@@ -65,7 +65,7 @@ function makeController(crypto: any, routing: any, gateCheck?: jest.Mock) {
   const miss = { record: jest.fn(async () => undefined) };
   const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate, miss);
   // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
-  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss });
+  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss, __imageQueue: (controller as any).imageQueue });
   return { controller, wecomClient, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
 }
 
@@ -218,12 +218,31 @@ describe('WecomController.callback', () => {
       controller.__recognize.recognizeImage.mockResolvedValue('a cat sitting on a bench');
 
       await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
+      await controller.__imageQueue.onIdle();
 
       expect(controller.__client.downloadMedia).toHaveBeenCalledWith('media-123');
       expect(controller.__recognize.recognizeImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/jpeg');
       expect(controller.__usage.increment).toHaveBeenCalledWith('messagesReceived');
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesReceived');
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesRecognized');
+    });
+
+    it('image message acked before download/recognition completes', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-slow', Content: '', ChatId: 'chat-s' })),
+      });
+      const { controller } = makeController(crypto, makeRouting());
+      const res = makeRes();
+      let release!: (b: Buffer) => void;
+      controller.__client.downloadMedia.mockImplementation(() => new Promise((r) => { release = r; }));
+      controller.__recognize.recognizeImage.mockResolvedValue('如何退款？');
+
+      const pending = controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
+      await pending;
+      expect(res.send).toHaveBeenCalled();
+      release(Buffer.from([0xff, 0xd8, 0xff, 0x00]));
+      await controller.__imageQueue.onIdle();
+      expect(controller.__recognize.recognizeImage).toHaveBeenCalled();
     });
 
     it('image recognize returns null → 跳过 routing，回复引导话术 + imagesSkipped', async () => {
@@ -238,10 +257,39 @@ describe('WecomController.callback', () => {
       controller.__recognize.recognizeImage.mockResolvedValue(null);
 
       await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
+      await controller.__imageQueue.onIdle();
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
       expect(routing.dispatch).not.toHaveBeenCalled(); // PRD FR-9 规则 2: 跳过 routing
       expect(controller.__client.sendText).toHaveBeenCalledWith('chat-1', '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～');
+    });
+
+    it('PNG 图片按真实 MIME 传给识别器', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-png', Content: '', ChatId: 'chat-png' })),
+      });
+      const { controller } = makeController(crypto, makeRouting());
+      const res = makeRes();
+      controller.__client.downloadMedia.mockResolvedValue(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+      controller.__recognize.recognizeImage.mockResolvedValue('如何退款？');
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
+      await controller.__imageQueue.onIdle();
+      expect(controller.__recognize.recognizeImage).toHaveBeenCalledWith(expect.any(Buffer), 'image/png');
+    });
+
+    it('image recognize returns [NO_TEXT] → 引导话术，不进 routing', async () => {
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'image', MediaId: 'media-no', Content: '', ChatId: 'chat-no' })),
+      });
+      const routing = makeRouting();
+      const { controller } = makeController(crypto, routing);
+      const res = makeRes();
+      controller.__client.downloadMedia.mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff]));
+      controller.__recognize.recognizeImage.mockResolvedValue('[NO_TEXT]');
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
+      await controller.__imageQueue.onIdle();
+      expect(routing.dispatch).not.toHaveBeenCalled();
+      expect(controller.__client.sendText).toHaveBeenCalledWith('chat-no', '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～');
     });
 
     it('image download throws → 跳过 routing，回复引导话术 + imagesSkipped', async () => {
@@ -255,6 +303,7 @@ describe('WecomController.callback', () => {
       controller.__client.downloadMedia.mockRejectedValue(new Error('network error'));
 
       await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce }, 'cipher', {} as any, res);
+      await controller.__imageQueue.onIdle();
 
       expect(controller.__usage.increment).toHaveBeenCalledWith('imagesSkipped');
       expect(routing.dispatch).not.toHaveBeenCalled(); // PRD FR-9 规则 2: 跳过 routing

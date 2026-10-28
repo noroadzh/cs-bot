@@ -30,6 +30,7 @@ suite('M10 导入重管线 e2e', () => {
     await pool.query('DELETE FROM import_unpaired');
     await pool.query('DELETE FROM import_item');
     await pool.query('DELETE FROM import_job');
+    await pool.query('DELETE FROM import_lock');
     setConfig({ DATABASE_URL: PG_URL, IMPORT_RULES_FILE: '', IMPORT_BLACKLIST_FILE: '' });
     const { ConfigService } = await import('../../src/config/config.service.js');
     svc = new ImportJobService({} as any, new SensitiveRedactor());
@@ -339,6 +340,92 @@ suite('M10 导入重管线 e2e', () => {
     await svc.onModuleInit();
     const parsed = await svc.parseJob(created.job.id);
     expect(parsed.status).toBe('parsed');
+    await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
+  });
+
+  it('源文件权限 0600，失败任务清理源文件', async () => {
+    const stamp = Date.now();
+    const created = await svc.createFromFile({
+      filename: 'perm.csv', mimeType: 'text/csv', bytes: Buffer.from(`question,answer\n权限-${stamp},答`, 'utf8'),
+    });
+    const stat = await fs.stat(created.storedPath);
+    expect(stat.mode & 0o777).toBe(0o600);
+    await fs.rm(join(process.cwd(), 'data', 'import', created.job.id), { recursive: true, force: true });
+    const failed = await svc.parseJob(created.job.id);
+    expect(failed.status).toBe('failed');
+    await expect(fs.stat(join(process.cwd(), 'data', 'import', created.job.id))).rejects.toBeTruthy();
+    await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
+  });
+
+  it('startParse 走后台队列并可轮询到 parsed', async () => {
+    const stamp = Date.now();
+    const created = await svc.createFromFile({
+      filename: 'async.csv', mimeType: 'text/csv', bytes: Buffer.from(`question,answer\n异步-${stamp},答`, 'utf8'),
+    });
+    const accepted = await svc.startParse(created.job.id);
+    expect(accepted.status).toBe('uploaded');
+    let job = await svc.getJob(created.job.id);
+    for (let i = 0; i < 100 && job?.status !== 'parsed' && job?.status !== 'failed'; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+      job = await svc.getJob(created.job.id);
+    }
+    expect(job?.status).toBe('parsed');
+    await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
+  });
+
+  it('未配对消息可人工补配并生成 pending item', async () => {
+    const stamp = Date.now();
+    const archive = JSON.stringify([
+      { sender: '客户张三', content: `未配对问一-${stamp}`, time: 1000 },
+      { sender: '客户张三', content: `未配对问二-${stamp}`, time: 2000 },
+    ]);
+    const created = await svc.createFromFile({
+      filename: 'unpaired.json', mimeType: 'application/json', bytes: Buffer.from(archive, 'utf8'),
+    });
+    await svc.parseJob(created.job.id);
+    const poolRows = await svc.listUnpaired(created.job.id);
+    expect(poolRows.total).toBe(2);
+    const counts = await svc.countItemsByStatus(created.job.id);
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(0);
+    const [a, b] = poolRows.rows as Array<{ id: string }>;
+    const item = await svc.pairUnpaired(created.job.id, a.id, b.id);
+    expect(item.reviewStatus).toBe('pending');
+    expect((await svc.listUnpaired(created.job.id)).total).toBe(0);
+    await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
+  });
+
+  it('rollback 在进程重启后仍能按 datasetId 删除', async () => {
+    const stamp = Date.now();
+    const created = await svc.createFromFile({
+      filename: 'restart.csv', mimeType: 'text/csv', bytes: Buffer.from(`question,answer\n重启回滚-${stamp},答`, 'utf8'),
+    });
+    await svc.parseJob(created.job.id);
+    await svc.approveAll(created.job.id);
+    const res = await svc.confirm(created.job.id, []);
+    const job = await svc.getJob(created.job.id);
+    expect(job?.datasetId).toBeTruthy();
+    const freshDataset = new InMemoryDatasetClient();
+    (freshDataset as any).datasets = dataset.datasets;
+    const fresh = new ImportJobService({} as any, new SensitiveRedactor());
+    fresh.setDatasetClient(freshDataset);
+    fresh.setSearchClient(new NoopSearchClient());
+    await fresh.rollback(created.job.id);
+    expect((await fresh.getJob(created.job.id))?.status).toBe('rolled_back');
+    expect(dataset.datasets.has(res.dataset)).toBe(false);
+    await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
+  });
+
+  it('后台解析失败记录为 failed', async () => {
+    const created = await svc.createFromFile({
+      filename: 'bad.json', mimeType: 'application/json', bytes: Buffer.from('{"not":"array"}', 'utf8'),
+    });
+    await svc.startParse(created.job.id);
+    let job = await svc.getJob(created.job.id);
+    for (let i = 0; i < 100 && job?.status !== 'failed'; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+      job = await svc.getJob(created.job.id);
+    }
+    expect(job?.status).toBe('failed');
     await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
   });
 });

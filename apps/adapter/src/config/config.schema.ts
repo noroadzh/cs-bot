@@ -45,7 +45,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   SLOW_REPLY_TEXT: EnvString.default('系统繁忙，请稍后再试或联系人工客服'),
 
   // 拒绝话术
-  REFUSAL_TEXT: EnvString.default('暂时没有合适答案，已记录到工单。紧急问题请 @ 客服。'),
+  REFUSAL_TEXT: EnvString.default('抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。'),
   QUESTION_GUIDANCE_TEXT: EnvString.default('请用一句完整的话描述您想咨询的问题～'),
 
   // Redis
@@ -104,6 +104,7 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   // 未配置（''）表示 mock/关闭；配置了则必须是合法 URL / 足长 key
   QWEN_VL_BASE_URL: EnvString.url().optional().or(z.literal('')),
   QWEN_VL_API_KEY: EnvString.min(8).optional().or(z.literal('')),
+  QWEN_VL_MODEL: EnvString.default('qwen-vl-plus'),
 
   // Usage
   USAGE_REPORT_ENABLED: EnvBool(false),
@@ -154,6 +155,9 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_RESTART_FAILURE_THRESHOLD: EnvInt(2),
   PLATFORM_RESTART_MAX_PER_HOUR: EnvInt(3),
   PLATFORM_UPGRADE_SCRIPT: EnvString.default('scripts/tenant-upgrade.sh'),
+  EMAIL_WEBHOOK_URL: EnvString.optional().default(''),
+  PLATFORM_UPGRADE_WINDOW: EnvString.default('02:00-04:00'),
+  PLATFORM_UPGRADE_NOTICE_DAYS: EnvInt(3),
   PLATFORM_CANARY_OBSERVE_MS: EnvInt(86_400_000),
   PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),
 

@@ -16,7 +16,7 @@ import {
   WebhookQuotaWarningNotifier,
 } from '../src/platform/quota-warning.js';
 import { computeFailRates, buildHealthUrl } from '../src/platform/platform-monitor.js';
-import { SubscriptionReminder, WebhookNotifier } from '../src/platform/subscription-reminder.js';
+import { MultiNotifier, SubscriptionReminder, WebhookNotifier } from '../src/platform/subscription-reminder.js';
 import { PlatformAuditService } from '../src/platform/platform-audit.service.js';
 import {
   buildControlPlanePayload,
@@ -87,6 +87,11 @@ describe('D10 usage report', () => {
       hit: 6, miss: 2, tokens: 120, activeChats: 0,
     });
     expect(JSON.stringify(p)).not.toContain('question');
+
+    const withCapacity = buildControlPlanePayload('T-1', counters, new Date('2026-10-27T10:00:00Z'), {
+      docCount: 3, qaCount: 4, assetMb: 5, activeChats: 2,
+    });
+    expect(withCapacity).toMatchObject({ docCount: 3, qaCount: 4, assetMb: 5, activeChats: 2 });
   });
 
   it('缓冲最多保留 7 天', () => {
@@ -123,5 +128,15 @@ describe('audit cleanup', () => {
     const svc = new PlatformAuditService({} as any);
     await expect(svc.cleanup()).resolves.toBe(7);
     expect(pgQuery).toHaveBeenCalledWith(expect.stringContaining("interval '180 days'"));
+  });
+
+  it('MultiNotifier 同时发送 webhook 与邮件通道', async () => {
+    const calls: string[] = [];
+    const n = new MultiNotifier([
+      { send: async () => { calls.push('webhook'); } },
+      { send: async () => { calls.push('email'); } },
+    ]);
+    await n.send('ops', 's', 'b');
+    expect(calls.sort()).toEqual(['email', 'webhook']);
   });
 });

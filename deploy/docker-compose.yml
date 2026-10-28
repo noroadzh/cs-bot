@@ -60,8 +60,6 @@ services:
     group_add:
       - "${DOCKER_GID:-999}"
     command: ["apps/adapter/dist/control-plane-main.js"]
-    ports:
-      - "${CONTROL_PLANE_BIND:-0.0.0.0}:3100:3100"
 
     env_file:
       - ../.env
@@ -138,12 +136,14 @@ services:
       - ../apps/adapter/src/import/013-import-message-stage.sql:/docker-entrypoint-initdb.d/14-import-message-stage.sql:ro
       - ../apps/adapter/src/import/014-import-dedup-counters.sql:/docker-entrypoint-initdb.d/15-import-dedup-counters.sql:ro
       - ../apps/adapter/src/platform/015-tenant-offboarding.sql:/docker-entrypoint-initdb.d/16-tenant-offboarding.sql:ro
+      - ../apps/adapter/src/platform/016-runtime-gaps.sql:/docker-entrypoint-initdb.d/17-runtime-gaps.sql:ro
       - ./init-control-db.sh:/docker-entrypoint-initdb.d/00-control-db.sh:ro
       - ../apps/adapter/src/platform/007-tenant.sql:/control-migrations/01-tenant.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/control-migrations/02-control-plane.sql:ro
       - ../apps/adapter/src/platform/011-usage-counters.sql:/control-migrations/03-usage-counters.sql:ro
       - ../apps/adapter/src/platform/012-tenant-ports.sql:/control-migrations/04-tenant-ports.sql:ro
       - ../apps/adapter/src/platform/015-tenant-offboarding.sql:/control-migrations/05-tenant-offboarding.sql:ro
+      - ../apps/adapter/src/platform/016-runtime-gaps.sql:/control-migrations/06-runtime-gaps.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/docker-entrypoint-initdb.d/09-control-plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]

@@ -623,7 +623,7 @@ describe('ImportController (supertest)', () => {
       const res = await request(app.getHttpServer())
         .post(`${baseURL}/job-1/parse`)
         .set('Authorization', auth);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(202);
       expect(res.body.id).toBe('job-1');
       expect(['uploaded', 'parsing', 'parsed']).toContain(res.body.status);
     });

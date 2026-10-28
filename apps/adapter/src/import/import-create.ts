@@ -201,7 +201,7 @@ async function persistBytes(host: CreateHost, jobId: string, filename: string, b
     await fs.mkdir(dir, { recursive: true });
     const ext = extname(filename).slice(0, 16);
     const target = join(dir, `source${ext}`);
-    await fs.writeFile(target, bytes);
+    await fs.writeFile(target, bytes, { mode: 0o600 });
     return target;
   }
 

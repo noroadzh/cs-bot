@@ -21,13 +21,13 @@ import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantSecretStore } from './tenant-secret-store.js';
 import { TenantSecretsService } from './tenant-secrets.service.js';
 import { TenantSyncService } from './tenant-sync.service.js';
-import { ExportPackager } from './export-package.js';
+import { TenantExportService } from './tenant-export.service.js';
 import { PlatformMonitor, HttpHealthSource } from './platform-monitor.js';
 import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
 import { ShellUpgradeDeps } from './upgrade-runner.js';
 import { TenantOffboarding } from './tenant-offboarding.js';
 import { PgOffboardingRepo } from './tenant-offboarding.pg.js';
-import { SubscriptionReminder, WebhookNotifier } from './subscription-reminder.js';
+import { EmailWebhookNotifier, MultiNotifier, SubscriptionReminder, WebhookNotifier } from './subscription-reminder.js';
 
 @Module({})
 export class PlatformModule {
@@ -53,7 +53,12 @@ export class PlatformModule {
         {
           provide: SubscriptionReminder,
           useFactory: () =>
-            new SubscriptionReminder(new WebhookNotifier(ConfigService.instance.OPS_WEBHOOK_URL ?? '')),
+            new SubscriptionReminder(
+              new MultiNotifier([
+                new WebhookNotifier(ConfigService.instance.OPS_WEBHOOK_URL ?? ''),
+                new EmailWebhookNotifier(ConfigService.instance.EMAIL_WEBHOOK_URL ?? ''),
+              ]),
+            ),
         },
         {
           provide: TenantSecretStore,
@@ -63,9 +68,19 @@ export class PlatformModule {
             ),
         },
         {
-          provide: ExportPackager,
-          useFactory: (store: TenantSecretStore) => new ExportPackager(store),
-          inject: [TenantSecretStore],
+          provide: TenantExportService,
+          useFactory: (
+            tenants: TenantService,
+            secrets: TenantSecretsService,
+            store: TenantSecretStore,
+          ) =>
+            new TenantExportService(
+              tenants,
+              secrets,
+              store,
+              ConfigService.instance.PLATFORM_COMPOSE_DIR,
+            ),
+          inject: [TenantService, TenantSecretsService, TenantSecretStore],
         },
         {
           provide: PlatformMonitor,
@@ -95,37 +110,24 @@ export class PlatformModule {
                 ConfigService.instance.PLATFORM_UPGRADE_SCRIPT,
                 120_000,
                 ConfigService.instance.PLATFORM_CANARY_OBSERVE_MS,
+                ConfigService.instance.OPS_WEBHOOK_URL ?? '',
               ),
               ConfigService.instance.PLATFORM_UPGRADE_CANARY_ID || undefined,
+              10,
+              {
+                window: ConfigService.instance.PLATFORM_UPGRADE_WINDOW,
+                noticeDays: ConfigService.instance.PLATFORM_UPGRADE_NOTICE_DAYS,
+              },
             ),
         },
         {
           provide: TenantOffboarding,
-          useFactory: (packager: ExportPackager, tenants: TenantService, audit: PlatformAuditService) => {
+          useFactory: (exporter: TenantExportService, tenants: TenantService, audit: PlatformAuditService) => {
             const pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 2 });
             return new TenantOffboarding({
               repo: PgOffboardingRepo.fromPool(pool),
               audit,
-              exportPackage: async (tenantId: string) => {
-                const detail = await tenants.getDetail(tenantId);
-                const dir = join(ConfigService.instance.PLATFORM_COMPOSE_DIR, tenantId);
-                let assets: string[] = [];
-                try {
-                  assets = await fs.readdir(join(dir, 'assets'));
-                } catch {
-                  assets = [];
-                }
-                const pkg = packager.build({
-                  tenantId,
-                  knowledgeBase: '',
-                  assets,
-                  config: JSON.stringify(detail.tenant),
-                });
-                await fs.mkdir(dir, { recursive: true });
-                const out = join(dir, `export-${Date.now()}.enc`);
-                await fs.writeFile(out, pkg, { mode: 0o600 });
-                return out;
-              },
+              exportPackage: async (tenantId: string) => exporter.export(tenantId),
               deleteTenant: async (tenantId: string) => {
                 await tenants.terminate(tenantId, 'system:sweep');
                 const cfg = ConfigService.instance;
@@ -135,7 +137,7 @@ export class PlatformModule {
               },
             });
           },
-          inject: [ExportPackager, TenantService, PlatformAuditService],
+          inject: [TenantExportService, TenantService, PlatformAuditService],
         },
       ],
       exports: [TenantService, TenantQuotaService, PlatformAuditService],

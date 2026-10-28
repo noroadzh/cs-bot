@@ -127,6 +127,7 @@ COPY --from=builder /app/apps/adapter/src/platform/012-tenant-ports.sql /app/mig
 COPY --from=builder /app/apps/adapter/src/import/013-import-message-stage.sql /app/migrate/014-import-message-stage.sql
 COPY --from=builder /app/apps/adapter/src/import/014-import-dedup-counters.sql /app/migrate/015-import-dedup-counters.sql
 COPY --from=builder /app/apps/adapter/src/platform/015-tenant-offboarding.sql /app/migrate/016-tenant-offboarding.sql
+COPY --from=builder /app/apps/adapter/src/platform/016-runtime-gaps.sql /app/migrate/017-runtime-gaps.sql
 COPY --from=builder /app/apps/adapter/src/platform/008-control-plane.sql /app/migrate/009-control-plane.sql
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/scripts /app/scripts

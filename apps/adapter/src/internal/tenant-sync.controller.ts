@@ -19,6 +19,9 @@ interface SyncBody {
     maxApiCalls?: number;
     maxUsers?: number;
     maxLlmTokensPerMonth?: number;
+    maxDocs?: number;
+    maxQa?: number;
+    maxAssetMb?: number;
   };
 }
 
@@ -50,16 +53,19 @@ export class TenantSyncController implements OnModuleDestroy {
 
     const q = body.quota ?? {};
     await this.pool.query(
-      `INSERT INTO tenant_quota (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO tenant_quota (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, max_docs, max_qa, max_asset_mb)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (tenant_id) DO UPDATE SET
          max_chats = EXCLUDED.max_chats,
          max_storage_mb = EXCLUDED.max_storage_mb,
          max_api_calls = EXCLUDED.max_api_calls,
          max_users = EXCLUDED.max_users,
          max_llm_tokens_per_month = EXCLUDED.max_llm_tokens_per_month,
+         max_docs = EXCLUDED.max_docs,
+         max_qa = EXCLUDED.max_qa,
+         max_asset_mb = EXCLUDED.max_asset_mb,
          updated_at = NOW()`,
-      [tenantId, q.maxChats ?? 0, q.maxStorageMb ?? 0, q.maxApiCalls ?? 0, q.maxUsers ?? 0, q.maxLlmTokensPerMonth ?? 0],
+      [tenantId, q.maxChats ?? 0, q.maxStorageMb ?? 0, q.maxApiCalls ?? 0, q.maxUsers ?? 0, q.maxLlmTokensPerMonth ?? 0, q.maxDocs ?? 0, q.maxQa ?? 0, q.maxAssetMb ?? 0],
     );
 
     this.logger.log({ detail: 'tenant-sync', tenantId, status });

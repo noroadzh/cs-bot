@@ -106,7 +106,7 @@ describe('QaOrchestrator', () => {
     const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), miss, stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
     await orch.handle(makeMsg(), 'trace-3', 'keyword');
     expect(miss.record).toHaveBeenCalledTimes(1);
-    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '暂时没有合适答案，已记录到工单', undefined, 'trace-3:0');
+    expect(sender.sendText).toHaveBeenCalledWith('chat-1', '抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。', undefined, 'trace-3:0');
   });
 
   it('1.6.d sends LLM error as slow reply without throwing', async () => {

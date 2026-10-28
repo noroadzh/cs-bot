@@ -6,15 +6,23 @@ Packages the adapter and its 5 dependencies (FastGPT, PostgreSQL+pgvector, Redis
 ## Requirements
 
 ### Requirement: Six-service compose file
-The system MUST ship a `docker-compose.yml` defining exactly six services: `adapter`, `fastgpt`, `pg`, `mongo`, `redis`, `nginx`. Only port 443 on `nginx` MUST be published to the host; all other ports stay on the internal compose network.
+
+The baseline `docker-compose.yml` MUST define the six single-tenant services `adapter`, `fastgpt`, `pg`, `mongo`, `redis`, `nginx`, and MAY additionally define a `control-plane` service in SaaS mode. Only port 443 on `nginx` MUST be published to the host by default; all other ports stay on the internal compose network. The control-plane service MUST NOT publish a host port unless `CONTROL_PLANE_BIND` is explicitly set to a management address, and its default value MUST NOT be `0.0.0.0`.
 
 #### Scenario: Compose up
+
 - **WHEN** an operator runs `docker compose up -d` on a clean host
-- **THEN** all six services become healthy within 2 minutes and `https://<domain>/healthz` returns 200
+- **THEN** the baseline services become healthy within 2 minutes and `https://<domain>/healthz` returns 200
 
 #### Scenario: Port exposure audit
-- **WHEN** an operator runs `docker compose ps`
-- **THEN** only `nginx` shows a host port mapping and that port is 443
+
+- **WHEN** an operator runs `docker compose ps` with default settings
+- **THEN** only `nginx` shows a host port mapping and that port is 443; the control-plane has no host mapping
+
+#### Scenario: Control plane explicitly bound
+
+- **WHEN** an operator sets `CONTROL_PLANE_BIND=10.0.0.5`
+- **THEN** the control-plane port is bound only to that management address
 
 ### Requirement: TLS termination at nginx
 The system MUST terminate TLS at the `nginx` container using the certificates in `nginx/certs/fullchain.pem` and `nginx/certs/privkey.pem`, and proxy plain HTTP to the `adapter` service.
@@ -28,13 +36,16 @@ The system MUST terminate TLS at the `nginx` container using the certificates in
 - **THEN** nginx refuses or redirects to HTTPS (no service is exposed on port 80)
 
 ### Requirement: Daily backup script
-The system MUST ship `deploy/backup.sh` that runs `pg_dump` for both adapter and FastGPT databases, `mongodump` for FastGPT metadata, and tar-archives the `data/assets/` directory (when present), writing outputs to `backup/` with timestamps and retaining the last 7 days.
+
+The system MUST ship `deploy/backup.sh` that runs `pg_dump` for the adapter, FastGPT, and control-plane databases, `mongodump` for FastGPT metadata, and tar-archives the `data/assets/` directory (when present), writing outputs to `backup/` with timestamps and retaining the last 7 days.
 
 #### Scenario: Backup runs successfully
+
 - **WHEN** the backup script runs on a healthy deployment
-- **THEN** `backup/` contains `pg_adapter_<date>.sql.gz`, `pg_fastgpt_<date>.sql.gz`, `mongo_<date>.tar.gz`, and (if assets exist) `assets_<date>.tar.gz`
+- **THEN** `backup/` contains adapter, FastGPT, and control-plane database dumps, a Mongo archive, and (if assets exist) an assets archive, all timestamped
 
 #### Scenario: Backup fails
+
 - **WHEN** any step in the backup script exits non-zero
 - **THEN** the script logs the failed step, retains any partial output, and exits non-zero so the cron job can alert
 

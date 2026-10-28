@@ -8,12 +8,22 @@
 
 ### Requirement: Sensitive information redaction on parse
 
-The system MUST redact five categories of personal or contact-sensitive data from every parsed item's answer (and question) before storing it: mobile numbers, PRC ID numbers, bank card numbers, email addresses, and URLs. The original text MUST remain available as `answer_raw`; the redacted text MUST be stored as `answer_redacted`.
+The system MUST redact seven categories of personal or contact-sensitive data from every parsed item's answer (and question) before storing it: mobile numbers, PRC ID numbers, bank card numbers, email addresses, URLs, detailed addresses, and personal names. The original text MUST remain available as `answer_raw`; the redacted text MUST be stored as `answer_redacted`.
 
 #### Scenario: ID number redacted
 
 - **WHEN** a parsed answer contains `11010119900307771X`
 - **THEN** `answer_redacted` contains `<ID:1>` and `answer_raw` retains the original number
+
+#### Scenario: Detailed address redacted
+
+- **WHEN** a parsed answer contains a full street address
+- **THEN** `answer_redacted` contains an `<ADDRESS:n>` placeholder and `answer_raw` retains the original text
+
+#### Scenario: Personal name redacted
+
+- **WHEN** a parsed answer contains a recognized personal name
+- **THEN** `answer_redacted` contains a `<NAME:n>` placeholder and `answer_raw` retains the original text
 
 #### Scenario: Redaction applies to questions too
 
@@ -22,7 +32,7 @@ The system MUST redact five categories of personal or contact-sensitive data fro
 
 ### Requirement: Typed redaction placeholders
 
-Each redaction hit MUST be replaced in the redacted text with a typed placeholder `<TYPE:n>`, where `TYPE` is one of `PHONE`, `ID`, `CARD`, `EMAIL`, `URL` and `n` is a per-item per-type occurrence counter starting at 1. `sensitive_flags` MUST be stored on the item as a JSON array holding each matched type once, in first-occurrence order.
+Each redaction hit MUST be replaced in the redacted text with a typed placeholder `<TYPE:n>`, where `TYPE` is one of `PHONE`, `ID`, `CARD`, `EMAIL`, `URL`, `ADDRESS`, `NAME` and `n` is a per-item per-type occurrence counter starting at 1. `sensitive_flags` MUST be stored on the item as a JSON array holding each matched type once, in first-occurrence order.
 
 #### Scenario: Mobile number redacted
 
@@ -41,7 +51,7 @@ Each redaction hit MUST be replaced in the redacted text with a typed placeholde
 
 #### Scenario: Clean answer is unchanged
 
-- **WHEN** a parsed answer contains none of the five categories
+- **WHEN** a parsed answer contains none of the seven categories
 - **THEN** `answer_redacted` equals `answer_raw` and `sensitive_flags` is an empty array
 
 ### Requirement: Sensitive item review gate

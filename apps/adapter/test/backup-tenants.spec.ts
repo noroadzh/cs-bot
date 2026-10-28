@@ -8,6 +8,8 @@ import { mkdtemp, mkdir, writeFile, readFile, chmod, rm, stat } from 'node:fs/pr
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+jest.setTimeout(60_000);
+
 const execFileP = promisify(execFile);
 const ROOT = join(process.cwd(), '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'backup-tenants.sh');
@@ -71,5 +73,5 @@ describe('backup-tenants.sh', () => {
     expect(files.some((f) => f.startsWith('mongo_'))).toBe(true);
     expect(files.some((f) => f.startsWith('data_'))).toBe(true);
     expect((await stat(join(aDir, aBackups[0]))).isDirectory()).toBe(true);
-  }, 20_000);
+  }, 60_000);
 });

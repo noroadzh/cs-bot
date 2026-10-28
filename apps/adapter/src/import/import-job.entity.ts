@@ -36,6 +36,7 @@ export interface ImportJob {
   failedCount: number;
   /** approved 条目写入的 FastGPT 数据集名 */
   datasetName: string | null;
+  datasetId: string | null;
   sourceShape: string | null;
   createdAt: string;
   updatedAt: string;

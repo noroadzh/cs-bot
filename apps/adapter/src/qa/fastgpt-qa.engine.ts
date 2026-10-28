@@ -16,6 +16,9 @@ export class FastGPTQaEngine implements IQAEngine {
   /** cloud：允许低分/失败切云；hybrid：仅失败切云；local：禁止云回退 */
   private readonly allowCloudFallback: boolean;
   private readonly fallbackOnLowScore: boolean;
+  private healthy = true;
+  private healthySince: number | null = null;
+  private lastProbeAt = 0;
 
   constructor(_config: ConfigService, approvedQaService?: ApprovedQaService) {
     this.primary = axios.create({
@@ -39,6 +42,36 @@ export class FastGPTQaEngine implements IQAEngine {
     }
     // approved_qa fallback: FastGPT 检索无结果时查询本地已审核 QA
     this.approvedQa = approvedQaService ?? new ApprovedQaService();
+    if (this.cfg.MODEL_MODE === 'hybrid') {
+      const timer = setInterval(() => void this.probeHealth(), 30_000);
+      timer.unref?.();
+    }
+  }
+
+  /** hybrid 健康探测：仅检测可达性；连续 5 分钟健康才恢复 primary */
+  async probeHealth(now = Date.now()): Promise<boolean> {
+    this.lastProbeAt = now;
+    try {
+      await this.primary.get('/', { timeout: 5000, validateStatus: () => true });
+      if (!this.healthy) {
+        if (this.healthySince === null) this.healthySince = now;
+        if (now - this.healthySince >= 5 * 60_000) {
+          this.healthy = true;
+          this.healthySince = null;
+        }
+      }
+      return true;
+    } catch {
+      this.healthy = false;
+      this.healthySince = null;
+      return false;
+    }
+  }
+
+  isHealthy(now = Date.now()): boolean {
+    if (this.healthy) return true;
+    if (this.healthySince !== null && now - this.healthySince >= 5 * 60_000) return true;
+    return false;
   }
 
   async ask(req: AskReq): Promise<AskResult> {
@@ -47,6 +80,15 @@ export class FastGPTQaEngine implements IQAEngine {
     if (approved) {
       this.logger.log({ detail: 'approved-qa-hit', question: req.question.slice(0, 50) });
       return new Ok({ answer: approved.answer, quotes: [], score: 1.0, source: 'approved' });
+    }
+
+    // hybrid 降级期间优先走 fallback；local 无 fallback
+    if (this.cfg.MODEL_MODE === 'hybrid' && !this.isHealthy() && this.fallback) {
+      if (Date.now() - this.lastProbeAt >= 30_000) void this.probeHealth();
+      const fallbackFirst = await this.call(this.fallback, req, 'fallback');
+      if (fallbackFirst.ok && fallbackFirst.value.score >= this.cfg.CONFIDENCE_THRESHOLD) {
+        return fallbackFirst;
+      }
     }
 
     // 优先级 2: primary LLM
@@ -86,9 +128,20 @@ export class FastGPTQaEngine implements IQAEngine {
           histories: (req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
           datasetIds: (req.datasetIds ?? (this.cfg.FASTGPT_DATASET_IDS ? [this.cfg.FASTGPT_DATASET_IDS] : [])),
         }));
+        if (source === 'primary') {
+          if (!this.healthy) {
+            if (this.healthySince === null) this.healthySince = Date.now();
+          } else {
+            this.healthySince = null;
+          }
+        }
         return { ok: true, value: this.parseResponse(resp.data, source) };
       } catch (err) {
         lastErr = err as Error;
+        if (source === 'primary') {
+          this.healthy = false;
+          this.healthySince = null;
+        }
         this.logger.warn({ source, attempt: attempt + 1, err: lastErr.message });
         if (attempt === 0) await new Promise((r) => setTimeout(r, retryDelay));
       }

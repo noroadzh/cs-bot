@@ -18,6 +18,8 @@ import {
 } from '@nestjs/common';
 import { Pool, types } from 'pg';
 import { randomUUID } from 'crypto';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import { PlatformAuditService } from './platform-audit.service.js';
@@ -238,6 +240,7 @@ export class TenantService implements OnModuleDestroy {
         expiresAtMs: tenant.expiredAt ? Date.parse(tenant.expiredAt) : Date.now() + 365 * 86_400_000,
         maxChats: quota?.maxChats,
       });
+      await this.syncLicenseFile(tenant.id);
       // Up
       await this.provisioner.up(tenant);
       // Probe
@@ -353,12 +356,27 @@ export class TenantService implements OnModuleDestroy {
       TenantStateMachine.assertTransition(fromStatus, toStatus as import('./tenant.entity.js').TenantStatus);
     }
 
+    // 先签发新 license，再落订阅；签发失败不更新到期时间
+    const quota = await this.quota.getQuota(tenantId);
+    await this.licenseIssuer.issue({
+      id: tenant.id,
+      host: tenant.host,
+      fingerprint: ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT || undefined,
+      expiresAtMs: Date.parse(afterExpiresAt),
+      maxChats: quota?.maxChats,
+    });
+    await this.syncLicenseFile(tenantId);
+
     await this.pool.query(
       `UPDATE tenant SET expired_at = $2, status = $3, updated_at = NOW() WHERE id = $1`,
       [tenantId, afterExpiresAt, toStatus],
     );
 
     await this.tenantSync?.sync(tenantId);
+    // license 文件更新后重启 adapter 使新授权生效（无远端 reload 通道时的兜底）
+    if (ConfigService.instance.LICENSE_ISSUER !== 'noop') {
+      await this.provisioner.restart(tenant).catch(() => undefined);
+    }
     await this.audit.append({
       action: 'tenant.renew',
       actor,
@@ -368,6 +386,7 @@ export class TenantService implements OnModuleDestroy {
         days,
         beforeExpiresAt: beforeExpiresAt ?? null,
         afterExpiresAt,
+        licenseIssued: true,
       },
     });
 
@@ -603,6 +622,88 @@ export class TenantService implements OnModuleDestroy {
   }
 
   /** 更新密钥后重启租户 adapter（FastGPT 初始化交接） */
+  /** 记录一次运维 shell 访问（跳板/运维通道调用，不提供 shell 本身） */
+  async recordShellAccess(
+    tenantId: string,
+    durationMs: number,
+    actor = 'system',
+  ): Promise<{ ok: true }> {
+    const tenant = await this.requireTenant(tenantId);
+    if (!Number.isInteger(durationMs) || durationMs < 1) {
+      throw new BadRequestException({
+        errCode: 'SHELL_ACCESS_DURATION_INVALID',
+        detail: 'durationMs must be a positive integer',
+      });
+    }
+    await this.audit.append({
+      action: 'shell_access',
+      actor,
+      tenantId: tenant.id,
+      payload: { tenantId: tenant.id, durationMs },
+    });
+    return { ok: true };
+  }
+
+  /**
+   * 一次性交接生成的管理员/FastGPT 根口令。
+   * 不写日志/审计，二次读取返回 410。
+   */
+  async handoffCredentials(tenantId: string, actor = 'system'): Promise<Record<string, string>> {
+    const tenant = await this.requireTenant(tenantId);
+    const handed = await this.pool.query(
+      'SELECT credentials_handed_at FROM tenant WHERE id = $1',
+      [tenantId],
+    );
+    if (handed.rows[0]?.credentials_handed_at) {
+      throw new HttpException(
+        { errCode: 'TENANT_CREDENTIALS_ALREADY_HANDED_OFF', detail: 'credentials were already handed off' },
+        HttpStatus.GONE,
+      );
+    }
+    if (!this.secrets) {
+      throw new HttpException(
+        { errCode: 'TENANT_SECRETS_UNAVAILABLE', detail: 'tenant secret service is not configured' },
+        500,
+      );
+    }
+    const bundle = await this.secrets.load(tenantId);
+    const credentials: Record<string, string> = {};
+    for (const key of ['ADMIN_PASSWORD', 'FASTGPT_ROOT_PASSWORD']) {
+      if (bundle[key]) credentials[key] = bundle[key];
+    }
+    if (Object.keys(credentials).length === 0) {
+      throw new HttpException(
+        { errCode: 'TENANT_CREDENTIALS_MISSING', detail: 'no generated credentials available' },
+        HttpStatus.CONFLICT,
+      );
+    }
+    await this.pool.query(
+      'UPDATE tenant SET credentials_handed_at = NOW(), updated_at = NOW() WHERE id = $1',
+      [tenantId],
+    );
+    await this.audit.append({
+      action: 'tenant.credentials',
+      actor,
+      tenantId: tenant.id,
+      payload: { keys: Object.keys(credentials) },
+    });
+    return credentials;
+  }
+
+  /** 把签发器输出复制为租户实例挂载的 /app/license/license.lic */
+  private async syncLicenseFile(tenantId: string): Promise<void> {
+    const cfg = ConfigService.instance;
+    const src = join(cfg.LICENSE_ISSUER_OUT_DIR, tenantId, 'license', 'license.lic');
+    const destDir = join(cfg.PLATFORM_COMPOSE_DIR, tenantId, 'license');
+    try {
+      const license = await fs.readFile(src, 'utf8');
+      await fs.mkdir(destDir, { recursive: true });
+      await fs.writeFile(join(destDir, 'license.lic'), license, { mode: 0o600 });
+    } catch {
+      /* noop/测试签发器无落盘文件；实例启动时由部署方另行放置 */
+    }
+  }
+
   private adminConsoleSummary(): string {
     const cidrs = (ConfigService.instance.TENANT_ADMIN_ALLOW_CIDRS ?? '')
       .split(',')
@@ -633,8 +734,8 @@ export class TenantService implements OnModuleDestroy {
       `VALUES ('${tenant.id}', '${esc(tenant.name)}', 'active', '${esc(tenant.host)}', ${tenant.port ?? 0},`,
       `        ${tenant.expiredAt ? `'${esc(tenant.expiredAt)}'` : 'NULL'}, NOW(), NOW())`,
       `ON CONFLICT (id) DO NOTHING;`,
-      `INSERT INTO tenant_quota (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month)`,
-      `VALUES ('${tenant.id}', ${quota?.maxChats ?? 5}, ${quota?.maxStorageMb ?? 2048}, ${quota?.maxApiCalls ?? 5000}, ${quota?.maxUsers ?? 2}, ${quota?.maxLlmTokensPerMonth ?? 0})`,
+      `INSERT INTO tenant_quota (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, max_docs, max_qa, max_asset_mb)`,
+      `VALUES ('${tenant.id}', ${quota?.maxChats ?? 5}, ${quota?.maxStorageMb ?? 2048}, ${quota?.maxApiCalls ?? 5000}, ${quota?.maxUsers ?? 2}, ${quota?.maxLlmTokensPerMonth ?? 0}, ${quota?.maxDocs ?? 0}, ${quota?.maxQa ?? 0}, ${quota?.maxAssetMb ?? 0})`,
       `ON CONFLICT (tenant_id) DO NOTHING;`,
       '',
     ].join('\n');

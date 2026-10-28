@@ -164,10 +164,10 @@ export class ImportController {
   // -------------------------------------------------------------------------
 
   /** POST /admin/import-jobs/:id/parse — 触发解析 */
-  @HttpCode(HttpStatus.OK)
+  @HttpCode(HttpStatus.ACCEPTED)
   @Post(':id/parse')
   async parseJob(@Param('id') id: string) {
-    return this.service.parseJob(id);
+    return this.service.startParse(id);
   }
 
   // -------------------------------------------------------------------------
@@ -227,6 +227,28 @@ export class ImportController {
   @Post(':id/approve-all')
   async approveAll(@Param('id') id: string) {
     return this.service.approveAll(id);
+  }
+
+  /** GET /admin/import-jobs/:id/unpaired — 未配对消息池 */
+  @Get(':id/unpaired')
+  async listUnpaired(@Param('id') id: string, @Query() q: Record<string, string | undefined>) {
+    return this.service.listUnpaired(id, clampLimit(q.limit), clampOffset(q.offset));
+  }
+
+  /** POST /admin/import-jobs/:id/unpaired/pair — 人工补配 */
+  @HttpCode(HttpStatus.OK)
+  @Post(':id/unpaired/pair')
+  async pairUnpaired(
+    @Param('id') id: string,
+    @Body() body: { customerMessageId?: string; serviceMessageId?: string },
+  ) {
+    if (!body.customerMessageId || !body.serviceMessageId) {
+      throw new BadRequestException({
+        errCode: 'IMPORT_UNPAIRED_IDS_REQUIRED',
+        detail: 'customerMessageId and serviceMessageId are required',
+      });
+    }
+    return this.service.pairUnpaired(id, body.customerMessageId, body.serviceMessageId);
   }
 
   /** GET /admin/import-jobs/:id/review.xlsx — 审核清单（脱敏，30 天保留） */

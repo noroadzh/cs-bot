@@ -23,7 +23,8 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AdminGuard } from '../admin/admin.guard.js';
 import { ConfigService } from '../config/config.service.js';
-import { CanActivate, ExecutionContext } from '@nestjs/common';
+import { CanActivate, ExecutionContext, BadRequestException } from '@nestjs/common';
+import { requestContext } from '../common/request-context.js';
 import {
   TenantService,
 } from './tenant.service.js';
@@ -51,10 +52,29 @@ export class PlatformEnabledGuard implements CanActivate {
   }
 }
 
+@Injectable()
+export class PlatformReasonGuard implements CanActivate {
+  canActivate(ctx: ExecutionContext): boolean {
+    const req = ctx.switchToHttp().getRequest<Request>();
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
+    const path = String(req.path ?? req.url ?? '');
+    if (path.endsWith('/platform/report')) return true;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const header = req.headers['x-operator-reason'];
+    const reason = typeof body.reason === 'string' ? body.reason : Array.isArray(header) ? header[0] : header;
+    if (!reason || String(reason).trim() === '') {
+      throw new BadRequestException({ errCode: 'PLATFORM_REASON_REQUIRED', detail: 'reason is required' });
+    }
+    const store = requestContext.getStore();
+    if (store) store.auditReason = String(reason);
+    return true;
+  }
+}
+
 @Controller('platform')
 @ApiBearerAuth()
 @ApiTags('platform')
-@UseGuards(PlatformEnabledGuard, AdminGuard)
+@UseGuards(PlatformEnabledGuard, AdminGuard, PlatformReasonGuard)
 export class PlatformController {
   constructor(
     private readonly tenants: TenantService,
@@ -123,6 +143,22 @@ export class PlatformController {
     return { ok: true, updated };
   }
 
+  @Post('tenants/:id/shell-access')
+  @ApiOperation({ summary: '记录一次运维 shell 访问审计（由跳板/运维通道调用）' })
+  async recordShellAccess(
+    @Param('id') id: string,
+    @Body() body: Record<string, unknown>,
+    @Req() req: Request,
+  ) {
+    return this.tenants.recordShellAccess(id, Number(body.durationMs ?? 0), this.actor(req));
+  }
+
+  @Post('tenants/:id/credentials/handoff')
+  @ApiOperation({ summary: '一次性交接生成的管理员口令（二次读取 410）' })
+  async handoffCredentials(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.handoffCredentials(id, this.actor(req));
+  }
+
   @Post('tenants/:id/restart')
   @ApiOperation({ summary: '重启租户 adapter（更新密钥/FastGPT 初始化后生效）' })
   async restartTenant(@Param('id') id: string, @Req() req: Request) {
@@ -177,6 +213,9 @@ export class PlatformController {
         maxUsers: body.maxConcurrentQa === undefined ? undefined : Number(body.maxConcurrentQa),
         maxLlmTokensPerMonth:
           body.maxLlmTokensPerMonth === undefined ? undefined : Number(body.maxLlmTokensPerMonth),
+        maxDocs: body.maxDocs === undefined ? undefined : Number(body.maxDocs),
+        maxQa: body.maxQa === undefined ? undefined : Number(body.maxQa),
+        maxAssetMb: body.maxAssetMb === undefined ? undefined : Number(body.maxAssetMb),
       },
       this.actor(req),
     );
@@ -262,6 +301,9 @@ export class PlatformController {
       miss: Number(body.miss ?? 0),
       tokens: Number(body.tokens ?? 0),
       activeChats: Number(body.activeChats ?? 0),
+      docCount: Number(body.docCount ?? 0),
+      qaCount: Number(body.qaCount ?? 0),
+      assetMb: Number(body.assetMb ?? 0),
     });
     return { ok: true };
   }

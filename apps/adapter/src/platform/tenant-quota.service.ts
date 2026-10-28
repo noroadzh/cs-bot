@@ -34,6 +34,9 @@ export const DEFAULT_QUOTA = {
   maxApiCalls: 5000,
   maxUsers: 2,
   maxLlmTokensPerMonth: 0,
+  maxDocs: 0,
+  maxQa: 0,
+  maxAssetMb: 0,
 } as const;
 
 const QUOTA_COLUMNS = [
@@ -42,6 +45,9 @@ const QUOTA_COLUMNS = [
   { key: 'maxApiCalls', column: 'max_api_calls' },
   { key: 'maxUsers', column: 'max_users' },
   { key: 'maxLlmTokensPerMonth', column: 'max_llm_tokens_per_month' },
+  { key: 'maxDocs', column: 'max_docs' },
+  { key: 'maxQa', column: 'max_qa' },
+  { key: 'maxAssetMb', column: 'max_asset_mb' },
 ] as const;
 
 export interface QuotaConsumeInput {
@@ -127,7 +133,7 @@ export class TenantQuotaService implements OnModuleDestroy {
     const res = await this.pool.query(
       `UPDATE tenant_quota SET ${setClauses}, updated_at = NOW()
        WHERE tenant_id = $1
-       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, created_at, updated_at`,
+       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, max_docs, max_qa, max_asset_mb, created_at, updated_at`,
       params,
     );
     if (res.rows.length === 0) {
@@ -174,7 +180,7 @@ export class TenantQuotaService implements OnModuleDestroy {
 
   async getQuota(tenantId: string): Promise<TenantQuota | null> {
     const res = await this.pool.query(
-      `SELECT id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, created_at, updated_at
+      `SELECT id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, max_docs, max_qa, max_asset_mb, created_at, updated_at
        FROM tenant_quota WHERE tenant_id = $1`,
       [tenantId],
     );
@@ -191,7 +197,7 @@ export class TenantQuotaService implements OnModuleDestroy {
          (tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (tenant_id) DO UPDATE SET updated_at = NOW()
-       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, created_at, updated_at`,
+       RETURNING id, tenant_id, max_chats, max_storage_mb, max_api_calls, max_users, max_llm_tokens_per_month, max_docs, max_qa, max_asset_mb, created_at, updated_at`,
       [
         tenantId,
         DEFAULT_QUOTA.maxChats,
@@ -344,6 +350,9 @@ export function mapQuota(row: Record<string, unknown>): TenantQuota {
     maxApiCalls: Number(row.max_api_calls),
     maxUsers: Number(row.max_users),
     maxLlmTokensPerMonth: Number(row.max_llm_tokens_per_month ?? 0),
+    maxDocs: Number(row.max_docs ?? 0),
+    maxQa: Number(row.max_qa ?? 0),
+    maxAssetMb: Number(row.max_asset_mb ?? 0),
     createdAt: new Date(row.created_at as string).toISOString(),
     updatedAt: new Date(row.updated_at as string).toISOString(),
   };

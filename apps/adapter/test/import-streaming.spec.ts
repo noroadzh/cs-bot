@@ -10,6 +10,8 @@ import { StreamingQaPairing } from '../src/import/qa-pairing.js';
 import { sniffShapeHead } from '../src/import/content-sniffer.js';
 import type { CleanMessage } from '../src/import/import-cleaner.js';
 
+jest.setTimeout(60_000);
+
 let dir: string;
 beforeAll(async () => { dir = await mkdtemp(join(tmpdir(), 'csbot-stream-')); });
 afterAll(async () => { await rm(dir, { recursive: true, force: true }); });

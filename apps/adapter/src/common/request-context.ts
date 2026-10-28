@@ -8,6 +8,8 @@ import { createHash } from 'node:crypto';
 
 export interface RequestContext {
   traceId: string;
+  /** 平台变更操作的必填原因（审计） */
+  auditReason?: string;
 }
 
 export const requestContext = new AsyncLocalStorage<RequestContext>();

@@ -28,8 +28,12 @@ export class TriggerService {
 
   reload(): number {
     try {
-      const yaml = load(readFileSync(this.keywordsFile, 'utf8')) as { keywords?: string[] };
-      const words = (yaml?.keywords ?? []).filter((w): w is string => typeof w === 'string' && w.trim().length > 0);
+      const yaml = load(readFileSync(this.keywordsFile, 'utf8')) as {
+        keywords?: string[];
+        triggers?: { prefixes?: string[] };
+      };
+      const words = [...(yaml?.keywords ?? []), ...(yaml?.triggers?.prefixes ?? [])]
+        .filter((w): w is string => typeof w === 'string' && w.trim().length > 0);
       // 原子替换引用：进行中的 evaluate 继续用旧 trie
       this.trie = new KeywordTrie(words);
       return this.trie.size;

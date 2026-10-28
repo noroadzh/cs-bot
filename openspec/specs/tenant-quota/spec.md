@@ -17,12 +17,17 @@ The system MUST create a `tenant_quota` row for every new tenant holding the pla
 
 ### Requirement: Quota update
 
-The system MUST provide `PATCH /platform/tenants/:id/quota` accepting any subset of `{maxChats, maxMsgsPerDay, maxStorageMb, maxConcurrentQa, maxLlmTokensPerMonth}` (positive integers) that upserts the quota row and returns it, writing an audit entry with before/after values. A value below 1 or a non-integer MUST return HTTP 400.
+The system MUST provide `PATCH /platform/tenants/:id/quota` accepting any subset of `{maxChats, maxMsgsPerDay, maxStorageMb, maxConcurrentQa, maxLlmTokensPerMonth, maxDocs, maxQa, maxAssetMb}` (positive integers) that upserts the quota row and returns it, writing an audit entry with before/after values. A value below 1 or a non-integer MUST return HTTP 400.
 
 #### Scenario: Raise one quota dimension
 
 - **WHEN** an operator sends `{maxChats: 50}` for a tenant whose quota is the default
 - **THEN** the response shows `maxChats: 50` with the other dimensions unchanged, and an audit entry records old `5` → new `50`
+
+#### Scenario: Knowledge-base capacity quotas
+
+- **WHEN** an operator sets `{maxDocs: 2000, maxQa: 5000, maxAssetMb: 4096}`
+- **THEN** the quota stores all three and subsequent tenant detail exposes them
 
 #### Scenario: Invalid value rejected
 

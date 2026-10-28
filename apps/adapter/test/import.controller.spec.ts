@@ -40,6 +40,7 @@ function makeSvc() {
     deleteJob: jest.fn(),
     createFromUrl: jest.fn(),
     parseJob: jest.fn(),
+    startParse: jest.fn(),
     listItems: jest.fn(),
     reviewItem: jest.fn(),
     approveAll: jest.fn(),
@@ -211,8 +212,9 @@ describe('ImportController', () => {
   // ---- parseJob ----
 
   describe('parseJob', () => {
+
     it('解析成功 → 返回 { id, status }', async () => {
-      svc.parseJob.mockResolvedValue({
+      svc.startParse.mockResolvedValue({
         id: 'j1', name: 'a.csv', sourceFilename: 'a.csv', status: 'parsed',
         sourceHash: '', itemCount: 3, parseError: null, createdAt: '', updatedAt: '',
       } as ImportJob);

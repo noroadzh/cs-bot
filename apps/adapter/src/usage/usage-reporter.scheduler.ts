@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { ConfigService } from '../config/config.service.js';
 import { UsageWebhookService } from './usage-webhook.service.js';
 import { UsageService, type UsageCounters } from './usage.service.js';
+import { CapacityUsageService, type CapacitySnapshot } from './capacity-usage.service.js';
 
 const BUFFER_TTL_MS = 7 * 86_400_000;
 const BUFFER_FILE = join(process.cwd(), 'data', 'report-buffer.json');
@@ -20,6 +21,7 @@ export function buildControlPlanePayload(
   tenantId: string,
   counters: UsageCounters,
   now = new Date(),
+  capacity?: CapacitySnapshot,
 ): Record<string, unknown> {
   return {
     tenantId,
@@ -29,7 +31,10 @@ export function buildControlPlanePayload(
     hit: counters.messagesAnswered,
     miss: counters.messagesMissed,
     tokens: counters.tokensPrimary + counters.tokensFallback,
-    activeChats: 0,
+    activeChats: capacity?.activeChats ?? 0,
+    docCount: capacity?.docCount ?? 0,
+    qaCount: capacity?.qaCount ?? 0,
+    assetMb: capacity?.assetMb ?? 0,
   };
 }
 
@@ -49,6 +54,7 @@ export class UsageReporterScheduler {
   constructor(
     private readonly webhook: UsageWebhookService,
     private readonly usage: UsageService,
+    private readonly capacity?: CapacityUsageService,
   ) {}
 
   @Cron('30 2 * * *', { timeZone: 'Asia/Shanghai' })
@@ -60,7 +66,8 @@ export class UsageReporterScheduler {
     }
     if (!cfg.CONTROL_PLANE_URL) return;
     await this.flushBuffer(cfg.CONTROL_PLANE_URL);
-    const payload = buildControlPlanePayload(cfg.TENANT_ID || '', this.usage.getUsage().counters);
+    const capacity = this.capacity ? await this.capacity.snapshot() : undefined;
+    const payload = buildControlPlanePayload(cfg.TENANT_ID || '', this.usage.getUsage().counters, new Date(), capacity);
     try {
       await this.send(cfg.CONTROL_PLANE_URL, payload);
       this.logger.log({ phase: 'cron', detail: 'control-plane report sent' });

@@ -25,7 +25,7 @@ describe('SensitiveFilterService', () => {
     const svc = new SensitiveFilterService({} as any);
     svc.onModuleInit();
     try {
-      expect(svc.sweep('这是敏感词')).toBe('这是[内容已过滤]');
+      expect(svc.sweep('这是敏感词')).toBe('抱歉，该内容不便回复，请联系人工客服。');
     } finally {
       svc.onModuleDestroy();
     }
@@ -61,7 +61,7 @@ describe('SensitiveFilterService', () => {
     const svc = new SensitiveFilterService({} as any);
     svc.onModuleInit();
     try {
-      expect(svc.sweep('敏感词和违禁品')).toBe('[内容已过滤]和[内容已过滤]');
+      expect(svc.sweep('敏感词和违禁品')).toBe('抱歉，该内容不便回复，请联系人工客服。');
     } finally {
       svc.onModuleDestroy();
     }

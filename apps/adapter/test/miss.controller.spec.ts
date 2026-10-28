@@ -47,7 +47,7 @@ describe('MissController.list', () => {
       const res = makeRes();
       await controller.list({}, res as unknown as Response);
 
-      expect(exportService.queryRecords).toHaveBeenCalledWith(90);
+      expect(exportService.queryRecords).toHaveBeenCalledWith(90, undefined);
       expect(res.headers['Content-Type']).toBe('application/json');
       expect(res.payload).toEqual({ total: 2, rows: [{ traceId: 't-1' }, { traceId: 't-2' }] });
     });
@@ -56,14 +56,14 @@ describe('MissController.list', () => {
       const res = makeRes();
       await controller.list({ days: '7' }, res as unknown as Response);
 
-      expect(exportService.queryRecords).toHaveBeenCalledWith(7);
+      expect(exportService.queryRecords).toHaveBeenCalledWith(7, undefined);
     });
 
     it('days=30 → parseInt 得 30', async () => {
       const res = makeRes();
       await controller.list({ days: '30' }, res as unknown as Response);
 
-      expect(exportService.queryRecords).toHaveBeenCalledWith(30);
+      expect(exportService.queryRecords).toHaveBeenCalledWith(30, undefined);
     });
   });
 
@@ -104,7 +104,7 @@ describe('MissController.list', () => {
       const res = makeRes();
       await controller.list({ format: 'xlsx', days: '7' }, res as unknown as Response);
 
-      expect(exportService.exportXlsx).toHaveBeenCalledWith(7, expect.any(Object));
+      expect(exportService.exportXlsx).toHaveBeenCalledWith(7, expect.any(Object), undefined);
       expect(exportService.queryRecords).not.toHaveBeenCalled();
       expect(res.json).not.toHaveBeenCalled();
       expect(res.setHeader).not.toHaveBeenCalled();

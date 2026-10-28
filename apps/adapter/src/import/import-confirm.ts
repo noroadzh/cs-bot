@@ -70,6 +70,7 @@ export async function runConfirm(
       if (toImport.rows.length > 0) {
         const client = host.getDatasetClient();
         const datasetId = await client.ensureDataset(datasetName);
+        await host.pool.query('UPDATE import_job SET dataset_id = $2 WHERE id = $1', [jobId, datasetId]);
         const batchSize = 50;
         for (let i = 0; i < toImport.rows.length; i += batchSize) {
           const batch = toImport.rows.slice(i, i + batchSize);
@@ -110,14 +111,19 @@ export async function rollback(host: ConfirmHost, jobId: string): Promise<{ roll
     }
     if (job.status === 'rolled_back') return { rolledBack: true };
     const datasetName = job.datasetName ?? `历史语料-${jobId}`;
-    await host.getDatasetClient().deleteDataset(datasetName);
+    const client = host.getDatasetClient();
+    if (job.datasetId && client.deleteDatasetById) {
+      await client.deleteDatasetById(job.datasetId);
+    } else {
+      await client.deleteDataset(datasetName);
+    }
     await host.pool.query(
       `UPDATE import_item SET imported_qa_id = NULL WHERE job_id = $1 AND imported_qa_id IS NOT NULL`,
       [jobId],
     );
     await host.pool.query(
       `UPDATE import_job
-          SET dataset_name = NULL, imported_count = 0,
+          SET dataset_name = NULL, dataset_id = NULL, imported_count = 0,
               failed_count = GREATEST(approved_count, 0), updated_at = $2
         WHERE id = $1`,
       [jobId, new Date().toISOString()],

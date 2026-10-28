@@ -25,6 +25,7 @@ jest.mock('pg', () => ({
 }));
 
 import { PlatformAuditService, computeHash } from '../src/platform/platform-audit.service.js';
+import { requestContext } from '../src/common/request-context.js';
 
 function svc() {
   return new PlatformAuditService({} as any);
@@ -166,6 +167,14 @@ describe('PlatformAuditService.append', () => {
         created_at: String(p[6]),
       }),
     );
+  });
+
+  it('请求上下文中的 reason 自动写入 payload', async () => {
+    await requestContext.run({ traceId: 't', auditReason: 'ticket-1' }, async () => {
+      await svc().append({ action: 'tenant.create', actor: 'op', tenantId: 't1', payload: { name: 'A' } });
+    });
+    const payload = JSON.parse(String(insertParams(h)[3]));
+    expect(payload.reason).toBe('ticket-1');
   });
 
   it('使用 FOR UPDATE 读最后一行取 prev_hash', async () => {

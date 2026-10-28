@@ -21,6 +21,9 @@ export interface SyncPayload {
     maxApiCalls: number;
     maxUsers: number;
     maxLlmTokensPerMonth: number;
+    maxDocs?: number;
+    maxQa?: number;
+    maxAssetMb?: number;
   };
 }
 

@@ -75,4 +75,16 @@ describe('SensitiveRedactor', () => {
     expect(out.text).toBe('A <PHONE:1> B <PHONE:2>');
     expect(out.flags).toEqual(['phone']);
   });
+
+  it('M10.R.11 详细地址 → <ADDRESS:1>', () => {
+    const out = r.redact('寄到北京市朝阳区建国路88号');
+    expect(out.text).toContain('<ADDRESS:1>');
+    expect(out.flags).toContain('address');
+  });
+
+  it('M10.R.12 联系人姓名 → <NAME:1>', () => {
+    const out = r.redact('联系人：张三，电话 13800000000');
+    expect(out.text).toContain('联系人：<NAME:1>');
+    expect(out.flags).toContain('name');
+  });
 });

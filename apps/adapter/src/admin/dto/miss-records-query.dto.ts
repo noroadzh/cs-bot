@@ -19,4 +19,10 @@ export class MissRecordsQueryDto {
     description: '回溯天数（正整数），默认 90；非正整数会返回 400',
   })
   days?: string;
+
+  @ApiProperty({ required: false, type: String, description: '起始时间（ISO），优先于 days' })
+  from?: string;
+
+  @ApiProperty({ required: false, type: String, description: '结束时间（ISO），与 from 配合' })
+  to?: string;
 }

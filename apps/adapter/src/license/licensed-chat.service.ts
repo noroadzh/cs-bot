@@ -13,6 +13,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { LicenseService } from './license.service.js';
+import axios from 'axios';
 
 @Injectable()
 export class LicensedChatService {
@@ -20,6 +21,7 @@ export class LicensedChatService {
   private readonly pool: Pool;
   private readonly chatIds = new Set<string>();
   private loaded = false;
+  private readonly alerted = new Map<string, number>();
 
   constructor(private readonly licenseService: LicenseService) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
@@ -56,7 +58,10 @@ export class LicensedChatService {
    */
   async ensureChat(chatId: string, chatName = ''): Promise<boolean> {
     if (this.chatIds.has(chatId)) return true;
-    if (!this.canAdd()) return false;
+    if (!this.canAdd()) {
+      void this.alertChatLimit(chatId);
+      return false;
+    }
     try {
       await this.pool.query(
         `INSERT INTO licensed_chat (chat_id, chat_name) VALUES ($1, $2)
@@ -83,6 +88,23 @@ export class LicensedChatService {
     }
     this.chatIds.delete(chatId);
     this.logger.log(`chat removed: ${chatId} (${this.chatIds.size} left)`);
+  }
+
+  private async alertChatLimit(chatId: string): Promise<void> {
+    const last = this.alerted.get(chatId) ?? 0;
+    if (Date.now() - last < 86_400_000) return;
+    this.alerted.set(chatId, Date.now());
+    const url = ConfigService.instance.OPS_WEBHOOK_URL ?? '';
+    if (!url) return;
+    try {
+      await axios.post(
+        url,
+        { msgtype: 'text', text: { content: `[授权告警] 群 ${chatId} 超出 license maxChats=${this.getMaxChats()}，已拒绝接入` } },
+        { timeout: 5000 },
+      );
+    } catch (err) {
+      this.logger.warn(`chat-limit alert failed: ${(err as Error).message}`);
+    }
   }
 
   private canAdd(): boolean {
