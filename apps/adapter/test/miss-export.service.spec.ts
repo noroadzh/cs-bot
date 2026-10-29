@@ -178,6 +178,47 @@ describe('MissExportService', () => {
     });
   });
 
+  describe('queryItems（JSON 导出投影）', () => {
+    it('只输出规格字段，userId 掩码，不含原始标识', async () => {
+      poolQuery.mockResolvedValueOnce({
+        rows: [{
+          trace_id: 'trace-abc',
+          chat_id: 'chat-1',
+          user_id: 'wxid_abcdefg123',
+          question: '怎么退款？',
+          score: 0.42,
+          engine: 'fastgpt',
+          mediaType: 'voice',
+          status: 1,
+          created_at: new Date('2026-10-01T02:03:04Z'),
+        }],
+      });
+      const svc = new MissExportService({} as any);
+      const items = await svc.queryItems(90);
+
+      expect(items).toHaveLength(1);
+      const item = items[0] as unknown as Record<string, unknown>;
+      expect(Object.keys(item).sort()).toEqual(
+        ['chatId', 'createdAt', 'mediaType', 'question', 'score', 'status', 'userId'].sort(),
+      );
+      expect(item.userId).toBe('wx***23');
+      expect(item.chatId).toBe('chat-1');
+      expect(item.mediaType).toBe('voice');
+      expect(item.createdAt).toBe('2026-10-01T02:03:04.000Z');
+
+      const body = JSON.stringify(items);
+      expect(body).not.toContain('wxid_abcdefg123');
+      expect(body).not.toContain('trace-abc');
+      expect(body).not.toContain('fastgpt');
+    });
+
+    it('空结果 → 空数组', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [] });
+      const svc = new MissExportService({} as any);
+      await expect(svc.queryItems(90)).resolves.toEqual([]);
+    });
+  });
+
   it('queryRecords 支持 from/to 范围并写入 SQL 参数', async () => {
     poolQuery.mockResolvedValueOnce({ rows: [] });
     const svc = new MissExportService({} as any);

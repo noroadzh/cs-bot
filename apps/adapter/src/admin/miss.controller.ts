@@ -31,8 +31,8 @@ export class MissController {
       await this.exportService.exportXlsx(daysNum, res as unknown as NodeJS.WritableStream & { setHeader?: (k: string, v: string) => void }, range);
       return;
     }
-    const rows = await this.exportService.queryRecords(daysNum, range);
+    const items = await this.exportService.queryItems(daysNum, range);
     res.setHeader('Content-Type', 'application/json');
-    res.json({ total: rows.length, rows });
+    res.json({ total: items.length, items });
   }
 }

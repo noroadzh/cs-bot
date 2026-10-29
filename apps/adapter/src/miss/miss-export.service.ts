@@ -30,6 +30,29 @@ function buildWhere(days: number, range?: MissRange): { sql: string; params: unk
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
+/** JSON 导出条目：仅规格列出的字段，userId 掩码；不含 trace_id/engine */
+export interface MissExportItem {
+  question: string;
+  chatId: string;
+  score: number;
+  mediaType: string | null;
+  status: number;
+  createdAt: string;
+  userId: string;
+}
+
+export function toExportItems(rows: readonly Record<string, unknown>[]): MissExportItem[] {
+  return rows.map((r) => ({
+    question: String(r.question ?? ''),
+    chatId: String(r.chat_id ?? ''),
+    score: Number(r.score ?? 0),
+    mediaType: (r.mediaType as string | null) ?? null,
+    status: Number(r.status ?? 0),
+    createdAt: new Date(r.created_at as string).toISOString(),
+    userId: maskPII(String(r.user_id ?? ''), 'userid'),
+  }));
+}
+
 const HEADER = ['traceId', 'chatId', 'userId', 'question', 'score', 'engine', 'mediaType', 'status', 'createdAt'] as const;
 const EXPORT_LIMIT = 50000;
 const FETCH_BATCH = 2000;
@@ -55,6 +78,11 @@ export class MissExportService {
     } finally {
       await pool.end();
     }
+  }
+
+  /** JSON 导出条目（投影 + userid 掩码） */
+  async queryItems(days = 90, range?: MissRange): Promise<MissExportItem[]> {
+    return toExportItems(await this.queryRecords(days, range));
   }
 
   /**

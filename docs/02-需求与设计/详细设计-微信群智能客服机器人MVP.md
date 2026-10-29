@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.3（V1.2 + 编排渲染、解析器、限流窗口与素材标记细节对齐实现） |
+| 版本 | V1.4（V1.3 + 出站客户端实际形态、未命中 JSON 导出结构） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
@@ -93,19 +93,19 @@ export enum ErrCode {
 
 ## 2. 公共组件详细设计
 
-### 2.1 HttpClient（统一出站）
+### 2.1 出站客户端与并发控制（实际形态）
 
-```ts
-export interface HttpClient {
-  request<T>(opts: {
-    method: string; url: string; timeoutMs: number;
-    retries?: number; backoffBaseMs?: number; // 指数退避，默认 1 次
-    semaphore?: 'llm' | 'wecom' | 'vl';       // 信号量分组，上限可配
-  }): Promise<Result<T>>;
-}
-```
-- 信号量：`llm` 默认 4（本地档建议 2–4）、`wecom` 8、`vl` 2；队列 FIFO，超时=放弃排队。
-- 重试仅对幂等请求（GET/企微主动发送带 client_msg_id 幂等）。
+出站调用由各客户端自行持有 `axios` 实例，不设统一 `HttpClient` 抽象；三层共性能力如下：
+
+| 能力 | 实现 | 说明 |
+|---|---|---|
+| 实例与超时 | `axios.create({ baseURL, timeout })` | WecomClient 10s；FastGPT 主/备各一实例；VL 10s |
+| 并发上限 | `apps/adapter/src/common/semaphore.ts` | FIFO 信号量：`LLM_CONCURRENCY=4`、`WECOM_CONCURRENCY=8`、`VL_CONCURRENCY=2`（可配） |
+| 重试 | 客户端内建 | 企微发送 `WECOM_SEND_MAX_ATTEMPTS=3` + 退避；FastGPT 失败退避 `LLM_RETRY_DELAY_MS=1000` 后重试 1 次；同幂等请求才重试 |
+
+各客户端直接 `await llmSemaphore().run(() => ...)` / `wecomSemaphore().run(...)` / `vlSemaphore().run(...)` 包裹请求。
+
+> 历史设计曾规划统一 `HttpClient.request({ retries, backoffBaseMs, semaphore })`；实际实现按客户端拆分（V1.4 起文档以实际形态为准），语义等价：并发受同一信号量约束、重试仅对幂等请求。
 
 ### 2.2 WecomClient（M1 出站，R-1 唯一企微出口）
 
@@ -433,7 +433,7 @@ CREATE TABLE platform_audit_log (
 > 交付形态：本期管理面**只有 API**（无自研前端），随《操作手册》附 curl / 表单调用示例；知识运营界面由 FastGPT 自带后台承担。下述接口契约在二期独立运营后台中**原样复用**（二期仅叠加前端与权限），因此本节的 URL/入参/出参视为冻结契约，二期不得破坏性变更。
 
 ### 6.1 未命中导出
-`GET /admin/miss-records?from=2026-10-01&to=2026-10-11&format=xlsx` → `200 application/vnd.openxml…`（流式 xlsx）；`format=json` → `{total, items:[{question, chatId, score, mediaType, status, createdAt}]}`（脱敏）。
+`GET /admin/miss-records?from=2026-10-01&to=2026-10-11&format=xlsx` → `200 application/vnd.openxml…`（流式 xlsx）；`format=json` → `{total, items:[{question, chatId, score, mediaType, status, createdAt, userId}]}`；`userId` 经共享掩码函数（首 2 + `***` + 末 2），响应不含原始 `user_id`/`trace_id`/`engine`。
 
 ### 6.2 素材（增项 A）
 ```
@@ -532,4 +532,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。*
