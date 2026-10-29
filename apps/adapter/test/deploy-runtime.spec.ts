@@ -30,6 +30,16 @@ describe('adapter runtime mounts', () => {
     expect(compose).not.toContain('${CSBOT_UID:-0}');
   });
 
+  it('提供一键部署脚本（预检/启动/健康等待）', () => {
+    const install = readFileSync(join(ROOT, 'deploy', 'install.sh'), 'utf8');
+    expect(install).toContain('docker compose -f "$COMPOSE"');
+    expect(install).toContain('up -d');
+    expect(install).toContain('--check');
+    expect(install).toContain('--dry-run');
+    expect(install).toContain('/healthz');
+    expect(install).not.toContain('docker-compose.saas.yml up');
+  });
+
   it('提供宿主目录权限校正脚本', () => {
     const script = readFileSync(join(ROOT, 'deploy', 'init-perms.sh'), 'utf8');
     expect(script).toContain('CSBOT_UID:-65532');
