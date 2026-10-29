@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.1（V1.0 + 明确管理面交付形态：本期纯 API，契约视为冻结，二期运营后台原样复用） |
-| 日期 | 2026-10-12 |
+| 版本 | V1.2（V1.1 + 按实现与主规格对齐导入/素材接口、Redis 键、DDL 基线与容量字段） |
+| 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.9》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.1》 |
+| 上游文档 | 《概要设计 V1.9》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.2》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -307,18 +307,16 @@ interface SessionParser {           // 三实现：ArchiveJsonParser / XlsxParse
 
 **模板渲染**：`env.hbs` + `compose.overrides.hbs`（端口段 = 30000+tenantIdx*10 起，db=tenant_{id}，网络=net_{id}）；证书：通配证书复用（SNI）或 per-tenant ACME。
 
-**用量上报（D10）**：adapter 每日 02:30 `POST {CONTROL_PLANE_URL}/report`，body 仅计数：`{tenantId, date, msgsIn, triggered, hit, miss, tokens, activeChats}`；失败本地缓存 7 天后丢弃（不影响问答）。
+**用量上报（D10）**：adapter 每日 02:30 `POST {CONTROL_PLANE_URL}/report`，body 仅计数：`{tenantId, date, msgsIn, triggered, hit, miss, tokens, activeChats, docCount, qaCount, assetMb}`；失败本地缓存 7 天后丢弃（不影响问答）。
 
 **订阅状态机迁移**：每日 03:00 扫描 `sub_expire_at`：T-30/15/7 通知；到期→grace；grace+7d→suspended（向实例签发过期证书或置 license 失效）；续费→`renew`（签新证书 + 实例 reload）。
 
 ---
 
-## 4. 数据库 DDL（PG15，schema=adapter）
+## 4. 数据库 DDL 基线（PG15，默认 schema）
 
 ```sql
-CREATE SCHEMA IF NOT EXISTS adapter;
-
-CREATE TABLE adapter.miss_record (
+CREATE TABLE miss_record (
   id          BIGSERIAL PRIMARY KEY,
   question    TEXT NOT NULL,
   chatid      VARCHAR(64),
@@ -328,15 +326,9 @@ CREATE TABLE adapter.miss_record (
   status      SMALLINT NOT NULL DEFAULT 0,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_miss_status_created ON adapter.miss_record(status, created_at);
+CREATE INDEX idx_miss_status_created ON miss_record(status, created_at);
 
-CREATE TABLE adapter.keyword_trigger (
-  id       SERIAL PRIMARY KEY,
-  keyword  VARCHAR(64) UNIQUE NOT NULL,
-  enabled  BOOLEAN NOT NULL DEFAULT true
-);
-
-CREATE TABLE adapter.asset (
+CREATE TABLE asset (
   id        SERIAL PRIMARY KEY,
   asset_type VARCHAR(16) NOT NULL CHECK (asset_type IN ('link','file','video')),
   title     VARCHAR(128) NOT NULL,
@@ -347,9 +339,9 @@ CREATE TABLE adapter.asset (
   enabled   BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_asset_type_enabled ON adapter.asset(asset_type, enabled);
+CREATE INDEX idx_asset_type_enabled ON asset(asset_type, enabled);
 
-CREATE TABLE adapter.import_job (
+CREATE TABLE import_job (
   id BIGSERIAL PRIMARY KEY,
   file_name VARCHAR(256) NOT NULL,
   file_hash VARCHAR(64) NOT NULL,
@@ -366,11 +358,11 @@ CREATE TABLE adapter.import_job (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   finished_at TIMESTAMPTZ
 );
-CREATE INDEX idx_import_job_status ON adapter.import_job(status, created_at);
+CREATE INDEX idx_import_job_status ON import_job(status, created_at);
 
-CREATE TABLE adapter.import_item (
+CREATE TABLE import_item (
   id BIGSERIAL PRIMARY KEY,
-  job_id BIGINT NOT NULL REFERENCES adapter.import_job(id) ON DELETE CASCADE,
+  job_id BIGINT NOT NULL REFERENCES import_job(id) ON DELETE CASCADE,
   source_hash VARCHAR(64) UNIQUE NOT NULL,
   question TEXT,
   answer TEXT,                       -- rejected 条目为 NULL
@@ -383,7 +375,7 @@ CREATE TABLE adapter.import_item (
   imported_qa_id VARCHAR(64),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_import_item_job ON adapter.import_item(job_id, review_status);
+CREATE INDEX idx_import_item_job ON import_item(job_id, review_status);
 
 -- 平台侧（控制面独立 database，非 adapter schema）
 CREATE TABLE tenant (
@@ -422,17 +414,19 @@ CREATE TABLE platform_audit_log (
 );
 ```
 
+> 上表为初版基线；后续结构变更以 `apps/adapter/src/**/NNN-*.sql` 追加迁移为准（当前 18 个）。关键词由 `config/keywords.yml` 提供（Trie 匹配 + `POST /admin/keywords/reload`），无独立表。
+
 ## 5. Redis 键总表
 
 | Key | 类型 | TTL | 用途 |
 |---|---|---|---|
-| `dedup:{msgid}` | string "1" | 172800s | 消息幂等（D2 前置） |
+| `dedup:{msgid}` | string "1" | 172800s | 消息幂等（D2 前置，SET NX） |
 | `ctx:{chatId}:{userId}` | JSON array | 600s | 会话上下文（M3） |
-| `rl:group:{chatId}` / `rl:user:{c}:{u}` | counter（Lua） | 60s | 限流（M2） |
-| `license:cache` | JSON | 3600s | 授权校验缓存（M9） |
-| `wecom:at` | string | 7000s | access_token 缓存 + 刷新锁 |
-| `import:queue` | list | 持久 | 导入任务队列（M10） |
-| `report:buffer` | list | 7d | 用量上报失败缓存（D10） |
+| `rate:group:{chatId}:{minute}` / `rate:user:{chatId}:{userId}:{minute}` | counter | 60s | 按分钟固定窗口限流（M2，INCR + EXPIRE） |
+| `rate:hint:{chatId}` | string "1" | 300s | 限流提示去重（同群每 5 分钟最多一次） |
+| `wecom:at` / `wecom:at:lock` | string | 7000s / 短锁 | access_token 缓存与刷新锁（M1） |
+
+> 授权状态为进程内缓存（每日 03:00 复核并写 `license.state`）；导入任务队列为进程内 `ImportTaskQueue`；用量上报失败缓冲落盘 `data/report-buffer.json`（保留 7 天）。三者均不使用 Redis。
 
 ## 6. API 契约（管理面，Basic Auth + IP 白名单）
 
@@ -443,20 +437,27 @@ CREATE TABLE platform_audit_log (
 
 ### 6.2 素材（增项 A）
 ```
-POST /admin/assets            multipart: type,title,file|url → 201 {id}
-GET  /admin/assets            → {items:[{id,type,title,size,enabled,url?}]}
-DELETE /admin/assets/:id      → {ok:true}（enabled=false）
+POST /admin/assets            multipart file → 201 {success,asset}
+                              或 JSON {url,name} → 201 {success,asset}
+GET  /admin/assets?limit&offset → {success,total,limit,offset,assets:[{id,type,name,url,size,createdAt}]}
+GET  /admin/assets/:id        → {success,asset}（404 ASSET_NOT_FOUND）
+DELETE /admin/assets/:id      → {success:true,deleted:true}（删除记录与落盘文件）
 ```
 
 ### 6.3 导入（增项 B）
 ```
-POST /admin/import/jobs                   multipart file → 202 {jobId}
-GET  /admin/import/jobs                   → {jobs:[{jobId,status,stats…}]}
-GET  /admin/import/jobs/:id               → {jobId,status,stats:{parsed,paired,masked,blocked,dedup,approved,imported,failed}}
-GET  /admin/import/jobs/:id/review.xlsx   → xlsx（列：序号/会话哈希/时间/问题/答案/脱敏/敏感/近似/建议/审核结果）
-POST /admin/import/jobs/:id/confirm       body:{items:[{itemId,action:"keep"|"modify"|"reject",modified?}]} → {imported:n}
-POST /admin/import/jobs/:id/rollback      → {ok:true}
-POST /admin/import/jobs/:id/retry         → 202
+POST /admin/import-jobs                   multipart file → 201 {id,name,sourceFilename,status:"uploaded"}
+POST /admin/import-jobs/from-url          {url,name?} → 201（抓取失败 502）
+POST /admin/import-jobs/:id/parse         → 202（后台解析，租约串行）
+GET  /admin/import-jobs?status&limit&offset → {total,limit,offset,rows}
+GET  /admin/import-jobs/:id               → job + 按 review_status 计数
+GET  /admin/import-jobs/:id/items?review_status&sensitive&limit&offset → {total,limit,offset,rows}
+GET  /admin/import-jobs/:id/review.xlsx   → xlsx（列：序号/会话哈希/时间/问题/答案/脱敏/敏感/近似/建议/审核结果）
+POST /admin/import-jobs/:id/approve-all   → 批量通过剩余条目
+GET  /admin/import-jobs/:id/unpaired      / POST .../unpaired/pair → 未配对查看与人工补配
+POST /admin/import-jobs/:id/confirm       body:{decisions:[{itemId,reviewStatus:"approved"|"rejected"}]} → {approved,written,dataset}
+POST /admin/import-jobs/:id/rollback      → {ok:true}（删除数据集）
+POST /admin/import-jobs/:id/retry         → 202
 ```
 
 ### 6.4 授权（M9）
@@ -531,4 +532,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。*

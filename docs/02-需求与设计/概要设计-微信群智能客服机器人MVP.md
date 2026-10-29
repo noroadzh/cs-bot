@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.9（V1.8 + 管理面交付形态明确：本期管理链路为纯 API + 调用示例，可视化界面整体归二期独立运营后台，接口契约冻结） |
+| 版本 | V1.10（V1.9 + 导入接口路径与关键词配置口径对齐实现） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
@@ -405,13 +405,13 @@ triggers:
 - **接口定义**：
   | 方法 | 路径 | 说明 |
   |---|---|---|
-  | POST | /admin/import/jobs | 上传会话文件创建导入任务（multipart），返回 jobId |
-  | GET | /admin/import/jobs | 批次列表（状态与统计） |
-  | GET | /admin/import/jobs/:id | 任务进度（已解析/已配对/待审核/已入库/失败） |
-  | GET | /admin/import/jobs/:id/review.xlsx | 下载审核清单（已脱敏，30 天内有效） |
-  | POST | /admin/import/jobs/:id/confirm | 提交审核结果（JSON 或回传清单），触发批量入库 |
-  | POST | /admin/import/jobs/:id/rollback | 批次下线（移出检索，可再次上线） |
-  | POST | /admin/import/jobs/:id/retry | 失败条目重试 |
+  | POST | /admin/import-jobs | 上传会话文件创建导入任务（multipart），返回 jobId |
+  | GET | /admin/import-jobs | 批次列表（状态与统计） |
+  | GET | /admin/import-jobs/:id | 任务进度（已解析/已配对/待审核/已入库/失败） |
+  | GET | /admin/import-jobs/:id/review.xlsx | 下载审核清单（已脱敏，30 天内有效） |
+  | POST | /admin/import-jobs/:id/confirm | 提交审核结果（JSON 或回传清单），触发批量入库 |
+  | POST | /admin/import-jobs/:id/rollback | 批次下线（移出检索，可再次上线） |
+  | POST | /admin/import-jobs/:id/retry | 失败条目重试 |
 - **数据表**：`import_job`、`import_item`（见 §7.1）。
 
 ### M11 平台控制面与 SaaS 租户管理模块【增项包 C，对应 PRD V1.3 FR-12】
@@ -516,12 +516,8 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 - **保留期 90 天**（配置项 MISS_RECORD_RETENTION_DAYS）：适配层每日 03:30 定时任务删除超期记录，失败记 WARN 并次日重试。
 - 全部数据存于客户服务器，不出域；部署/交付手册注明"群消息数据属客户数据，客户方需在群公告/隐私告知中说明机器人处理规则"——告知义务归客户侧。
 
-**keyword_trigger（触发关键词表）**
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | serial PK | |
-| keyword | varchar(64) unique | 触发词 |
-| enabled | boolean default true | |
+**关键词配置（无独立表）**
+触发关键词由 `config/keywords.yml` 提供（Trie 前缀匹配），`POST /admin/keywords/reload` 热加载；不建 `keyword_trigger` 表。
 
 **asset（素材表，V1.2 增项新增）**
 | 字段 | 类型 | 说明 |
@@ -676,11 +672,11 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | POST | /admin/assets、GET /admin/assets、DELETE /admin/assets/:id | 素材上传（multipart/JSON）/清单/停用，Basic Auth（V1.2 增项） |
 | GET | /admin/license | 授权状态查询：有效性/剩余天数/群数上限/指纹哈希（V1.3） |
 | POST | /admin/license/reload | 证书热重载，续期后免重启生效（V1.3） |
-| POST | /admin/import/jobs、GET /admin/import/jobs、GET /admin/import/jobs/:id | 历史会话导入：上传创建任务/批次列表/进度查询，Basic Auth（V1.5 增项） |
-| GET | /admin/import/jobs/:id/review.xlsx | 下载审核清单（已脱敏） |
-| POST | /admin/import/jobs/:id/confirm | 提交审核结果并触发批量入库（V1.5 增项） |
-| POST | /admin/import/jobs/:id/rollback | 批次下线回滚（V1.5 增项） |
-| POST | /admin/import/jobs/:id/retry | 失败条目重试（V1.5 增项） |
+| POST | /admin/import-jobs、GET /admin/import-jobs、GET /admin/import-jobs/:id | 历史会话导入：上传创建任务/批次列表/进度查询，Basic Auth（V1.5 增项） |
+| GET | /admin/import-jobs/:id/review.xlsx | 下载审核清单（已脱敏） |
+| POST | /admin/import-jobs/:id/confirm | 提交审核结果并触发批量入库（V1.5 增项） |
+| POST | /admin/import-jobs/:id/rollback | 批次下线回滚（V1.5 增项） |
+| POST | /admin/import-jobs/:id/retry | 失败条目重试（V1.5 增项） |
 | — | /platform/* | 平台控制面接口（仅 SaaS 形态，独立服务，清单见 §M11，V1.6 增项 C） |
 
 ## 9. 安全设计
@@ -867,3 +863,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.7 | 2026-10-12 | 架构明确化：§3.1 重绘为逻辑架构图并附数据流清单（D1–D10，含协议与约束）；新增 §3.4 核心处理链路（消息管道 ASCII 图 + 管理链路）与模块依赖规则 R-1~R-8（单一企微出口/单一 FastGPT 客户端/出站必经过滤/授权前置/配置统一/文件分区/不越层/导入不抢管道）；新增 §3.5 架构决策记录 ADR A1–A12（含被否备选与原因）；§10.1 补网络分区与端口矩阵（仅 443 对外，出站域名白名单）；各层职责补平台控制面行；配套新建《部署手册》V1.0（环境要求/企微配置/安装/验证/运维/故障排查/安全自查） |
 | V1.9 | 2026-10-12 | 管理面交付形态口径明确：§3.4 管理链路补注"本期纯 API + 操作手册调用示例，不提供自研管理界面；管理接口可视化统一归二期独立运营后台，接口契约保持不变"；与 PRD V1.5 范围口径、报价单二期后台范围对齐 |
 | V1.8 | 2026-10-12 | 选型与性能明确化：① 选型表按性能/并发/可维护性重述，新增 §4.2 关键选型对比矩阵（FastGPT vs Dify/LangChain、NestJS vs Go/Java、云 API vs 本地 vLLM、Compose vs K8s、不引入 Kafka，六维评分含被否原因）；② 新增 §4.3 本地模型嵌入设计（OpenAI 兼容端点接入、MODEL_MODE 三档路由 cloud/hybrid/local、模型规格与吞吐对照、embedding 切换须重建索引红线、增项包 D）；③ 新增 §11.4 容量与高并发设计（各层容量测算、LLM 为主瓶颈 ~2000 次/小时、L1–L4 扩展路径）与 §11.5 可维护性设计；④ §10.1 补 vllm/xinference 可选服务与三档资源档位；⑤ ADR 增 A13/A14 |
+| V1.10 | 2026-10-29 | 文档契约对齐：导入接口统一为 `/admin/import-jobs`；关键词改为 `config/keywords.yml` 配置文件口径（无 `keyword_trigger` 表）；与详细设计 V1.2、部署手册 V1.2 同步 |
