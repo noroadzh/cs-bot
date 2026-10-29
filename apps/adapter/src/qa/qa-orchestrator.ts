@@ -3,6 +3,7 @@ import { Injectable, Inject } from '@nestjs/common';
 import { IQA_ENGINE, type IQAEngine, ErrCode } from '@cs-bot/shared';
 import { ContextService } from '../context/context.service.js';
 import { SensitiveFilterService } from '../filter/sensitive-filter.service.js';
+import { LlmAlertService } from './llm-alert.service.js';
 import { MissService } from '../miss/miss.service.js';
 import { AssetSenderService } from '../media/asset-sender.service.js';
 import { AssetReferenceResolver } from '../media/asset-reference.resolver.js';
@@ -30,6 +31,7 @@ export class QaOrchestrator {
     private readonly assetResolver: AssetReferenceResolver,
     private readonly usageService: UsageService,
     @Inject(IMessageSender) private readonly sender: IMessageSender,
+    private readonly llmAlert: LlmAlertService = new LlmAlertService(),
   ) {}
 
   async handle(msg: InboundMsg, traceId: string, _triggerReason: 'mention' | 'keyword'): Promise<void> {
@@ -92,6 +94,8 @@ export class QaOrchestrator {
       // LLM 调用失败同样属于未应答，计入 messagesMissed；同时记录 LLM 失败率
       this.usageService.increment('messagesMissed');
       this.usageService.increment('llmFailures');
+      // 双通道失败告警（旁路，节流；失败不影响回复）
+      void this.llmAlert.recordFailure(describeErr((result as { error?: unknown }).error)).catch(() => undefined);
     } else {
       score = result.value.score;
       if (score < this.cfg.CONFIDENCE_THRESHOLD) {
@@ -178,4 +182,15 @@ export class QaOrchestrator {
   }
 
   private sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
+}
+
+/** 归一化 Result 错误（可能是 ErrCode 数值或 {code,message}）为可读原因 */
+function describeErr(error: unknown): string {
+  if (error === null || error === undefined) return 'llm-failure';
+  if (typeof error === 'string') return error;
+  if (typeof error === 'number') return String(error);
+  const obj = error as { code?: unknown; message?: unknown };
+  if (obj.code !== undefined) return String(obj.code);
+  if (obj.message !== undefined) return String(obj.message);
+  return 'llm-failure';
 }

@@ -16,7 +16,8 @@ describe('FastGPT hybrid health', () => {
   it('marks degraded on probe failure and recovers after 5 minutes healthy', async () => {
     const engine = new FastGPTQaEngine({} as any, { search: async () => null } as any);
     const get: any = jest.fn();
-    (engine as any).primary = { get, post: jest.fn() };
+    // 健康探测走独立的 HTTP 实例（业务请求已改经 FastGPTClient）
+    (engine as any).primaryHttp = { get };
     get.mockRejectedValueOnce(new Error('down'));
     await expect(engine.probeHealth(1000)).resolves.toBe(false);
     expect(engine.isHealthy(1000)).toBe(false);

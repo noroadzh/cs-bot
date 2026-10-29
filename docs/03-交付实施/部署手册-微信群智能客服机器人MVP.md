@@ -3,10 +3,10 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 部署手册（私有化部署形态 A 为主，附 SaaS 形态租户开通） |
-| 版本 | V1.7（V1.6 + 未命中 JSON 导出结构同步） |
+| 版本 | V1.8（V1.7 + LLM 告警配置与容器自愈说明） |
 | 日期 | 2026-10-12 |
 | 适用对象 | 客户方 IT / 运维人员、交付工程师 |
-| 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.11 / 《详细设计》V1.4） |
+| 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.12 / 《详细设计》V1.5） |
 | 关联文档 | 《PRD V1.5》《概要设计 V1.11》《详细设计 V1.4》《测试报告 V1.2》《用户使用手册-SaaS版 V1.1》《用户使用手册-私有化版 V1.1》《项目报价单》 |
 
 > 本手册覆盖从环境准备到上线验证、日常运维与故障排查的完整流程。按顺序执行即可完成部署；**第 5 章准备清单全部就绪后再开始安装**，可避免中途卡壳。
@@ -262,6 +262,8 @@ cp .env.template .env && chmod 600 .env && vim .env
 | LOCAL_LLM_MODEL | | Qwen/Qwen2.5-7B-Instruct | 本地模型名称（增项 D） |
 | USAGE_REPORT_ENABLED | | false | 用量上报开关（私有化保持 false） |
 | USAGE_WEBHOOK_URL | | - | 用量上报 Webhook 地址（SaaS 形态填，私有化为空） |
+| OPS_WEBHOOK_URL | | - | 运维告警（license 到期/群数超限/LLM 双通道失败）；留空=关闭 |
+| LLM_ALERT_THRESHOLD / WINDOW_MS / COOLDOWN_MS | | 3 / 300000 / 1800000 | LLM 失败告警阈值、统计窗口、冷却 |
 | USAGE_REPORT_INTERVAL_MS | | 86400000 | 快照周期（默认 24h，毫秒） |
 | USAGE_PERIOD | | daily | 计量周期：daily / weekly / monthly |
 | QWEN_VL_BASE_URL | | - | 视觉模型端点（增项 A；为空则走 mock） |
@@ -450,6 +452,7 @@ curl -X POST -u admin:<口令> -H 'content-type: application/json' \
 - **本地模型**：所有模式均走 FastGPT RAG，`MODEL_MODE` 只控制模型通道与云回退；local 模式禁止云出口，hybrid 在 FastGPT 失败时回落，恢复需连续 5 分钟健康。
 - **审计**：平台变更请求需带 `reason`（body 或 `X-Operator-Reason`）；审计保留 180 天，清理前用 `scripts/export-audit.mjs` 导出异地留存。
 - **升级**：默认窗口 02:00–04:00，提前 3 个工作日通知；紧急升级需显式 force 并记审计。
+- **自愈**：容器 `restart: unless-stopped` 异常退出自动重启；宿主重启后由 Docker 守护进程拉起（`systemctl enable docker`）。
 - **凭证**：开通后 `POST /platform/tenants/:id/credentials/handoff` 一次性领取生成口令，二次读取 410。
 
 ## 10. 常见故障排查
@@ -676,7 +679,7 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。V1.7（2026-10-29）未命中导出示例补 JSON 格式与掩码说明。*
+*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。V1.7（2026-10-29）未命中导出示例补 JSON 格式与掩码说明。V1.8（2026-10-29）补 LLM 双通道失败告警配置与容器自愈说明。*
 
 ### 附录 A.1 租户 FastGPT 初始化与密钥更新（运营步骤）
 

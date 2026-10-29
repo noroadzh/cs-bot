@@ -118,6 +118,22 @@ describe('QaOrchestrator', () => {
     expect(sender.sendText).toHaveBeenCalledWith('chat-1', '系统繁忙，请稍后再试', undefined, 'trace-4:0');
   });
 
+  it('1.6.d2 dual-channel failure triggers the LLM alert', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const { LlmAlertService } = await import('../src/qa/llm-alert.service.js');
+    const engine = stubEngine({ ask: jest.fn(async () => ({ ok: false, error: { code: -1, message: 'both down' } })) });
+    const recordFailure = jest.fn(async (_reason: string) => true);
+    const alert = { recordFailure, recordSuccess: jest.fn() } as unknown as InstanceType<typeof LlmAlertService>;
+    const orch = new QaOrchestrator(
+      engine, stubContext(), stubFilter(), stubMiss(), stubAsset(), stubAssetResolver(), stubUsage(), makeSender() as any, alert,
+    );
+
+    await orch.handle(makeMsg(), 'trace-alert', 'keyword');
+
+    expect(recordFailure).toHaveBeenCalledTimes(1);
+    expect(String(recordFailure.mock.calls[0][0])).toContain('-1');
+  });
+
   it('1.6.e appends context when score above threshold', async () => {
     const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
     const engine = stubEngine();

@@ -5,10 +5,12 @@ import { AppLogger } from '../common/logger.js';
 import { Err, Ok, ErrCode, type IQAEngine, type AskReq, type AskResult } from '@cs-bot/shared';
 import { ApprovedQaService } from './approved-qa.service.js';
 import { llmSemaphore } from '../common/semaphore.js';
+import { FastGPTClient, parseChatResponse, type FastGptChatResult } from './fastgpt.client.js';
 
 export class FastGPTQaEngine implements IQAEngine {
   readonly mode: 'fastgpt' = 'fastgpt';
-  private readonly primary: AxiosInstance;
+  private readonly primary: FastGPTClient;
+  private readonly primaryHttp: AxiosInstance;
   private readonly fallback: AxiosInstance | null;
   private readonly logger = new AppLogger('FastGPTQaEngine');
   private readonly cfg = ConfigService.instance;
@@ -20,9 +22,25 @@ export class FastGPTQaEngine implements IQAEngine {
   private healthySince: number | null = null;
   private lastProbeAt = 0;
 
-  constructor(_config: ConfigService, approvedQaService?: ApprovedQaService) {
-    this.primary = axios.create({
-      baseURL: this.cfg.FASTGPT_BASE_URL,
+  constructor(
+    _config: ConfigService,
+    approvedQaService?: ApprovedQaService,
+    fastgpt?: FastGPTClient,
+  ) {
+    const datasetIds = this.cfg.FASTGPT_DATASET_IDS
+      ? this.cfg.FASTGPT_DATASET_IDS.split(',').map((x) => x.trim()).filter(Boolean)
+      : [];
+    this.primary =
+      fastgpt ??
+      new FastGPTClient({
+        baseUrl: this.cfg.FASTGPT_BASE_URL,
+        apiKey: this.cfg.FASTGPT_API_KEY,
+        timeoutMs: this.cfg.LLM_TIMEOUT_MS,
+        datasetIds,
+      });
+    // 健康探测只需要一个可 ping 的实例（与业务请求共用同一 base/auth）
+    this.primaryHttp = axios.create({
+      baseURL: this.cfg.FASTGPT_BASE_URL.replace(/\/+$/, ''),
       timeout: this.cfg.LLM_TIMEOUT_MS,
       headers: { Authorization: `Bearer ${this.cfg.FASTGPT_API_KEY}` },
     });
@@ -52,7 +70,7 @@ export class FastGPTQaEngine implements IQAEngine {
   async probeHealth(now = Date.now()): Promise<boolean> {
     this.lastProbeAt = now;
     try {
-      await this.primary.get('/', { timeout: 5000, validateStatus: () => true });
+      await this.primaryHttp.get('/', { timeout: 5000, validateStatus: () => true });
       if (!this.healthy) {
         if (this.healthySince === null) this.healthySince = now;
         if (now - this.healthySince >= 5 * 60_000) {
@@ -92,7 +110,7 @@ export class FastGPTQaEngine implements IQAEngine {
     }
 
     // 优先级 2: primary LLM
-    const primaryResp = await this.call(this.primary, req, 'primary');
+    const primaryResp = await this.call(null, req, 'primary');
     if (primaryResp.ok && primaryResp.value.score >= this.cfg.CONFIDENCE_THRESHOLD) {
       return primaryResp;
     }
@@ -114,20 +132,31 @@ export class FastGPTQaEngine implements IQAEngine {
     return primaryResp;
   }
 
-  private async call(client: AxiosInstance, req: AskReq, source: 'primary' | 'fallback'): Promise<AskResult> {
+  private async call(client: AxiosInstance | null, req: AskReq, source: 'primary' | 'fallback'): Promise<AskResult> {
     let lastErr: Error | null = null;
     const retryDelay = this.cfg.LLM_RETRY_DELAY_MS ?? 1000;
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const resp = await llmSemaphore().run(() => client.post('/api/v1/chat/completions', {
-          model: 'fastgpt',
-          chatId: req.chatId,
-          stream: false,
-          detail: true,
-          messages: [{ role: 'user', content: req.question }],
-          histories: (req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
-          datasetIds: (req.datasetIds ?? (this.cfg.FASTGPT_DATASET_IDS ? [this.cfg.FASTGPT_DATASET_IDS] : [])),
-        }));
+        const parsed: FastGptChatResult = await llmSemaphore().run(async () => {
+          if (source === 'primary') {
+            return this.primary.chat({
+              chatId: req.chatId,
+              question: req.question,
+              history: req.history,
+              datasetIds: req.datasetIds,
+            });
+          }
+          const resp = await (client as AxiosInstance).post('/api/v1/chat/completions', {
+            model: 'fastgpt',
+            chatId: req.chatId,
+            stream: false,
+            detail: true,
+            messages: [{ role: 'user', content: req.question }],
+            histories: (req.history ?? []).map((h) => ({ role: h.role, content: h.content })),
+            datasetIds: req.datasetIds ?? [],
+          });
+          return parseChatResponse(resp.data);
+        });
         if (source === 'primary') {
           if (!this.healthy) {
             if (this.healthySince === null) this.healthySince = Date.now();
@@ -135,7 +164,7 @@ export class FastGPTQaEngine implements IQAEngine {
             this.healthySince = null;
           }
         }
-        return { ok: true, value: this.parseResponse(resp.data, source) };
+        return { ok: true, value: { ...parsed, source } };
       } catch (err) {
         lastErr = err as Error;
         if (source === 'primary') {
@@ -149,7 +178,6 @@ export class FastGPTQaEngine implements IQAEngine {
     return new Err({ code: ErrCode.LLM_TIMEOUT, message: lastErr?.message ?? 'unknown LLM error' });
   }
 
-  /** 解析 choices/data 与 responseData[].quoteList（来源引用） */
   private parseResponse(raw: unknown, source: 'primary' | 'fallback') {
     const data = raw as {
       choices?: Array<{ message?: { content?: string } }>;

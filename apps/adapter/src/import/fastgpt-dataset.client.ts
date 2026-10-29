@@ -5,6 +5,7 @@
  * 批次 50、指数退避 3 次由调用方（ImportDatasetService）控制。
  */
 import axios, { type AxiosInstance } from 'axios';
+import { FastGPTClient } from '../qa/fastgpt.client.js';
 
 export interface DatasetQaPair {
   question: string;
@@ -22,22 +23,24 @@ export interface DatasetClient {
   deleteDatasetById?(datasetId: string): Promise<void>;
 }
 
-/** 默认 HTTP 实现 */
+/** 默认 HTTP 实现：经统一 FastGPTClient（R-2） */
 export class HttpFastGptDatasetClient implements DatasetClient {
-  private readonly http: AxiosInstance;
+  private readonly client: FastGPTClient;
   private readonly nameToId = new Map<string, string>();
 
   constructor(
-    private readonly cfg: { baseUrl: string; apiKey: string; timeoutMs?: number },
-    http?: AxiosInstance,
+    cfg: { baseUrl: string; apiKey: string; timeoutMs?: number },
+    /** 可注入 FastGPTClient，或直接注入 axios 实例（测试用） */
+    client?: FastGPTClient | AxiosInstance,
   ) {
-    this.http =
-      http ??
-      axios.create({
-        baseURL: cfg.baseUrl,
-        timeout: cfg.timeoutMs ?? 10_000,
-        headers: { Authorization: `Bearer ${cfg.apiKey}` },
-      });
+    if (client && typeof (client as FastGPTClient).chat === 'function') {
+      this.client = client as FastGPTClient;
+    } else {
+      this.client = new FastGPTClient(
+        { baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, timeoutMs: cfg.timeoutMs ?? 10_000 },
+        client as AxiosInstance | undefined,
+      );
+    }
   }
 
   private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
@@ -58,21 +61,13 @@ export class HttpFastGptDatasetClient implements DatasetClient {
   async ensureDataset(name: string): Promise<string> {
     const cached = this.nameToId.get(name);
     if (cached) return cached;
-    const res = await this.withRetry(() => this.http.post('/api/v1/core/dataset/create', { name }));
-    const id = String(res.data?.data?._id ?? res.data?.data?.id ?? '');
+    const id = await this.withRetry(() => this.client.ensureDataset(name));
     this.nameToId.set(name, id);
     return id;
   }
 
   async writeBatch(datasetId: string, items: readonly DatasetQaPair[]): Promise<string[]> {
-    const data = items.map((it) => ({ q: it.question, a: it.answer }));
-    const res = await this.withRetry(() =>
-      this.http.post('/api/v1/core/dataset/data/pushData', { datasetId, data }),
-    );
-    const ids = (res.data?.data?.insertLen !== undefined
-      ? Array.from({ length: items.length }, (_, i) => `batch-${Date.now()}-${i}`)
-      : (res.data?.data?.ids as string[] | undefined)) ?? [];
-    return ids.length === items.length ? ids : items.map((_, i) => `qa-${Date.now()}-${i}`);
+    return this.withRetry(() => this.client.writeBatch(datasetId, items));
   }
 
   async deleteDataset(name: string): Promise<void> {
@@ -83,7 +78,7 @@ export class HttpFastGptDatasetClient implements DatasetClient {
   }
 
   async deleteDatasetById(datasetId: string): Promise<void> {
-    await this.withRetry(() => this.http.post('/api/v1/core/dataset/delete', { datasetId }));
+    await this.withRetry(() => this.client.deleteDatasetById(datasetId));
   }
 }
 

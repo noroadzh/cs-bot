@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
 const axiosPost = jest.fn(async () => ({ data: { data: { total: 3 } } })) as any;
-jest.mock('axios', () => ({ __esModule: true, default: { post: (...a: unknown[]) => axiosPost(...a) } }));
+// FastGPTClient 通过 axios.create 建实例；这里返回共享 post 桩
+jest.mock('axios', () => ({
+  __esModule: true,
+  default: {
+    create: () => ({ post: (...a: unknown[]) => axiosPost(...a) }),
+    post: (...a: unknown[]) => axiosPost(...a),
+  },
+}));
 jest.mock('pg', () => ({ Pool: jest.fn().mockImplementation(() => ({ query: jest.fn(async () => ({ rows: [{ n: 0 }] })), end: jest.fn(async () => undefined) })) }));
 
 import { CapacityUsageService } from '../src/usage/capacity-usage.service.js';

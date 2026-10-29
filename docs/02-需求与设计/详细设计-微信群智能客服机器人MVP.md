@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.4（V1.3 + 出站客户端实际形态、未命中 JSON 导出结构） |
+| 版本 | V1.5（V1.4 + FastGPT 统一客户端与 LLM 告警） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
@@ -107,6 +107,8 @@ export enum ErrCode {
 
 > 历史设计曾规划统一 `HttpClient.request({ retries, backoffBaseMs, semaphore })`；实际实现按客户端拆分（V1.4 起文档以实际形态为准），语义等价：并发受同一信号量约束、重试仅对幂等请求。
 
+**FastGPT 出口统一**（R-2）：`apps/adapter/src/qa/fastgpt.client.ts` 的 `FastGPTClient` 是唯一 FastGPT 访问入口，提供 `chat` / `ensureDataset` / `writeBatch` / `deleteDatasetById` / `searchTest` / `collectionCount`，统一 base URL（去尾斜杠）、`Authorization`、超时与响应解析。M4 问答引擎、M10 数据集写入与近似检索、用量统计的 collection 计数均注入该客户端（测试可注入 axios 实例或 fake）。
+
 ### 2.2 WecomClient（M1 出站，R-1 唯一企微出口）
 
 | 方法 | 封装的企微 API | 说明 |
@@ -120,16 +122,25 @@ export enum ErrCode {
 
 access_token 刷新加分布式锁（Redis SETNX，双实例部署时防并发刷新）。
 
-### 2.3 FastGPTClient（R-2 唯一 FastGPT 出口）
+### 2.3 FastGPT 客户端（R-2 唯一 FastGPT 出口）
+
+实现：`src/qa/fastgpt.client.ts` 的 `FastGPTClient`（统一 base URL/鉴权/超时/响应解析）。
 
 ```ts
-ask(req: { question: string; history: ChatTurn[]; datasetIds?: string[] }):
-  Promise<Result<{ answer: string; quotes: Quote[]; score: number }>>
-upsertQa(dataset: string, qa: QaPair[]): Promise<Result<{ ids: string[] }>>   // M10 入库
-deleteDataset(dataset: string): Promise<Result<void>>                          // M10 回滚
+class FastGPTClient {
+  chat(body: { chatId?; question; history?; datasetIds? }): Promise<{ answer; quotes; score }>;
+  ensureDataset(name: string): Promise<string>;                       // M10
+  writeBatch(datasetId: string, pairs: DatasetQaPair[]): Promise<string[]>;
+  deleteDatasetById(datasetId: string): Promise<void>;                // M10 回滚
+  searchTest(question, { datasetIds?, limit? }): Promise<SearchHit[]>; // M10 近似去重
+  collectionCount(datasetId: string): Promise<number>;                // 用量统计 docCount
+}
 ```
-- `ask`：POST `/api/v1/chat/completions`（FastGPT 应用 Key），解析 `responseData[].quoteList`；超时 15s（本地档 20–30s），重试 1 次（退避 1s）。
-- 置信度：`score = max(quoteList[].score)`；无 quote → score=0。
+
+- `chat`：POST `/api/v1/chat/completions`，解析 `choices/data` 与 `responseData[].quoteList`；超时取 `LLM_TIMEOUT_MS`（默认 15s），重试 1 次由调用方（引擎）控制。
+- 置信度：`score = max(quoteList[].score)`；无引用时透传 `data[0].score`，皆无则 0.8。
+- 数据集写/删由 `HttpFastGptDatasetClient` 委托；近似检索由 `HttpFastGptSearchClient` 委托；三者共享同一凭据与 base URL。
+- 测试可注入 `FastGPTClient` 或裸 axios 实例。
 
 ### 2.4 license-native（Rust，M9 核心，R-1 例外说明）
 
@@ -532,4 +543,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。*

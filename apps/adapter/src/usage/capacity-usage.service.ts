@@ -5,7 +5,7 @@ import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
-import axios from 'axios';
+import { FastGPTClient } from '../qa/fastgpt.client.js';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 
@@ -21,8 +21,26 @@ export class CapacityUsageService implements OnModuleDestroy {
   private readonly logger = new AppLogger('CapacityUsageService');
   private readonly pool: Pool;
 
-  constructor() {
+  private readonly fastgpt: FastGPTClient | null;
+
+  constructor(fastgpt?: FastGPTClient) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 2 });
+    this.fastgpt = fastgpt ?? null;
+  }
+
+  /** 统一 FastGPT 访问：优先注入的客户端，否则按配置构造（R-2） */
+  private fastgptClient(): FastGPTClient {
+    if (this.fastgpt) return this.fastgpt;
+    const cfg = ConfigService.instance;
+    if (!cfg.FASTGPT_BASE_URL || !cfg.FASTGPT_API_KEY) {
+      throw new Error('FASTGPT_BASE_URL/FASTGPT_API_KEY not configured');
+    }
+    return new FastGPTClient({
+      baseUrl: cfg.FASTGPT_BASE_URL,
+      apiKey: cfg.FASTGPT_API_KEY,
+      timeoutMs: 5000,
+      datasetIds: (cfg.FASTGPT_DATASET_IDS ?? '').split(',').map((x) => x.trim()).filter(Boolean),
+    });
   }
 
   async snapshot(): Promise<CapacitySnapshot> {
@@ -49,15 +67,10 @@ export class CapacityUsageService implements OnModuleDestroy {
     }
     const ids = (cfg.FASTGPT_DATASET_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     if (ids.length === 0) return 0;
+    const client = this.fastgptClient();
     let total = 0;
     for (const datasetId of ids) {
-      const res = await axios.post(
-        `${cfg.FASTGPT_BASE_URL.replace(/\/$/, '')}/api/v1/core/dataset/collection/list`,
-        { datasetId, pageNum: 1, pageSize: 1 },
-        { timeout: 5000, headers: { Authorization: `Bearer ${cfg.FASTGPT_API_KEY}` } },
-      );
-      const data = res.data?.data;
-      total += Number(data?.total ?? data?.list?.length ?? 0);
+      total += await client.collectionCount(datasetId);
     }
     return total;
   }
