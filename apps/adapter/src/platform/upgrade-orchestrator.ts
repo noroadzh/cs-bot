@@ -40,13 +40,14 @@ export class UpgradeOrchestrator {
     const now = this.opts.now ? this.opts.now() : new Date();
     const window = parseWindow(this.opts.window ?? '02:00-04:00', now);
     if (!force && !(this.opts.noticeDays === 0 && inWindow(now, window))) {
-      const noticeMs = (this.opts.noticeDays ?? 3) * 86_400_000;
+      const noticeDays = this.opts.noticeDays ?? 3;
       let scheduled = nextWindow(now, window);
       if (scheduled.getTime() <= now.getTime()) {
         scheduled = new Date(scheduled.getTime() + 86_400_000);
       }
-      // 提前通知：窗口不得早于 now + noticeDays；不足则按整天顺延
-      while (scheduled.getTime() - now.getTime() < noticeMs) {
+      // 提前通知：窗口日期不得早于 now + noticeDays 个工作日（周一至周五）；不足则按整天顺延
+      const earliest = addBusinessDays(now, noticeDays);
+      while (scheduled.getTime() < earliest.getTime()) {
         scheduled = new Date(scheduled.getTime() + 86_400_000);
       }
       if (this.deps.notify) await this.deps.notify(tenantIds, scheduled);
@@ -125,6 +126,18 @@ function parseWindow(spec: string, day: Date): WindowTimes {
     return d.getTime();
   };
   return { start: parse(a), end: parse(b) };
+}
+
+/** 从 from 当天起加 days 个工作日（周一至周五），返回目标日的本地零点 */
+function addBusinessDays(from: Date, days: number): Date {
+  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) added += 1;
+  }
+  return d;
 }
 
 function inWindow(now: Date, w: WindowTimes): boolean {

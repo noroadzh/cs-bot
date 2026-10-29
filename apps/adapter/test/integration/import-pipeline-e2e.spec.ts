@@ -14,6 +14,7 @@ import { SensitiveRedactor } from '../../src/import/sensitive-redactor.js';
 import { InMemoryDatasetClient, type DatasetClient } from '../../src/import/fastgpt-dataset.client.js';
 import { NoopSearchClient } from '../../src/import/near-duplicate.js';
 import { setConfig, resetConfig } from '../__setup__/test-helpers.js';
+import { HttpException, HttpStatus } from '@nestjs/common';
 
 const PG_URL = process.env.TEST_PG_URL;
 const suite = PG_URL ? describe : describe.skip;
@@ -370,6 +371,8 @@ suite('M10 导入重管线 e2e', () => {
       job = await svc.getJob(created.job.id);
     }
     expect(job?.status).toBe('parsed');
+    await new Promise((r) => setTimeout(r, 50));
+    expect((svc as any).importBaselineRss).toBe(0);
     await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
   });
 
@@ -427,5 +430,27 @@ suite('M10 导入重管线 e2e', () => {
     }
     expect(job?.status).toBe('failed');
     await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
+  });
+
+  it('容量守卫拒绝导入确认时写 0 条', async () => {
+    const stamp = Date.now();
+    const created = await svc.createFromFile({
+      filename: 'quota.csv', mimeType: 'text/csv', bytes: Buffer.from(`question,answer\n配额-${stamp},答`, 'utf8'),
+    });
+    const jobId = created.job.id;
+    await svc.parseJob(jobId);
+    await svc.approveAll(jobId);
+    const guard = {
+      checkImport: async () => { throw new HttpException({ errCode: 'TENANT_QUOTA_EXCEEDED', kind: 'max_qa' }, HttpStatus.CONFLICT); },
+    };
+    const guarded = new ImportJobService({} as any, new SensitiveRedactor(), guard as any);
+    guarded.setDatasetClient(dataset);
+    guarded.setSearchClient(new NoopSearchClient());
+    let status = 0;
+    try { await guarded.confirm(jobId, []); } catch (e) { status = (e as any).getStatus(); }
+    expect(status).toBe(409);
+    const imported = await pool.query('SELECT COUNT(*)::int AS n FROM import_item WHERE job_id = $1 AND imported_qa_id IS NOT NULL', [jobId]);
+    expect(imported.rows[0].n).toBe(0);
+    await pool.query('DELETE FROM import_job WHERE id = $1', [jobId]);
   });
 });

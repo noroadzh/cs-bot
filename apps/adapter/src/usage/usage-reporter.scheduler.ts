@@ -66,7 +66,16 @@ export class UsageReporterScheduler {
     }
     if (!cfg.CONTROL_PLANE_URL) return;
     await this.flushBuffer(cfg.CONTROL_PLANE_URL);
-    const capacity = this.capacity ? await this.capacity.snapshot() : undefined;
+    let capacity;
+    if (this.capacity) {
+      try {
+        capacity = await this.capacity.snapshot();
+      } catch (err) {
+        // 文档数不可读时不发送 0，留待下一次调度重试
+        this.logger.warn({ phase: 'error', detail: 'capacity-snapshot-failed, report skipped', err: (err as Error).message });
+        return;
+      }
+    }
     const payload = buildControlPlanePayload(cfg.TENANT_ID || '', this.usage.getUsage().counters, new Date(), capacity);
     try {
       await this.send(cfg.CONTROL_PLANE_URL, payload);

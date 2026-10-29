@@ -62,6 +62,35 @@ describe('AssetService', () => {
   });
 
   describe('createFromFile', () => {
+    it('容量守卫拒绝时不落盘', async () => {
+      poolQuery.mockResolvedValueOnce({ rows: [] });
+      const guard = { checkAsset: jest.fn(async () => { throw new HttpException({ errCode: 'TENANT_QUOTA_EXCEEDED' }, HttpStatus.CONFLICT); }) };
+      const guarded = new AssetService({} as any, guard as any);
+      let status = 0;
+      try {
+        await guarded.createFromFile(Buffer.from('x'), 'a.png', 'image/png');
+      } catch (e) {
+        status = (e as HttpException).getStatus();
+      }
+      expect(status).toBe(409);
+      expect(fsWriteFile).not.toHaveBeenCalled();
+    });
+
+
+    it('容量守卫校验通过后正常落盘', async () => {
+      poolQuery
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [ROW] });
+      const guard = { checkAsset: jest.fn(async (_bytes: number) => undefined) };
+      const guarded = new AssetService({} as any, guard as any);
+      const buf = Buffer.from('hello');
+
+      await guarded.createFromFile(buf, 'demo.png', 'image/png');
+
+      expect(guard.checkAsset).toHaveBeenCalledWith(5);
+      expect(fsWriteFile).toHaveBeenCalledWith(expect.stringMatching(/data[\\/]assets/), buf, { mode: 0o600 });
+    });
+
     it('成功：写文件 + INSERT + 返回映射后的 Asset', async () => {
       poolQuery
         .mockResolvedValueOnce({ rows: [] })

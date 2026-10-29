@@ -31,30 +31,33 @@ export class CapacityUsageService implements OnModuleDestroy {
       this.pool.query('SELECT COUNT(*)::int AS n FROM licensed_chat').catch(() => ({ rows: [{ n: 0 }] })),
     ]);
     return {
-      docCount: await this.countDocs(),
+      docCount: await this.countDocuments(),
       qaCount: Number(qa.rows[0]?.n ?? 0),
       assetMb: await this.assetMb(),
       activeChats: Number(chats.rows[0]?.n ?? 0),
     };
   }
 
-  private async countDocs(): Promise<number> {
+  /**
+   * 文档数：以 FastGPT 数据集 collection 列表为准；任何失败都抛出，
+   * 由调用方决定拒绝/重试，绝不以 0 代替。
+   */
+  async countDocuments(): Promise<number> {
     const cfg = ConfigService.instance;
-    if (!cfg.FASTGPT_BASE_URL || !cfg.FASTGPT_API_KEY) return 0;
+    if (!cfg.FASTGPT_BASE_URL || !cfg.FASTGPT_API_KEY) {
+      throw new Error('FASTGPT_BASE_URL/FASTGPT_API_KEY not configured');
+    }
     const ids = (cfg.FASTGPT_DATASET_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    if (ids.length === 0) return 0;
     let total = 0;
     for (const datasetId of ids) {
-      try {
-        const res = await axios.post(
-          `${cfg.FASTGPT_BASE_URL.replace(/\/$/, '')}/api/v1/core/dataset/collection/list`,
-          { datasetId, pageNum: 1, pageSize: 1 },
-          { timeout: 5000, headers: { Authorization: `Bearer ${cfg.FASTGPT_API_KEY}` } },
-        );
-        const data = res.data?.data;
-        total += Number(data?.total ?? data?.list?.length ?? 0);
-      } catch (err) {
-        this.logger.warn({ detail: 'doc-count-failed', datasetId, err: (err as Error).message });
-      }
+      const res = await axios.post(
+        `${cfg.FASTGPT_BASE_URL.replace(/\/$/, '')}/api/v1/core/dataset/collection/list`,
+        { datasetId, pageNum: 1, pageSize: 1 },
+        { timeout: 5000, headers: { Authorization: `Bearer ${cfg.FASTGPT_API_KEY}` } },
+      );
+      const data = res.data?.data;
+      total += Number(data?.total ?? data?.list?.length ?? 0);
     }
     return total;
   }

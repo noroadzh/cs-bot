@@ -2,7 +2,7 @@
  * Asset Service
  * Handles CRUD operations for media assets
  */
-import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Optional } from '@nestjs/common';
 import { Pool } from 'pg';
 import { createHash, randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
@@ -10,6 +10,7 @@ import { dirname, join } from 'path';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import type { Asset, AssetCreateInput, AssetListQuery, AssetListResult } from './asset.entity.js';
+import { CapacityGuard } from '../usage/capacity-guard.service.js';
 
 const MAX_ASSET_BYTES = 20 * 1024 * 1024; // 20MB（文件）
 const MAX_VIDEO_BYTES = 10 * 1024 * 1024; // 10MB（视频）
@@ -26,7 +27,7 @@ export class AssetService {
   private readonly logger = new AppLogger('AssetService');
   private readonly pool: Pool;
 
-  constructor(_config: ConfigService) {
+  constructor(_config: ConfigService, @Optional() private readonly capacityGuard?: CapacityGuard) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
     // Ensure data directory exists
     this.ensureDataDir();
@@ -74,6 +75,7 @@ export class AssetService {
       [md5, assetType],
     );
     if (existing.rows.length > 0) return this.mapRowToAsset(existing.rows[0]);
+    await this.capacityGuard?.checkAsset(buffer.length);
 
     const id = randomUUID();
     const ext = this.getExtension(mimeType);

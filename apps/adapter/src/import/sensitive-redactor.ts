@@ -1,3 +1,5 @@
+import { readFileSync, existsSync } from 'node:fs';
+
 /**
  * Sensitive PII redactor.
  * Spec M10 §1.4.2 / import-review: 5 类正则 → 占位符替换，命中 flag 写入。
@@ -14,8 +16,7 @@
  *  - 未命中：原文返回、flags 为空
  *  - 关闭时：flags 始终为空（即使文本里看似有敏感信息）
  */
-const COMBINED_RE = new RegExp(
-  [
+const BASE_PATTERNS = [
     '(?<address>[\\u4e00-\\u9fa5]{2,}(?:省|市|区|县)[\\u4e00-\\u9fa5A-Za-z0-9]+(?:路|街|道|号|小区|大厦|楼|室)[\\u4e00-\\u9fa5A-Za-z0-9\\-#]*)',
     '(?<url>https?:\\/\\/[^\\s<>"\']+)',
     '(?<email>[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})',
@@ -23,9 +24,13 @@ const COMBINED_RE = new RegExp(
     '(?<card>\\b\\d{16,19}\\b)',
     '(?<phone>(?<!\\d)1[3-9]\\d{9}(?!\\d))',
     '(?<name>(?<=姓名[:：\\s]|联系人[:：\\s]|收货人[:：\\s]|客户姓名[:：\\s])[\\u4e00-\\u9fa5]{2,4})',
-  ].join('|'),
-  'g',
-);
+];
+
+function buildRegex(names: readonly string[]): RegExp {
+  const patterns = [...BASE_PATTERNS];
+  if (names.length > 0) patterns.push(`(?<dict>${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`);
+  return new RegExp(patterns.join('|'), 'g');
+}
 
 /** 命中组名 → 占位符 TYPE / flag（占位符大写导出、flags 存小写） */
 const GROUP_META: Record<string, { type: string; flag: string }> = {
@@ -36,6 +41,7 @@ const GROUP_META: Record<string, { type: string; flag: string }> = {
   url: { type: 'URL', flag: 'url' },
   address: { type: 'ADDRESS', flag: 'address' },
   name: { type: 'NAME', flag: 'name' },
+  dict: { type: 'NAME', flag: 'name' },
 };
 
 export interface RedactionResult {
@@ -45,9 +51,24 @@ export interface RedactionResult {
 
 export class SensitiveRedactor {
   private readonly enabled: boolean;
+  private readonly regex: RegExp;
 
-  constructor(opts: { mockRedaction?: boolean } = {}) {
+  constructor(opts: { mockRedaction?: boolean; nameFile?: string } = {}) {
     this.enabled = !opts.mockRedaction;
+    const file = opts.nameFile ?? 'config/import-names.txt';
+    let names: string[] = [];
+    try {
+      if (existsSync(file)) {
+        names = readFileSync(file, 'utf8')
+          .split(/\r?\n/)
+          .map((n) => n.trim())
+          .filter((n) => n.length > 0 && !n.startsWith('#'))
+          .sort((a, b) => b.length - a.length);
+      }
+    } catch {
+      names = [];
+    }
+    this.regex = buildRegex(names);
   }
 
   /**
@@ -61,7 +82,7 @@ export class SensitiveRedactor {
 
     const counters: Record<string, number> = {};
     const flagOrder: string[] = [];
-    const text = input.replace(COMBINED_RE, (match, ...rest) => {
+    const text = input.replace(this.regex, (match, ...rest) => {
       const groups = rest[rest.length - 1] as Record<string, string | undefined> | undefined;
       const hit = Object.keys(GROUP_META).find((g) => groups?.[g] !== undefined);
       if (!hit) return match;

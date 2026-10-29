@@ -193,8 +193,10 @@ cp .env.template .env && chmod 600 .env && vim .env
 | TENANT_ADMIN_ALLOW_CIDRS | | （空） | 租户 FastGPT 管理口 8443 放行网段；空 = 不开放（M11） |
 | CONTROL_PLANE_BIND | | （空） | 远程访问控制面时才设置管理地址，并叠加 `docker-compose.control-plane-expose.yml` |
 | PLATFORM_UPGRADE_WINDOW | | 02:00-04:00 | 批量升级低峰窗口 |
-| PLATFORM_UPGRADE_NOTICE_DAYS | | 3 | 升级前提前通知天数 |
-| EMAIL_WEBHOOK_URL | | （空） | 到期提醒邮件网关 Webhook（与 OPS_WEBHOOK_URL 并用） |
+| PLATFORM_UPGRADE_NOTICE_DAYS | | 3 | 升级前提前通知工作日数（跳过周六/周日） |
+| EMAIL_WEBHOOK_URL | | （空） | 到期/升级提醒邮件网关 Webhook（与 OPS_WEBHOOK_URL 并用） |
+| PLATFORM_AUDIT_ARCHIVE_DIR | | backup/audit | 审计异地导出目录（清理前必须写成功） |
+| IMPORT_NAMES_FILE | | config/import-names.txt | 导入脱敏姓名词典 |
 | SLOW_REPLY_TEXT | | （默认话术） | 繁忙提示话术 |
 | MISS_RECORD_RETENTION_DAYS | | 90 | 未命中记录保留期 |
 | ASSET_MAX_FILE_MB / ASSET_MAX_VIDEO_MB | | 20 / 10 | 素材上限（增项 A） |
@@ -269,6 +271,7 @@ CONTROL_PLANE_BIND=10.0.0.5 docker compose \
 | 014 | `apps/adapter/src/import/014-import-dedup-counters.sql` | 条目去重键/会话元数据/阶段计数/导入租约 | M10 |
 | 015 | `apps/adapter/src/platform/015-tenant-offboarding.sql` | 注销令牌/T+7 计划/删除确认单 | M11 |
 | 016 | `apps/adapter/src/platform/016-runtime-gaps.sql` | dataset 标识、凭证交接标记、容量配额/用量、升级通知 | M10/M11 |
+| 017 | `apps/adapter/src/platform/017-tenant-contact.sql` | 租户联系人（升级/到期通知） | M11 |
 
 > **应用方式**：全新安装时上述 SQL 已随 `docker compose` 挂载到 `pg` 容器的 `/docker-entrypoint-initdb.d/`，首启按编号自动执行；存量升级时 `docker exec -i pg psql -U <用户> -d <库>` 依次执行 `/app/migrate/*.sql`（镜像内按编号排序）。M10/M11 默认 `PLATFORM_ENABLED=false` 时不要求创建租户表，但建议随版本一并执行以保持结构一致。
 
@@ -385,10 +388,19 @@ curl -X POST -u admin:<口令> -H 'content-type: application/json' \
 - 重复调用 destroy 返回同一计划；offboarding 状态禁止续费/暂停/恢复/重新开通
 - 到期前需要运维确认 `offboarding` 计划与备份包已交付
 - 开通后生成的管理员/FastGPT 根口令通过 `POST /platform/tenants/<id>/credentials/handoff` 一次性领取，二次读取返回 410；日志与审计不含明文
+  ```bash
+  curl -X POST https://<控制面>/platform/tenants/<id>/credentials/handoff \
+    -u admin:<ADMIN_PASSWORD> -H 'x-operator-reason: handoff to customer'
+  ```
 
 
 ### 9.6 导入、图片与本地模型运维
 
+- **容量配额**：素材上传校验 `max_asset_mb`；导入确认校验 `max_qa/max_docs`；超限返回 409 `TENANT_QUOTA_EXCEEDED`，0 表示不限。
+- **容量报表**：`docCount` 取 FastGPT 数据集 collection 权威计数；读取失败时跳过本次上报、下次重试，不以 0 代替。
+- **姓名脱敏**：除“姓名/联系人/收货人”标签外，可在 `config/import-names.txt` 每行配置一个姓名（最长优先）。
+- **审计留存**：`PLATFORM_AUDIT_ARCHIVE_DIR`（默认 `backup/audit`）保存 180 天前审计 JSONL，导出成功后才删除本地行。
+- **reason 例外**：`POST /platform/report` 是数据面 Bearer 计数上报，不需要 `reason`；其余平台变更均需 body `reason` 或 `X-Operator-Reason`。
 - **导入**：源文件落盘权限 0600，任务失败/结束即删除；解析为后台任务，接口返回 202 后用 `GET /admin/import-jobs/:id` 轮询；未配对消息用 `GET .../unpaired` 查看、`POST .../unpaired/pair` 补配；脱敏覆盖手机号/身份证/银行卡/邮箱/URL/地址/姓名。
 - **图片**：回调先 ack，识别异步执行；识别超时 10s，模型取 `QWEN_VL_MODEL`，提示词要求提取咨询问题，无内容返回 `[NO_TEXT]` 并回引导话术。
 - **本地模型**：所有模式均走 FastGPT RAG，`MODEL_MODE` 只控制模型通道与云回退；local 模式禁止云出口，hybrid 在 FastGPT 失败时回落，恢复需连续 5 分钟健康。
@@ -570,9 +582,13 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
    ```bash
    curl -X PUT https://<控制面>/platform/tenants/<id>/secrets \
      -u admin:<ADMIN_PASSWORD> -H 'Content-Type: application/json' \
-     -d '{"WECHAT_CORP_ID":"...","WECHAT_AGENT_ID":"...","WECHAT_AGENT_SECRET":"...","WECHAT_TOKEN":"...","WECHAT_ENCODING_AES_KEY":"...","FASTGPT_ROOT_PASSWORD":"<自定强口令>"}'
+     -d '{"reason":"tenant onboarding","WECHAT_CORP_ID":"...","WECHAT_AGENT_ID":"...","WECHAT_AGENT_SECRET":"...","WECHAT_TOKEN":"...","WECHAT_ENCODING_AES_KEY":"...","FASTGPT_ROOT_PASSWORD":"<自定强口令>"}'
    ```
-2. `POST /platform/tenants/<id>/provision` 开通（会生成 DB/Redis 密码、TLS、授权证书）。
+2. 开通（会生成 DB/Redis 密码、TLS、授权证书）：
+   ```bash
+   curl -X POST https://<控制面>/platform/tenants/<id>/provision \
+     -u admin:<ADMIN_PASSWORD> -H 'x-operator-reason: initial provisioning'
+   ```
 3. 打开 `https://<租户域名>:<port+1>` 登录 FastGPT 后台（初始口令为第 1 步设置的 `FASTGPT_ROOT_PASSWORD`）：
    - cloud：配置云端模型渠道（DeepSeek/通义）；
    - local/hybrid：配置本地 `http://vllm:8000/v1` 或 Ollama 兼容渠道；
@@ -581,8 +597,9 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
    ```bash
    curl -X PUT https://<控制面>/platform/tenants/<id>/secrets \
      -u admin:<ADMIN_PASSWORD> -H 'Content-Type: application/json' \
-     -d '{"FASTGPT_API_KEY":"<新 Key>"}'
-   curl -X POST https://<控制面>/platform/tenants/<id>/restart -u admin:<ADMIN_PASSWORD>
+     -d '{"reason":"fastgpt key rotation","FASTGPT_API_KEY":"<新 Key>"}'
+   curl -X POST https://<控制面>/platform/tenants/<id>/restart \
+     -u admin:<ADMIN_PASSWORD> -H 'x-operator-reason: reload tenant secrets'
    ```
 5. 企微后台把回调 URL 配置为 `https://<租户域名>/wecom/callback` 并完成校验。
 6. 配额/状态变更会自动同步到租户实例（内部 `/internal/tenant/sync`，Bearer token）。

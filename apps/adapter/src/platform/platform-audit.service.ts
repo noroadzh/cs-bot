@@ -12,6 +12,8 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Pool } from 'pg';
 import { createHash } from 'crypto';
+import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
 import type { PlatformAuditLog, PlatformAuditAction } from './tenant.entity.js';
@@ -67,8 +69,21 @@ export class PlatformAuditService implements OnModuleDestroy {
   }
 
   async cleanup(days = 180): Promise<number> {
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+    const rows = await this.pool.query(
+      `SELECT seq, tenant_id, action, actor, payload, prev_hash, hash, created_at
+         FROM platform_audit_log WHERE created_at < $1 ORDER BY seq ASC`,
+      [cutoff],
+    );
+    if (rows.rows.length === 0) return 0;
+    const dir = ConfigService.instance.PLATFORM_AUDIT_ARCHIVE_DIR;
+    await fs.mkdir(dir, { recursive: true });
+    const file = join(dir, `audit-archive-${cutoff.slice(0, 10)}.jsonl`);
+    await fs.writeFile(file, rows.rows.map((r) => JSON.stringify(r)).join('\n') + '\n', { mode: 0o600 });
+    // 先落盘成功，再删除本地行
     const res = await this.pool.query(
-      `DELETE FROM platform_audit_log WHERE created_at < now() - interval '${days} days'`,
+      `DELETE FROM platform_audit_log WHERE created_at < $1`,
+      [cutoff],
     );
     return res.rowCount ?? 0;
   }

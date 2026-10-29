@@ -15,6 +15,7 @@ export interface ConfirmHost {
   refreshImportCounters(jobId: string): Promise<void>;
   cleanupSource(jobId: string): Promise<void>;
   updateStatus(jobId: string, status: ImportJobStatus, itemCount?: number): Promise<void>;
+  capacityGuard?: { checkImport(newQa: number, newDocs: number): Promise<void> };
 }
 
 export async function runConfirm(
@@ -63,6 +64,8 @@ export async function runConfirm(
         ORDER BY created_at ASC`,
       [jobId],
     );
+
+    await host.capacityGuard?.checkImport(toImport.rows.length, toImport.rows.length);
 
     const datasetName = `历史语料-${jobId}`;
     let written = 0;

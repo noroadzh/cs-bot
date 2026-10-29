@@ -2,7 +2,10 @@
  * SensitiveRedactor 单元测试 — 对应 spec import-review (5 类正则脱敏)
  * 覆盖：每类命中、混合文本、占位符形态、flags 按首次命中顺序、关闭分支。
  */
-import { describe, it, expect } from '@jest/globals';
+import { describe, it, expect, afterAll } from '@jest/globals';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { SensitiveRedactor } from '../src/import/sensitive-redactor.js';
 
 describe('SensitiveRedactor', () => {
@@ -86,5 +89,22 @@ describe('SensitiveRedactor', () => {
     const out = r.redact('联系人：张三，电话 13800000000');
     expect(out.text).toContain('联系人：<NAME:1>');
     expect(out.flags).toContain('name');
+  });
+
+  const nameFile = join(tmpdir(), `csbot-names-${process.pid}.txt`);
+  afterAll(() => { try { unlinkSync(nameFile); } catch {} });
+
+  it('M10.R.13 词典姓名无标签也脱敏', () => {
+    writeFileSync(nameFile, '张三\n李四\n', 'utf8');
+    const dict = new SensitiveRedactor({ nameFile });
+    const out = dict.redact('张三说退款要多久');
+    expect(out.text).toContain('<NAME:1>');
+    expect(out.flags).toContain('name');
+  });
+
+  it('M10.R.14 词典缺失时仍按标签脱敏', () => {
+    const dict = new SensitiveRedactor({ nameFile: join(tmpdir(), 'csbot-missing-names.txt') });
+    const out = dict.redact('联系人：王五');
+    expect(out.text).toContain('联系人：<NAME:1>');
   });
 });

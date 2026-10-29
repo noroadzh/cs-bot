@@ -104,13 +104,17 @@ export class PlatformModule {
         },
         {
           provide: UpgradeOrchestrator,
-          useFactory: () =>
+          inject: [TenantService, PlatformAuditService],
+          useFactory: (tenants: TenantService, audit: PlatformAuditService) =>
             new UpgradeOrchestrator(
               new ShellUpgradeDeps(
                 ConfigService.instance.PLATFORM_UPGRADE_SCRIPT,
                 120_000,
                 ConfigService.instance.PLATFORM_CANARY_OBSERVE_MS,
                 ConfigService.instance.OPS_WEBHOOK_URL ?? '',
+                (id: string) => tenants.getContact(id),
+                ConfigService.instance.EMAIL_WEBHOOK_URL ?? '',
+                audit,
               ),
               ConfigService.instance.PLATFORM_UPGRADE_CANARY_ID || undefined,
               10,

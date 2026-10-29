@@ -35,6 +35,7 @@ import { buildJobManifest } from './import-manifest.js';
 import { ImportLock } from './import-lock.js';
 import { ImportTaskQueue } from './import-task-queue.js';
 import { shouldPauseImport } from './import-memory.js';
+import { CapacityGuard } from '../usage/capacity-guard.service.js';
 import { listUnpaired, pairUnpaired } from './import-unpaired.js';
 import { runParseJob, type ParseHost } from './import-parse.js';
 import { createFromFile, createFromUrl, type CreateHost } from './import-create.js';
@@ -125,6 +126,7 @@ export class ImportJobService implements OnModuleInit {
   constructor(
     _config: ConfigService,
     private readonly redactor: SensitiveRedactor,
+    private readonly capacityGuard?: CapacityGuard,
   ) {
     this.pool = new Pool({ connectionString: ConfigService.instance.DATABASE_URL, max: 5 });
     this.lock = new ImportLock(this.pool);
@@ -248,6 +250,7 @@ export class ImportJobService implements OnModuleInit {
       try {
         await runParseJob(this as unknown as ParseHost, jobId);
       } finally {
+        this.importBaselineRss = 0;
         await this.lock.release(jobId);
       }
     });

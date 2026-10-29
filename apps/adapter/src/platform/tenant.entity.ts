@@ -18,6 +18,7 @@ export type TenantStatus =
 export interface Tenant {
   id: string;
   name: string;
+  contact?: string | null;
   status: TenantStatus;
   host: string | null;
   port: number | null;

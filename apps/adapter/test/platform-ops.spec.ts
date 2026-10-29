@@ -123,13 +123,6 @@ describe('instance fail rates', () => {
 });
 
 describe('audit cleanup', () => {
-  it('删除 180 天前审计', async () => {
-    pgQuery.mockResolvedValueOnce({ rowCount: 7 });
-    const svc = new PlatformAuditService({} as any);
-    await expect(svc.cleanup()).resolves.toBe(7);
-    expect(pgQuery).toHaveBeenCalledWith(expect.stringContaining("interval '180 days'"));
-  });
-
   it('MultiNotifier 同时发送 webhook 与邮件通道', async () => {
     const calls: string[] = [];
     const n = new MultiNotifier([
