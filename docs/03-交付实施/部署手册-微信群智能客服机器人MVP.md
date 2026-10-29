@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 部署手册（私有化部署形态 A 为主，附 SaaS 形态租户开通） |
-| 版本 | V1.5（V1.4 + 用户手册拆分引用） |
+| 版本 | V1.6（V1.5 + 日志收集脚本与日志下载说明） |
 | 日期 | 2026-10-12 |
 | 适用对象 | 客户方 IT / 运维人员、交付工程师 |
 | 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.11 / 《详细设计》V1.3） |
-| 关联文档 | 《PRD V1.5》《概要设计 V1.11》《详细设计 V1.3》《测试报告 V1.1》《用户使用手册-SaaS版 V1.1》《用户使用手册-私有化版 V1.1》《项目报价单》 |
+| 关联文档 | 《PRD V1.5》《概要设计 V1.11》《详细设计 V1.3》《测试报告 V1.2》《用户使用手册-SaaS版 V1.1》《用户使用手册-私有化版 V1.1》《项目报价单》 |
 
 > 本手册覆盖从环境准备到上线验证、日常运维与故障排查的完整流程。按顺序执行即可完成部署；**第 5 章准备清单全部就绪后再开始安装**，可避免中途卡壳。
 
@@ -359,6 +359,7 @@ curl -s -u admin:<口令> https://<域名>/admin/assets
 cd /opt/cs-bot
 docker compose -f deploy/docker-compose.yml stop / start / restart
 docker compose -f deploy/docker-compose.yml logs -f --tail=200 adapter     # 看适配层日志
+sudo ./deploy/collect-logs.sh --since 24h        # 一键打包排障日志（见 §10.1）
 docker exec adapter logrotate -f /etc/logrotate.conf   # 手动切割（自动已配置，按天+100M 上限）
 ```
 
@@ -453,16 +454,63 @@ curl -X POST -u admin:<口令> -H 'content-type: application/json' \
 
 ## 10. 常见故障排查
 
-### 10.1 日志排查（无 SSH 场景）
+### 10.1 日志：在哪、怎么看、怎么下载
 
-服务器不可 SSH 时，通过以下方式定位问题：
+#### 1) 日志位置
 
-- **实时日志**：`docker compose -f deploy/docker-compose.yml logs -f --tail=200 adapter`
-- **按 traceId 追踪一次请求**：访问日志与响应头回写 `X-Request-Id`（=traceId）；`docker compose -f deploy/docker-compose.yml logs adapter | grep <traceId>` 可还原该请求经 controller→routing→qa→sender 的全链路
-- **落盘日志（可选）**：`.env` 设 `LOG_FILE=/app/logs/adapter.log`（挂载目录），由 `logrotate` 按天/100M 轮转保留 7 天；`docker compose -f deploy/docker-compose.yml logs` 仍可用
-- **级别与慢日志**：`LOG_LEVEL=debug` 临时提级；`SLOW_LOG_MS=2000` 让超阈值请求/外部调用记 `slow` 日志（含 costMs）
-- **关键字段**：`level/time/traceId/module/errCode/costMs/chatHash/userHash`；消息正文、answer、密钥、token、手机号等已脱敏
-- **未处理异常**：全局异常过滤器记 `ExceptionFilter` error（含 stack），对外响应不含堆栈；进程级 `uncaughtException/unhandledRejection` 记 `Bootstrap` fatal
+| 日志 | 位置 | 说明 |
+|---|---|---|
+| adapter 容器输出 | `docker compose -f deploy/docker-compose.yml logs adapter` | 结构化 JSON，全量 |
+| adapter 落盘 | 宿主 `logs/adapter.log` | `.env` 的 `LOG_FILE=/app/logs/adapter.log`；logrotate 按天/100M，保留 7 天 |
+| nginx 访问/错误 | `deploy/nginx/logs/access.log`、`error.log` | 443 入口、反代与 502/504 排查 |
+| control-plane（仅 SaaS） | `logs/control-plane/` 与容器日志 | 未叠加 SaaS 时不存在 |
+| FastGPT / PG / Mongo / Redis | 各自容器 stdout | 无落盘，按需 `docker compose logs <服务>` |
+
+#### 2) 怎么看
+
+```bash
+C="docker compose -f deploy/docker-compose.yml"
+$C logs -f --tail=200 adapter          # 实时
+$C logs --since 1h adapter             # 最近 1 小时
+$C logs adapter | grep -E '"level":"(error|fatal)"|errCode'   # 只看错误
+$C logs adapter | grep <traceId>       # 按请求全链路（controller→routing→qa→sender）
+```
+
+- 响应头 `X-Request-Id` 即 traceId，可直接用于日志检索。
+- 关键字段：`level/time/traceId/module/errCode/costMs/chatHash/userHash`；消息正文、答案、密钥、token、手机号等已脱敏。
+- 临时提级：`.env` 设 `LOG_LEVEL=debug`；慢日志：`SLOW_LOG_MS=2000`。
+- 未处理异常：`ExceptionFilter` error（含 stack，不对外）、`Bootstrap` fatal。
+
+#### 3) 怎么下载
+
+**推荐：一键收集**
+
+```bash
+sudo ./deploy/collect-logs.sh --since 24h          # 默认输出 backup/logs-bundle-<时间>.tar.gz
+./deploy/collect-logs.sh --dry-run                 # 只看会收集什么
+```
+
+产物（600 权限）包含：各容器最近日志、落盘日志（adapter/nginx/control-plane）、`compose ps`、系统/版本/磁盘信息；**不包含 `.env` 与密钥**。
+
+**只取单个文件**
+
+```bash
+docker cp <adapter容器>:/app/logs/adapter.log ./adapter.log
+# 或直接打包宿主目录
+tar czf logs.tgz logs deploy/nginx/logs
+```
+
+**无 SSH 场景**
+
+1. 云控制台 VNC/远程终端执行 `sudo ./deploy/collect-logs.sh`；
+2. 通过控制台文件下载/挂载盘取 `backup/logs-bundle-*.tar.gz`；
+3. 或交由交付方远程支持，提供压缩包与问题时间点。
+
+> 日志可能含用户问题与联系方式，发送前请脱敏；压缩包保持 600 权限。
+
+#### 4) 排障定位顺序
+
+`/healthz` 状态 → adapter error 日志 → 按 traceId 看全链路 → nginx 5xx → PG/Redis 连接 → FastGPT 调用。
 
 | 现象 | 可能原因 | 处置 |
 |---|---|---|
@@ -628,7 +676,7 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。*
+*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。*
 
 ### 附录 A.1 租户 FastGPT 初始化与密钥更新（运营步骤）
 

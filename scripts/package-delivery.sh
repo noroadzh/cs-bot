@@ -34,6 +34,7 @@ copy_file deploy/docker-compose.yml
 copy_file deploy/nginx/nginx.conf
 copy_file deploy/init-perms.sh
 copy_file deploy/install.sh
+copy_file deploy/collect-logs.sh
 copy_file deploy/init-control-db.sh
 copy_file deploy/backup.sh
 copy_file deploy/logrotate.conf

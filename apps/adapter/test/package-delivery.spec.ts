@@ -37,6 +37,7 @@ describe('package-delivery', () => {
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/docker-compose.yml');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/nginx.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/install.sh');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/collect-logs.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/.env.template');
     expect(list).toContain('cs-bot-deploy-9.9.9/config/keywords.yml');
     expect(list).toContain('cs-bot-deploy-9.9.9/apps/adapter/src/platform/007-tenant.sql');
@@ -74,6 +75,7 @@ describe('package-delivery', () => {
         'deploy/nginx/nginx.conf',
         'deploy/init-perms.sh',
         'deploy/install.sh',
+        'deploy/collect-logs.sh',
         'deploy/init-control-db.sh',
         'deploy/backup.sh',
         'deploy/logrotate.conf',
