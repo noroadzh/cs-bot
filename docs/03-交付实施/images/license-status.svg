@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640">
+<rect width="1000" height="640" fill="#eef1f5"/>
+<text x="884" y="26" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#9aa4b2" text-anchor="end">示意图 · 实际界面以系统为准</text>
+<rect x="24" y="24" width="952" height="560" rx="10" fill="#fff" stroke="#e2e7ee" stroke-width="1"/>
+<text x="48" y="70" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="18" fill="#1f2329" font-weight="600" text-anchor="start">授权状态</text>
+<rect x="150" y="48" width="74" height="26" rx="13" fill="#e7f7ec" stroke="none" stroke-width="1"/>
+<text x="187" y="66" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#1a7f43" font-weight="normal" text-anchor="middle">有效</text>
+<text x="48" y="128" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#7a8599" font-weight="normal" text-anchor="start">到期时间</text>
+<text x="952" y="128" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#1f2329" font-weight="normal" text-anchor="end">2027-10-11（剩余 347 天）</text>
+<line x1="48" y1="146" x2="952" y2="146" stroke="#edf0f4" stroke-width="1"/>
+<text x="48" y="186" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#7a8599" font-weight="normal" text-anchor="start">机器指纹</text>
+<text x="952" y="186" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#1f2329" font-weight="normal" text-anchor="end">ab12cd34****9f0e</text>
+<line x1="48" y1="204" x2="952" y2="204" stroke="#edf0f4" stroke-width="1"/>
+<text x="48" y="244" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#7a8599" font-weight="normal" text-anchor="start">群数上限</text>
+<text x="952" y="244" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#1f2329" font-weight="normal" text-anchor="end">3 / 5</text>
+<line x1="48" y1="262" x2="952" y2="262" stroke="#edf0f4" stroke-width="1"/>
+<text x="48" y="302" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#7a8599" font-weight="normal" text-anchor="start">运行模式</text>
+<text x="952" y="302" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="14" fill="#1f2329" font-weight="normal" text-anchor="end">正常（问答可用）</text>
+<line x1="48" y1="320" x2="952" y2="320" stroke="#edf0f4" stroke-width="1"/>
+<rect x="48" y="384" width="904" height="84" rx="8" fill="#fff8e6" stroke="#ffe1a8" stroke-width="1"/>
+<text x="68" y="416" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="13" fill="#8a5a00" font-weight="normal" text-anchor="start">到期或指纹不匹配时进入受限模式：</text>
+<text x="68" y="442" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="13" fill="#8a5a00" font-weight="normal" text-anchor="start">/healthz 返回 503，机器人仅回复授权提示。</text>
+<text x="976" y="626" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="11" fill="#9aa4b2" text-anchor="end">示意图：私有化授权状态摘要</text>
+</svg>

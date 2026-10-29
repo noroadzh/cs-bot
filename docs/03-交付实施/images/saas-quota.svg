@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="640" viewBox="0 0 1000 640">
+<rect width="1000" height="640" fill="#eef1f5"/>
+<text x="884" y="26" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#9aa4b2" text-anchor="end">示意图 · 实际界面以系统为准</text>
+<rect x="24" y="24" width="952" height="560" rx="10" fill="#fff" stroke="#e2e7ee" stroke-width="1"/>
+<text x="48" y="70" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="18" fill="#1f2329" font-weight="600" text-anchor="start">租户：acme</text>
+<rect x="190" y="48" width="96" height="26" rx="13" fill="#e7f7ec" stroke="none" stroke-width="1"/>
+<text x="238" y="66" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#1a7f43" font-weight="normal" text-anchor="middle">订阅有效</text>
+<text x="48" y="96" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#7a8599" font-weight="normal" text-anchor="start">套餐：标准版 · 到期：2026-12-10（剩余 42 天）</text>
+<rect x="48" y="124" width="440" height="120" rx="8" fill="#ffffff" stroke="#e5e8ee" stroke-width="1"/>
+<text x="66" y="156" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#7a8599" font-weight="normal" text-anchor="start">群数</text>
+<text x="66" y="190" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="20" fill="#1f2329" font-weight="600" text-anchor="start">3 / 5</text>
+<rect x="66" y="212" width="404" height="7" rx="4" fill="#eef1f5" stroke="none" stroke-width="1"/>
+<rect x="66" y="212" width="242" height="7" rx="4" fill="#2b7fff" stroke="none" stroke-width="1"/>
+<rect x="512" y="124" width="440" height="120" rx="8" fill="#ffffff" stroke="#e5e8ee" stroke-width="1"/>
+<text x="530" y="156" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#7a8599" font-weight="normal" text-anchor="start">知识库文档</text>
+<text x="530" y="190" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="20" fill="#1f2329" font-weight="600" text-anchor="start">420 / 2000</text>
+<rect x="530" y="212" width="404" height="7" rx="4" fill="#eef1f5" stroke="none" stroke-width="1"/>
+<rect x="530" y="212" width="84" height="7" rx="4" fill="#2b7fff" stroke="none" stroke-width="1"/>
+<rect x="48" y="274" width="440" height="120" rx="8" fill="#ffffff" stroke="#e5e8ee" stroke-width="1"/>
+<text x="66" y="306" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#7a8599" font-weight="normal" text-anchor="start">QA 对数</text>
+<text x="66" y="340" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="20" fill="#1f2329" font-weight="600" text-anchor="start">1800 / 5000</text>
+<rect x="66" y="362" width="404" height="7" rx="4" fill="#eef1f5" stroke="none" stroke-width="1"/>
+<rect x="66" y="362" width="145" height="7" rx="4" fill="#2b7fff" stroke="none" stroke-width="1"/>
+<rect x="512" y="274" width="440" height="120" rx="8" fill="#ffffff" stroke="#e5e8ee" stroke-width="1"/>
+<text x="530" y="306" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#7a8599" font-weight="normal" text-anchor="start">素材容量</text>
+<text x="530" y="340" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="20" fill="#1f2329" font-weight="600" text-anchor="start">12 / 100 MB</text>
+<rect x="530" y="362" width="404" height="7" rx="4" fill="#eef1f5" stroke="none" stroke-width="1"/>
+<rect x="530" y="362" width="48" height="7" rx="4" fill="#2b7fff" stroke="none" stroke-width="1"/>
+<rect x="48" y="432" width="240" height="40" rx="6" fill="#2b7fff" stroke="none" stroke-width="1"/>
+<text x="168" y="458" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="13" fill="#ffffff" font-weight="normal" text-anchor="middle">续费 / 调整配额</text>
+<text x="300" y="458" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="12" fill="#7a8599" font-weight="normal" text-anchor="start">（联系平台运营）</text>
+<text x="976" y="626" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif" font-size="11" fill="#9aa4b2" text-anchor="end">示意图：SaaS 租户状态摘要</text>
+</svg>
