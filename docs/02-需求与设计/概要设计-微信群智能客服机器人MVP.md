@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.10（V1.9 + 导入接口路径与关键词配置口径对齐实现） |
+| 版本 | V1.11（V1.10 + 编排渲染、解析器、限流窗口与素材标记细节对齐实现） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
@@ -301,7 +301,7 @@
 
 ### M2 消息路由与触发模块
 - **职责**：触发判定（@机器人 或 命中关键词表）、非触发静默（直接返回 success，无后续）、限流、去重幂等。
-- **关键流程**：去重（Redis `SETNX dedup:{msgid} TTL 48h`，已存在则丢弃）→ 触发判定 → 限流（每群 20 条/分钟、每人 5 条/分钟，Redis INCR+EXPIRE 滑动窗口；超限静默或回"提问太频繁，请稍后再试"每 5 分钟仅提示一次）→ 交 M3/M4。
+- **关键流程**：去重（Redis `SETNX dedup:{msgid} TTL 48h`，已存在则丢弃）→ 触发判定 → 限流（每群 20 条/分钟、每人 5 条/分钟，Redis 按分钟固定窗口（INCR+EXPIRE）；超限静默或回"提问太频繁，请稍后再试"每 5 分钟仅提示一次）→ 交 M3/M4。
 - **接口定义**：`Router.dispatch(InboundMessage): RouteResult{triggered, reason}`。
 - **出厂默认触发配置**（config/keywords.yml 样例，UAT 前由客户确认最终清单，写入客户配合事项）：
 ```yaml
@@ -344,7 +344,7 @@ triggers:
 - **职责**：入站多媒体处理（图片识别转文本提问、语音/视频/文件引导兜底）与出站素材外发（链接/文件/视频消息）。
 - **入站图片流程**：M2 判定 @机器人 且 MsgType=image → M1 `downloadMedia` → 调通义 qwen-vl（复用通义 fallback 账号，硬超时 10s；提示词固定："提取图片中与咨询/操作相关的文字，归纳为一句中文问题；无有效内容时仅返回 [NO_TEXT]"）→ 识别结果替换问题文本，交 M3/M4 走正常问答链路（上下文/置信度/拒答/过滤全复用）→ 返回 [NO_TEXT] 或调用失败时回复引导话术。图片识别路径全程异步（走主动发消息补发通道，不占用被动 5s 窗口与文本 8s 性能预算）。
 - **语音/视频/文件入站**：不下载不解析，直接回复引导话术 + miss_record 落库（media_type 标记 voice/video/file）。
-- **素材外发流程**：M4 收到答案后正则提取 `[[素材:(\d+)]]` → 查 asset 表（enabled=true）→ 剥离标记先发文本答案（@提问人）→ 逐个发送素材：link → `sendText`（标题 + URL）；file/video → `uploadMedia` 后 `sendFile`/`sendVideo` → 任一素材发送失败即补发降级提示话术并记 WARN。单条答案素材上限 2 个；文件 ≤20MB、视频 ≤10MB，超限直接走降级路径。
+- **素材外发流程**：M4 收到答案后正则提取 `[[素材:<uuid>]]`（`\[\[素材:([a-f0-9-]+)\]\]`） → 查 asset 表（enabled=true）→ 剥离标记先发文本答案（@提问人）→ 逐个发送素材：link → `sendText`（标题 + URL）；file/video → `uploadMedia` 后 `sendFile`/`sendVideo` → 任一素材发送失败即补发降级提示话术并记 WARN。单条答案素材上限 2 个；文件 ≤20MB、视频 ≤10MB，超限直接走降级路径。
 - **素材管理**：管理接口（Basic Auth，与 miss-records 一致）：`POST /admin/assets`（multipart 上传文件/视频，或 JSON 提交链接）、`GET /admin/assets`（清单）、`DELETE /admin/assets/:id`（逻辑停用）。素材文件存宿主机 `data/assets/`，纳入每日备份。
 - **接口定义**：`Media.recognize(mediaId): {question}`；`AssetStore.resolve(ids): Asset[]`；`AssetSender.send(chatid, asset): SendResult`。
 
@@ -864,3 +864,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.9 | 2026-10-12 | 管理面交付形态口径明确：§3.4 管理链路补注"本期纯 API + 操作手册调用示例，不提供自研管理界面；管理接口可视化统一归二期独立运营后台，接口契约保持不变"；与 PRD V1.5 范围口径、报价单二期后台范围对齐 |
 | V1.8 | 2026-10-12 | 选型与性能明确化：① 选型表按性能/并发/可维护性重述，新增 §4.2 关键选型对比矩阵（FastGPT vs Dify/LangChain、NestJS vs Go/Java、云 API vs 本地 vLLM、Compose vs K8s、不引入 Kafka，六维评分含被否原因）；② 新增 §4.3 本地模型嵌入设计（OpenAI 兼容端点接入、MODEL_MODE 三档路由 cloud/hybrid/local、模型规格与吞吐对照、embedding 切换须重建索引红线、增项包 D）；③ 新增 §11.4 容量与高并发设计（各层容量测算、LLM 为主瓶颈 ~2000 次/小时、L1–L4 扩展路径）与 §11.5 可维护性设计；④ §10.1 补 vllm/xinference 可选服务与三档资源档位；⑤ ADR 增 A13/A14 |
 | V1.10 | 2026-10-29 | 文档契约对齐：导入接口统一为 `/admin/import-jobs`；关键词改为 `config/keywords.yml` 配置文件口径（无 `keyword_trigger` 表）；与详细设计 V1.2、部署手册 V1.2 同步 |
+| V1.11 | 2026-10-29 | 细节对齐：限流改为按分钟固定窗口；素材标记改为 `[[素材:<uuid>]]`；与详细设计 V1.3 同步 |

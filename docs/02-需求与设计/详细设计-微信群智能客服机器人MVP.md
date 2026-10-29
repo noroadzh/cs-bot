@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.2（V1.1 + 按实现与主规格对齐导入/素材接口、Redis 键、DDL 基线与容量字段） |
+| 版本 | V1.3（V1.2 + 编排渲染、解析器、限流窗口与素材标记细节对齐实现） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
@@ -270,7 +270,7 @@ all ok → 缓存 {valid:true, until, maxChats} TTL 1h；否则 exit(1)（日志
 **解析器接口**
 
 ```ts
-interface SessionParser {           // 三实现：ArchiveJsonParser / XlsxParser / CsvTxtParser
+interface SessionParser {           // 实现：csvParser / jsonlParser / txtParser（文本）+ xlsxParser（Buffer）
   parse(stream, onBatch: (msgs: RawMsg[]) => Promise<void>): Promise<{total: number}>
 }
 // RawMsg = { ts, sessionId?, speakerRole: 'customer'|'agent', text, msgType }
@@ -305,7 +305,7 @@ interface SessionParser {           // 三实现：ArchiveJsonParser / XlsxParse
 
 **Provisioner 状态机**：`alloc_slot → render_templates → init_db → issue_cert → sign_license → compose_up → healthcheck → register(active)`；任一步失败 → `rollback_steps`（已创建资源逆序删除）+ 状态 failed + 审计记录。
 
-**模板渲染**：`env.hbs` + `compose.overrides.hbs`（端口段 = 30000+tenantIdx*10 起，db=tenant_{id}，网络=net_{id}）；证书：通配证书复用（SNI）或 per-tenant ACME。
+**编排渲染**：`ShellProvisioner.render()` 内联生成每租户 `docker-compose.yml`（无独立模板文件）；端口取 `tenant_port_seq`（30000 起、步长 10，管理口占用 port+1），项目/网络为 `csbot-t-<id>` / `csbot-t-<id>-net`，租户内 PG 库为 `csbot`；证书：通配证书复用（SNI）或 per-tenant ACME。
 
 **用量上报（D10）**：adapter 每日 02:30 `POST {CONTROL_PLANE_URL}/report`，body 仅计数：`{tenantId, date, msgsIn, triggered, hit, miss, tokens, activeChats, docCount, qaCount, assetMb}`；失败本地缓存 7 天后丢弃（不影响问答）。
 
@@ -532,4 +532,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。*
