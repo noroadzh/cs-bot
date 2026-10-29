@@ -36,12 +36,24 @@ describe('adapter runtime mounts', () => {
     expect(script).toContain('chown -R');
   });
 
-  it('独立控制面服务与独立数据库', () => {
-    expect(compose).toContain('control-plane:');
-    expect(compose).toContain('command: ["apps/adapter/dist/control-plane-main.js"]');
-    expect(compose).toContain('csbot_control');
+  it('控制面拆分到 SaaS 叠加文件，基线仅 6 服务', () => {
+    expect(compose).not.toContain('  control-plane:');
+    expect(compose).toContain('CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-}');
     expect(compose).toContain('init-control-db.sh');
+    const saas = readFileSync(join(ROOT, 'deploy', 'docker-compose.saas.yml'), 'utf8');
+    expect(saas).toContain('control-plane:');
+    expect(saas).toContain('command: ["apps/adapter/dist/control-plane-main.js"]');
+    expect(saas).toContain('csbot_control');
+    expect(saas).toContain('CONTROL_PLANE_URL: http://control-plane:3100');
     expect(dockerfile).toContain('COPY --from=builder /app/scripts /app/scripts');
+  });
+
+  it('基线不携带签发工具与宿主 docker socket，仅 SaaS 叠加文件使用', () => {
+    expect(compose).not.toContain('tools/license-issuer');
+    expect(compose).not.toContain('/var/run/docker.sock');
+    const saas = readFileSync(join(ROOT, 'deploy', 'docker-compose.saas.yml'), 'utf8');
+    expect(saas).toContain('../tools/license-issuer:/app/tools/license-issuer:ro');
+    expect(saas).toContain('/var/run/docker.sock:/var/run/docker.sock');
   });
 
   it('控制面默认不发布公网端口，提供显式 override', () => {

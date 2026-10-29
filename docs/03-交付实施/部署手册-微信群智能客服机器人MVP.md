@@ -102,14 +102,16 @@
 
 ```
 /opt/cs-bot
-├── docker-compose.yml          # 编排文件（部署包自带）
+├── deploy/docker-compose.yml   # 基线编排（6 服务，部署包自带）
+├── deploy/nginx/nginx.conf     # 反代配置（部署包自带，按域名改 server_name）
+├── deploy/nginx/certs/fullchain.pem, privkey.pem  # 客户证书
+├── deploy/init-perms.sh, backup.sh, logrotate.conf
 ├── .env                        # 全部配置项（600 权限，含密钥）
-├── nginx/nginx.conf            # 反代配置（部署包自带，按域名改 server_name）
-├── nginx/certs/fullchain.pem, privkey.pem
 ├── config/keywords.yml         # 触发关键词（出厂默认 + 可自行增删）
 ├── config/sensitive-words.txt # 出站敏感词库（可自行增删，热加载）
 ├── config/import-rules.yml    # 历史导入清洗规则（增项 B）
 ├── config/import-blacklist.txt# 导入准入黑名单（增项 B）
+├── apps/adapter/src/           # 迁移 SQL（全新安装由 compose 挂载）
 ├── license/license.lic         # 授权证书（交付方签发）
 ├── data/pg/  data/mongo/  data/redis/   # 数据卷（容器挂载）
 ├── data/assets/               # 素材目录（增项 A，纳入备份）
@@ -150,7 +152,9 @@ cd /opt && tar xzf cs-bot-deploy-<version>.tar.gz && mv cs-bot-<version> cs-bot 
 sha256sum -c SHA256SUMS.txt     # 校验镜像 tar 与配置文件完整性，必须全部 OK
 ```
 
-> 部署包含：镜像 tar 包（或内网 registry 地址）、docker-compose.yml、nginx 配置、config 出厂文件、.env 模板、SHA256SUMS.txt。
+> 部署包含：镜像 tar 包（或内网 registry 地址）、`deploy/docker-compose.yml`、`deploy/nginx/nginx.conf`、`deploy/` 运维脚本、`config/` 出厂文件、迁移 SQL、`.env` 模板、`SHA256SUMS.txt`。
+>
+> **不含**：源码、`tools/`（授权签发工具）、任何私钥、SaaS 叠加文件（`docker-compose.saas.yml`）、本地测试证书与 `license/license.lic`。交付方内部使用 `scripts/package-delivery.sh` 生成该包，命中内部制品会直接失败。
 
 ### 7.2 导入镜像
 
@@ -191,7 +195,7 @@ cp .env.template .env && chmod 600 .env && vim .env
 | CSBOT_UID / CSBOT_GID | | 65532 / 65532 | 容器运行 UID/GID（默认非 root） |
 | DOCKER_GID | | 999 | 宿主 docker 组 GID（控制面访问 docker socket） |
 | TENANT_ADMIN_ALLOW_CIDRS | | （空） | 租户 FastGPT 管理口 8443 放行网段；空 = 不开放（M11） |
-| CONTROL_PLANE_BIND | | （空） | 远程访问控制面时才设置管理地址，并叠加 `docker-compose.control-plane-expose.yml` |
+| CONTROL_PLANE_BIND | | （空） | 仅 SaaS：远程访问控制面时设置管理地址，叠加 `docker-compose.saas.yml` 与 `docker-compose.control-plane-expose.yml` |
 | PLATFORM_UPGRADE_WINDOW | | 02:00-04:00 | 批量升级低峰窗口 |
 | PLATFORM_UPGRADE_NOTICE_DAYS | | 3 | 升级前提前通知工作日数（跳过周六/周日） |
 | EMAIL_WEBHOOK_URL | | （空） | 到期/升级提醒邮件网关 Webhook（与 OPS_WEBHOOK_URL 并用） |
@@ -242,17 +246,12 @@ sudo ./deploy/init-perms.sh   # 将 data/logs/license/backup 归属到 CSBOT_UID
 ```
 
 ```bash
-docker compose up -d
-docker compose ps        # 期望 6 个基线容器 + control-plane 全部 Up / healthy
+docker compose -f deploy/docker-compose.yml up -d
+docker compose -f deploy/docker-compose.yml ps   # 期望 6 个基线容器全部 Up / healthy
 ```
 
-控制面默认不发布主机端口。需要远程访问时：
-
-```bash
-# 只绑定管理网段地址
-CONTROL_PLANE_BIND=10.0.0.5 docker compose \
-  -f docker-compose.yml -f docker-compose.control-plane-expose.yml up -d
-```
+> 私有化（形态 A）不启动控制面，也不会挂载签发工具或宿主 Docker socket。
+> SaaS（形态 B）控制面由交付方以叠加文件启动，见附录 A。
 
 ### 7.5.1 数据库迁移（追加式 SQL）
 
@@ -301,7 +300,7 @@ curl -s -u admin:<口令> https://<域名>/admin/assets
 | 4 | 拒答兜底 | 问知识库范围外问题 | 收到拒答话术 + miss_record 有记录 |
 | 5 | 上下文 | 追问「那运费呢」类指代问题 | 能结合上轮作答 |
 | 6 | 未命中导出 | `curl -u admin:... "https://<域名>/admin/miss-records?from=...&to=...&format=xlsx" -o out.xlsx` | 得到 xlsx，行数与库内一致 |
-| 7 | 重启恢复 | `docker compose restart && docker compose ps` | 全部恢复，知识库数据不丢 |
+| 7 | 重启恢复 | `docker compose -f deploy/docker-compose.yml restart && docker compose -f deploy/docker-compose.yml ps` | 全部恢复，知识库数据不丢 |
 | 8 | 密钥检查 | `grep -r "Secret\|sk-" docker-compose.yml nginx/` | 无明文密钥 |
 | 9 | 用量端点 | `curl -u admin:... https://<域名>/admin/usage` | 返回 JSON 含 messagesReceived / tokensPrimary 等桶 |
 | 10 | 图片识别（增项 A） | 群内发一张产品图并 @机器人 | 返回图片描述文本；识别失败回引导话术且不阻塞文本问答 |
@@ -314,8 +313,8 @@ curl -s -u admin:<口令> https://<域名>/admin/assets
 
 ```bash
 cd /opt/cs-bot
-docker compose stop / start / restart
-docker compose logs -f --tail=200 adapter     # 看适配层日志
+docker compose -f deploy/docker-compose.yml stop / start / restart
+docker compose -f deploy/docker-compose.yml logs -f --tail=200 adapter     # 看适配层日志
 docker exec adapter logrotate -f /etc/logrotate.conf   # 手动切割（自动已配置，按天+100M 上限）
 ```
 
@@ -329,17 +328,17 @@ docker exec adapter logrotate -f /etc/logrotate.conf   # 手动切割（自动�
 **恢复步骤**（以 PG 为例）：
 
 ```bash
-docker compose stop adapter fastgpt
+docker compose -f deploy/docker-compose.yml stop adapter fastgpt
 gunzip -c backup/pg_adapter_2026xxxx.gz | docker exec -i pg psql -U postgres adapter_db
 # FastGPT 库同理；素材目录：tar xzf backup/assets_xxxx.tar.gz -C data/
-docker compose start fastgpt adapter
+docker compose -f deploy/docker-compose.yml start fastgpt adapter
 ```
 
 ### 9.3 升级流程
 
 ```bash
 cd /opt/cs-bot
-docker compose stop adapter                # 1. 停适配层（问答中断，选低峰窗口）
+docker compose -f deploy/docker-compose.yml stop adapter                # 1. 停适配层（问答中断，选低峰窗口）
 bash scripts/backup.sh                     # 2. 升级前快照（必备，用于回滚）
 docker load -i images/adapter-<newtag>.tar # 3. 导入新镜像（其余组件不动）
 
@@ -348,7 +347,7 @@ docker images --no-trunc --format "{{.Repository}}:{{.Tag}} {{.ID}}" | grep "ada
 # 输出形如 adapter:v1.2.3 sha256:a1b2c3d4e5f6...，与交付文档中的指纹逐字符核对
 
 sed -i 's/adapter:<oldtag>/adapter:<newtag>/' docker-compose.yml
-docker compose up -d adapter               # 4. 启动
+docker compose -f deploy/docker-compose.yml up -d adapter               # 4. 启动
 curl -s https://<域名>/healthz             # 5. 验证 + 群内冒烟
 # 回滚（验证失败时）：反向改回 tag，重新 up -d；必要时用第 2 步快照恢复数据
 ```
@@ -414,19 +413,19 @@ curl -X POST -u admin:<口令> -H 'content-type: application/json' \
 
 服务器不可 SSH 时，通过以下方式定位问题：
 
-- **实时日志**：`docker compose logs -f --tail=200 adapter`
-- **按 traceId 追踪一次请求**：访问日志与响应头回写 `X-Request-Id`（=traceId）；`docker compose logs adapter | grep <traceId>` 可还原该请求经 controller→routing→qa→sender 的全链路
-- **落盘日志（可选）**：`.env` 设 `LOG_FILE=/app/logs/adapter.log`（挂载目录），由 `logrotate` 按天/100M 轮转保留 7 天；`docker compose logs` 仍可用
+- **实时日志**：`docker compose -f deploy/docker-compose.yml logs -f --tail=200 adapter`
+- **按 traceId 追踪一次请求**：访问日志与响应头回写 `X-Request-Id`（=traceId）；`docker compose -f deploy/docker-compose.yml logs adapter | grep <traceId>` 可还原该请求经 controller→routing→qa→sender 的全链路
+- **落盘日志（可选）**：`.env` 设 `LOG_FILE=/app/logs/adapter.log`（挂载目录），由 `logrotate` 按天/100M 轮转保留 7 天；`docker compose -f deploy/docker-compose.yml logs` 仍可用
 - **级别与慢日志**：`LOG_LEVEL=debug` 临时提级；`SLOW_LOG_MS=2000` 让超阈值请求/外部调用记 `slow` 日志（含 costMs）
 - **关键字段**：`level/time/traceId/module/errCode/costMs/chatHash/userHash`；消息正文、answer、密钥、token、手机号等已脱敏
 - **未处理异常**：全局异常过滤器记 `ExceptionFilter` error（含 stack），对外响应不含堆栈；进程级 `uncaughtException/unhandledRejection` 记 `Bootstrap` fatal
 
 | 现象 | 可能原因 | 处置 |
 |---|---|---|
-| 企微后台保存回调提示失败 | ① 域名/DNS/证书问题 ② 443 未放行 ③ Token/AESKey 填错 | `curl -v https://<域名>/healthz`；核对 .env 四项；看 `docker compose logs adapter` 是否收到验证请求 |
+| 企微后台保存回调提示失败 | ① 域名/DNS/证书问题 ② 443 未放行 ③ Token/AESKey 填错 | `curl -v https://<域名>/healthz`；核对 .env 四项；看 `docker compose -f deploy/docker-compose.yml logs adapter` 是否收到验证请求 |
 | 群里 @机器人 无任何反应 | ① 应用未加入该群 ② 触发词不匹配 ③ 授权受限模式 | 查 `/admin/license` 是否 valid；核对 keywords.yml；确认应用在群内 |
 | 机器人回复「系统繁忙」 | LLM 双通道失败/超时 | 查 DeepSeek 账户余额；`config-check` 验证 Key；看出站防火墙是否放行两个 LLM 域名 |
-| 容器反复重启 | ① .env 缺必填项（fail-fast） ② license 缺失/验签失败 | `docker compose logs adapter | head -50`，按日志提示补齐配置或证书 |
+| 容器反复重启 | ① .env 缺必填项（fail-fast） ② license 缺失/验签失败 | `docker compose -f deploy/docker-compose.yml logs adapter | head -50`，按日志提示补齐配置或证书 |
 | 回复内容被替换为安全话术 | 命中敏感词库 | 属预期行为；查审计日志确认命中词，必要时精简词库 |
 | 图片识别一直失败（增项 A） | qwen-vl 超时/配额 | 查 dashscope 出站与配额；识别失败会自动回引导话术，不影响文本问答 |
 | 用量端点空/缺桶 | 上报未启用或周期未到 | 确认 `USAGE_REPORT_ENABLED`；`USAGE_PERIOD=daily` 需等当日快照 |
@@ -435,7 +434,7 @@ curl -X POST -u admin:<口令> -H 'content-type: application/json' \
 | Redis OOM 重启 | maxmemory 到顶 | 默认 384M + allkeys-lru 自动驱逐；持续告警则考虑升配 |
 | 系统时间改动后机器人只回授权提示 | 时间回拨防护触发 | 把时间校正为真实时间后 `POST /admin/license/reload` |
 
-**联系支持**：质保期内缺陷远程支持；提供 `docker compose ps`、`logs --tail 500` 输出与问题时间点。
+**联系支持**：质保期内缺陷远程支持；提供 `docker compose -f deploy/docker-compose.yml ps`、`logs --tail 500` 输出与问题时间点。
 
 ## 11. 安全基线自查清单（上线前逐项确认）
 
@@ -463,6 +462,19 @@ curl -X POST -u admin:<口令> -H 'content-type: application/json' \
 5. 日常：知识运营在租户专属 FastGPT 后台维护知识库；升级由平台统一执行（提前 3 个工作日通知）。
 6. 订阅到期：前 30/15/7 天提醒 → 7 天宽限期（问答可用；加群由适配层准入拦截，知识库变更需运营在 FastGPT 后台人工冻结，适配层无法强制）→ 宽限期满仅提示续期；续费即时恢复。
 7. 数据可随时申请导出；注销时走「导出确认 → 7 天后删除（含备份）→ 删除确认单」流程。
+
+### 平台侧（交付方）SaaS 编排
+
+控制面不随客户包分发；交付方在自有机房以叠加文件启动：
+
+```bash
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.saas.yml up -d
+# 需要远程管理口时再叠加：
+#   -f deploy/docker-compose.control-plane-expose.yml
+```
+
+- 签发私钥放在 `tools/license-issuer/issuer-private.pem`（仅交付方持有，不入库、不进客户包）。
+- `LICENSE_ISSUER_KEY` 缺省指向该路径；缺失时控制面签发会失败并记录错误。
 
 ## 附录 B：.env 最小可用模板
 
@@ -539,7 +551,7 @@ docker exec csbot-vllm vllm serve Qwen/Qwen2.5-7B-Instruct --max-model-len 8192 
 #    新增模型渠道 → 地址 http://vllm:8000/v1 → 模型 Qwen2.5-7B-Instruct
 #    embedding 渠道 → 地址 http://xinference:9997 → 模型 bge-m3
 # 4) 切换通道（改 .env 后重载）
-sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart adapter
+sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/docker-compose.yml restart adapter
 ```
 
 **D.3 重要注意事项**
@@ -547,7 +559,7 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
 - **embedding 切换必须全量重建向量索引**（云 ↔ 本地向量空间不兼容）：
   1. 切换 embedding 渠道**之前**，在 FastGPT 后台对全部知识库发起「重新向量化」；
   2. 等待索引任务完成（5 千 QA 约 0.5–2 小时，选业务低峰）；
-  3. 抽查检索命中正常后，再改 `MODEL_MODE` 并 `docker compose restart adapter`；
+  3. 抽查检索命中正常后，再改 `MODEL_MODE` 并 `docker compose -f deploy/docker-compose.yml restart adapter`；
   未重建即切换会导致检索召回骤降。LLM 通道切换无此限制，可热切。
 - 本地档时延预期：P95 ≤15s（低于云档 8s，属数据不出域的预期取舍）；`LLM_TIMEOUT_MS` 建议调到 20000–30000。
 - 出站防火墙：`local` 模式可完全关闭 LLM 云端出站（仅保留企微域名）。
@@ -557,9 +569,9 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose restart ad
 
 | 操作 | 命令 |
 |---|---|
-| 启动 / 停止 | `docker compose up -d` / `docker compose stop` |
-| 状态 | `docker compose ps` |
-| 日志 | `docker compose logs -f --tail=200 adapter` |
+| 启动 / 停止 | `docker compose -f deploy/docker-compose.yml up -d` / `docker compose -f deploy/docker-compose.yml stop` |
+| 状态 | `docker compose -f deploy/docker-compose.yml ps` |
+| 日志 | `docker compose -f deploy/docker-compose.yml logs -f --tail=200 adapter` |
 | 健康检查 | `curl -s https://<域名>/healthz` |
 | 配置自检 | `curl -u admin:*** https://<域名>/admin/config-check` |
 | 授权状态 | `curl -u admin:*** https://<域名>/admin/license` |

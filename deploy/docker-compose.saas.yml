@@ -1,0 +1,51 @@
+# SaaS 形态叠加文件（交付方内部使用，不随客户部署包分发）
+#   docker compose -f docker-compose.yml -f docker-compose.saas.yml up -d
+# 需要远程访问控制面时再叠加 docker-compose.control-plane-expose.yml。
+services:
+  adapter:
+    environment:
+      CONTROL_PLANE_URL: http://control-plane:3100
+
+  control-plane:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.adapter
+    image: cs-bot-control-plane:latest
+    restart: unless-stopped
+    user: "${CSBOT_UID:-65532}:${CSBOT_GID:-65532}"
+    group_add:
+      - "${DOCKER_GID:-999}"
+    command: ["apps/adapter/dist/control-plane-main.js"]
+
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${CONTROL_PLANE_DB:-csbot_control}
+      PORT: "3100"
+      PLATFORM_ENABLED: "true"
+      CONTROL_PLANE_TOKEN: ${CONTROL_PLANE_TOKEN:-}
+      PLATFORM_TLS_PROVIDER: ${PLATFORM_TLS_PROVIDER:-file}
+      PLATFORM_CERT_DIR: ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/certs
+      PLATFORM_COMPOSE_DIR: ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/tenants
+      DOCKER_HOST: unix:///var/run/docker.sock
+      LICENSE_ISSUER: ${LICENSE_ISSUER:-shell}
+      LICENSE_ISSUER_BIN: /app/tools/license-issuer/license-issuer.mjs
+      LICENSE_ISSUER_KEY: /app/tools/license-issuer/issuer-private.pem
+      LICENSE_ISSUER_OUT_DIR: ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/licenses
+      PLATFORM_UPGRADE_SCRIPT: /app/scripts/tenant-upgrade.sh
+      LOG_FILE: /app/logs/control-plane.log
+    volumes:
+      # 控制面数据必须与宿主同路径（容器内调用宿主 docker，compose 卷路径按宿主解析）
+      - ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}:${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}
+      - ../logs/control-plane:/app/logs
+      # 签发工具与私钥仅存交付方，随 SaaS 叠加文件挂载，不进入客户包
+      - ../tools/license-issuer:/app/tools/license-issuer:ro
+      # 控制面需要调用宿主 docker compose
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_BIN:-/usr/bin/docker}:/usr/local/bin/docker:ro
+      - ${DOCKER_COMPOSE_PLUGIN:-/usr/libexec/docker/cli-plugins/docker-compose}:/usr/local/lib/docker/cli-plugins/docker-compose:ro
+    depends_on:
+      pg:
+        condition: service_healthy
+    networks:
+      - csbot

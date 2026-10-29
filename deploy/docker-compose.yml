@@ -31,9 +31,9 @@ services:
       REDIS_PORT: "6379"
       DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${POSTGRES_DB:-csbot}
       LOG_FILE: /app/logs/adapter.log
-      # SaaS：控制面独立进程；数据面不再暴露 /platform
+      # SaaS：控制面通过 docker-compose.saas.yml 叠加启用；私有化留空
       PLATFORM_ENABLED: "false"
-      CONTROL_PLANE_URL: http://control-plane:3100
+      CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-}
       CONTROL_PLANE_TOKEN: ${CONTROL_PLANE_TOKEN:-}
     volumes:
       # 数据持久化：素材、导入、用量快照、上报缓冲
@@ -45,49 +45,6 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      pg:
-        condition: service_healthy
-    networks:
-      - csbot
-
-  control-plane:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile.adapter
-    image: cs-bot-control-plane:latest
-    restart: unless-stopped
-    user: "${CSBOT_UID:-65532}:${CSBOT_GID:-65532}"
-    group_add:
-      - "${DOCKER_GID:-999}"
-    command: ["apps/adapter/dist/control-plane-main.js"]
-
-    env_file:
-      - ../.env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-cs}:${POSTGRES_PASSWORD:-cs}@pg:5432/${CONTROL_PLANE_DB:-csbot_control}
-      PORT: "3100"
-      PLATFORM_ENABLED: "true"
-      CONTROL_PLANE_TOKEN: ${CONTROL_PLANE_TOKEN:-}
-      PLATFORM_TLS_PROVIDER: ${PLATFORM_TLS_PROVIDER:-file}
-      PLATFORM_CERT_DIR: ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/certs
-      PLATFORM_COMPOSE_DIR: ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/tenants
-      DOCKER_HOST: unix:///var/run/docker.sock
-      LICENSE_ISSUER: ${LICENSE_ISSUER:-shell}
-      LICENSE_ISSUER_BIN: /app/tools/license-issuer/license-issuer.mjs
-      LICENSE_ISSUER_KEY: /app/tools/license-issuer/issuer-private.pem
-      LICENSE_ISSUER_OUT_DIR: ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}/licenses
-      PLATFORM_UPGRADE_SCRIPT: /app/scripts/tenant-upgrade.sh
-      LOG_FILE: /app/logs/control-plane.log
-    volumes:
-      # 控制面数据必须与宿主同路径（容器内调用宿主 docker，compose 卷路径按宿主解析）
-      - ${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}:${PLATFORM_HOST_DATA_DIR:-/opt/cs-bot/data/control}
-      - ../logs/control-plane:/app/logs
-      - ../tools/license-issuer:/app/tools/license-issuer:ro
-      # 控制面需要调用宿主 docker compose
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ${DOCKER_BIN:-/usr/bin/docker}:/usr/local/bin/docker:ro
-      - ${DOCKER_COMPOSE_PLUGIN:-/usr/libexec/docker/cli-plugins/docker-compose}:/usr/local/lib/docker/cli-plugins/docker-compose:ro
-    depends_on:
       pg:
         condition: service_healthy
     networks:
