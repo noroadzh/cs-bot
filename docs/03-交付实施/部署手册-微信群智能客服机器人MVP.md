@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 部署手册（私有化部署形态 A 为主，附 SaaS 形态租户开通） |
-| 版本 | V1.3（V1.2 + 一键部署脚本与调用关系图） |
+| 版本 | V1.4（V1.3 + 附录 F SaaS 控制面说明） |
 | 日期 | 2026-10-12 |
 | 适用对象 | 客户方 IT / 运维人员、交付工程师 |
 | 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.11 / 《详细设计》V1.3） |
-| 关联文档 | 《PRD V1.5》《概要设计 V1.11》《详细设计 V1.3》《测试报告 V1.1》《项目报价单》 |
+| 关联文档 | 《PRD V1.5》《概要设计 V1.11》《详细设计 V1.3》《测试报告 V1.1》《用户使用手册 V1.1》《项目报价单》 |
 
 > 本手册覆盖从环境准备到上线验证、日常运维与故障排查的完整流程。按顺序执行即可完成部署；**第 5 章准备清单全部就绪后再开始安装**，可避免中途卡壳。
 
@@ -628,7 +628,7 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。*
+*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。*
 
 ### 附录 A.1 租户 FastGPT 初始化与密钥更新（运营步骤）
 
@@ -659,3 +659,50 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/
    ```
 5. 企微后台把回调 URL 配置为 `https://<租户域名>/wecom/callback` 并完成校验。
 6. 配额/状态变更会自动同步到租户实例（内部 `/internal/tenant/sync`，Bearer token）。
+
+## 附录 F：SaaS 控制面说明
+
+> 面向交付/运维人员。控制面是我方运营 SaaS（形态 B）的管理服务，**不随客户部署包分发**，私有化（形态 A）不需要。
+
+### F.1 定位
+
+- 独立进程：与数据面共用镜像，入口 `apps/adapter/dist/control-plane-main.js`，独立数据库、独立鉴权、端口 3100（默认不发布主机端口）。
+- 只做平台运营：租户开通/编排、配额计量、订阅与续期、批量升级、审计、监控聚合、密钥管理、用量接收。
+- 不参与消息链路：租户问答由各自 adapter 实例处理，控制面故障不影响客户问答。
+
+### F.2 能力清单
+
+| 能力 | 作用 | 主要接口 |
+|---|---|---|
+| 租户开通编排 | 分配端口段、渲染每租户 compose、签发证书与 license、启动并健康检查；失败逆序回滚 | `POST /platform/tenants`、`.../provision` |
+| 租户注册表 | 列表/详情、状态机（trialing/active/grace/paused/terminated） | `GET /platform/tenants…` |
+| 配额与用量 | 设置 `maxChats/maxDocs/maxQa/maxAssetMb`、汇总每日用量、预警并下发实例 | `PATCH .../quota`、`GET .../usage` |
+| 订阅与续期 | T-30/15/7 提醒、到期 grace、宽限 7 天转 paused、续费签新证书 | `POST .../renew`、`sweep` |
+| 批量升级 | 金丝雀→分批、低峰窗口、提前 3 个工作日通知、失败回滚 | `POST /platform/upgrades` |
+| 审计 | 哈希链、reason 必填、异地留存、180 天清理前导出 | `GET /platform/audit-log`、`.../verify` |
+| 运维与注销 | 重启、停用/恢复、凭证一次性交接、导出、T+7 删除、监控探活 | `.../restart`、`.../export`、`.../destroy` |
+| 密钥管理 | 每租户密钥 AES-256-GCM 存储并同步实例 | `PUT .../secrets` |
+| 用量接收 | 各租户 adapter 每日上报计数（无正文） | `POST /platform/report` |
+
+### F.3 刻意不做
+
+- 不存租户知识库正文与问答日志，只存元数据与计数。
+- 不参与消息处理，不是问答链路的依赖。
+- 不修改租户 FastGPT 后台内容；知识运营仍在租户自己的后台。
+
+### F.4 部署边界
+
+```bash
+# 仅交付方内部环境
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.saas.yml up -d
+# 需要远程管理口时再叠加：
+#   -f deploy/docker-compose.control-plane-expose.yml
+```
+
+- 客户交付包**不含**：`docker-compose.saas.yml`、`tools/license-issuer`、签发私钥、`/var/run/docker.sock` 挂载。
+- `deploy/install.sh` 只启动基线 6 服务，不会启动控制面。
+- `LICENSE_ISSUER_KEY` 缺省指向 `tools/license-issuer/issuer-private.pem`（仅交付方持有，不入库）。
+
+### F.5 何时使用
+
+开通新租户、调整配额、订阅续费/到期处理、批量升级、查审计、导出或注销租户数据——均为我方运营动作；客户日常只接触自己的租户域名与 FastGPT 后台。
