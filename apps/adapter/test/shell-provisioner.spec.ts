@@ -225,6 +225,11 @@ describe('ShellProvisioner.render', () => {
     expect(content).toContain('/app/license:ro');
     expect(content).toContain('docker-entrypoint-initdb.d');
     expect(content).toContain('networks:');
+
+    // 资源硬隔离（概设 §10.5 / §12 风险 8）：六服务均有内存限额，合计 ≤6.5G
+    const limits = [...content.matchAll(/mem_limit: (\d+)m/g)].map((m) => Number(m[1]));
+    expect(limits).toHaveLength(6);
+    expect(limits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(6500);
   });
 
   it('TENANT_ADMIN_ALLOW_CIDRS 非空时开放 8443 并写入 allow/deny', async () => {
