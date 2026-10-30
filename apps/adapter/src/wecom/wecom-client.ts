@@ -12,6 +12,8 @@ import { wecomSemaphore } from '../common/semaphore.js';
 import type { UsageService } from '../usage/usage.service.js';
 
 const TOKEN_TTL = 7000;
+/** 提前刷新量：剩余不足该秒数即视为过期，避免临界请求失败（概设 M1） */
+const TOKEN_REFRESH_LEAD_SEC = 300;
 const TOKEN_LOCK_TTL = 10;
 const TOKEN_LOCK_KEY = 'wecom:at:lock';
 
@@ -33,12 +35,14 @@ export class WecomClient implements IMessageSender {
   }
 
   async getAccessToken(): Promise<string> {
-    if (this.tokenCache && Date.now() < this.tokenCache.expireAt) return this.tokenCache.token;
+    if (this.tokenCache && Date.now() < this.tokenCache.expireAt - TOKEN_REFRESH_LEAD_SEC * 1000) {
+      return this.tokenCache.token;
+    }
     try {
       const cached = await this.redis.get('wecom:at');
       if (cached) {
         const ttl = await this.redis.ttl('wecom:at');
-        if (ttl > 0) {
+        if (ttl > TOKEN_REFRESH_LEAD_SEC) {
           this.tokenCache = { token: cached, expireAt: Date.now() + ttl * 1000 };
           return cached;
         }

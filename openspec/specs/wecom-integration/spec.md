@@ -46,15 +46,24 @@ The system MUST reply passively within 3.5 seconds by either returning a non-emp
 - **THEN** the system returns an empty success body immediately and pushes the answer via `appchat/send` with `client_msg_id` equal to the `traceId`
 
 ### Requirement: access_token caching and distributed refresh
-The system MUST cache the WeCom `access_token` in Redis for 7000 seconds and protect token refresh with a `SETNX` lock to prevent concurrent refreshes when multiple adapter instances run.
+
+The system MUST cache the WeCom `access_token` in Redis for 7000 seconds and protect token refresh with a `SETNX` lock to prevent concurrent refreshes when multiple adapter instances run. A cached token with fewer than 300 seconds remaining MUST be treated as expired so refreshes happen ahead of the deadline.
 
 #### Scenario: Fresh token request
-- **WHEN** the cached `access_token` is present and not expired
+
+- **WHEN** the cached `access_token` is present and has more than 300 seconds remaining
 - **THEN** the system uses the cached token without contacting WeCom
 
+#### Scenario: Token near expiry refreshes early
+
+- **WHEN** the cached `access_token` has 300 seconds or fewer remaining
+- **THEN** the system refreshes the token before using it, instead of sending a request that would fail
+
 #### Scenario: Token refresh under contention
+
 - **WHEN** two adapter instances both detect an expired token simultaneously
-- **THEN** exactly one instance fetches a new token; the other waits for the lock and reuses the cached token
+- **THEN** only one refreshes via the `SETNX` lock and the other reuses the refreshed token
+
 
 ### Requirement: WecomClient unified outbound interface
 The system MUST expose all outbound WeCom API calls through a single `WecomClient` class, providing methods: `sendText(chatId, content, atUser?)`, `sendFile(chatId, mediaId)`, `sendVideo(chatId, mediaId, title)`, `uploadMedia(type, path)`, `downloadMedia(mediaId)`, and `getAccessToken()`.

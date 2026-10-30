@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.20（V1.19 + 租户按需恢复） |
+| 版本 | V1.21（V1.20 + token 提前刷新与部署章节对齐） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
-| 关联文档 | 《PRD V1.5》《详细设计 V1.11（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.13》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
+| 关联文档 | 《PRD V1.5》《详细设计 V1.12（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.13》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
 
 ## 2. 设计目标与约束
 
@@ -749,30 +749,34 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 出站白名单（防火墙/安全组仅需放行）：`qyapi.weixin.qq.com:443`（企微 API）、`api.deepseek.com:443`（主 LLM）、`dashscope.aliyuncs.com:443`（通义 fallback 与 qwen-vl 视觉）；SaaS 形态追加控制面上报域名。其余出站一律默认拒绝。
 
 ### 10.2 目录结构（宿主机 /opt/cs-bot）
+
 ```
 /opt/cs-bot
-├── docker-compose.yml
-├── .env                    # 600 权限
-├── nginx/{nginx.conf,certs/}
-├── config/{keywords.yml,sensitive-words.txt,import-rules.yml,import-blacklist.txt}
-│                            # 触发词/出站词库；导入清洗规则与入库准入黑名单（V1.5）
-├── license/license.lic,license.state  # 授权证书与校验状态（600 权限，V1.3）
-├── data/{pg,mongo,redis,assets}/  # 卷挂载；assets 为素材目录（V1.2 增项），纳入每日备份
-├── data/import/{jobId}/        # 导入临时区（原始文件，任务结束即删，不备份，V1.5）
-└── backup/                 # 每日备份产物
+├── deploy/docker-compose.yml   # 基线编排（6 服务）；SaaS 叠加 docker-compose.saas.yml
+├── deploy/nginx/{nginx.conf,fastgpt-admin-allow.conf,certs/}
+├── deploy/{install.sh,collect-logs.sh,render-admin-allow.sh,backup.sh,...}
+├── .env                        # 600 权限（强口令，install.sh 预检）
+├── config/{keywords.yml,sensitive-words.txt,import-rules.yml,import-blacklist.txt,import-names.txt}
+├── apps/adapter/src/**/NNN-*.sql   # 追加式迁移（compose 挂载初始化）
+├── license/license.lic         # 授权证书（600）；反回放状态：license.lic.antireplay.json
+├── data/{pg,mongo,redis,assets,import}/   # 卷挂载；assets 纳入备份，import 任务结束即删
+├── logs/                       # adapter/nginx/control-plane 落盘日志
+└── backup/                     # 每日备份产物（私有化；SaaS 租户在 backup/tenants/<id>/）
 ```
 
 ### 10.3 备份策略与定时任务
-- 每日 02:00 cron：`pg_dump`（两个 database）+ `mongodump` → /opt/cs-bot/backup，保留 7 天；知识库文档原件由客户侧留存。
-- 每日 02:00（随备份任务）：素材目录 `data/assets` 打包增量备份（V1.2 增项）。
+- 每日 02:00 cron：`pg_dump`（**三个** database：adapter / fastgpt / control-plane）+ `mongodump` → /opt/cs-bot/backup，保留 7 天；知识库文档原件由客户侧留存。
+- 每日 02:00（随备份任务）：素材目录 `data/assets` 打包备份（V1.2 增项）。
 - 每日 03:30：miss_record 保留期（90 天）清理任务（V1.1 修订）。
 - 每日 03:40：导入临时区与过期审核清单清理（残留 `data/import/*` 一律删除；review.xlsx 超 30 天删除；import_item 元数据超 180 天删除，V1.5）。
+- 每日 03:50：审计清理——先导出 180 天前 JSONL 到 `PLATFORM_AUDIT_ARCHIVE_DIR`，成功后才删除本地行（导出失败保留）。
+- SaaS：`scripts/backup-tenants.sh` 逐租户备份（pg/mongo/data+license）到 `backup/tenants/<id>/<时间戳>/`，保留 7 天；恢复用 `scripts/restore-tenant.sh`。
 - Redis 不备份（上下文/去重可丢）。
 
 ### 10.4 监控告警
 - 云厂商免费监控：CPU>85%、内存>85%、磁盘>85% 告警至客户运维。
 - 容器 `healthcheck`（/healthz 与各依赖探活）+ `restart: unless-stopped`，异常退出自动重启；宿主重启后由 Docker 守护进程（`systemctl enable docker`）拉起。
-- 适配层进程崩溃/重启、LLM 双通道连续失败 → 调用企微群机器人 webhook 推送告警到运维群。
+- 适配层进程崩溃由宿主/云监控发现（容器 `restart` 自愈，重启后可从 `logs/` 与 `docker compose logs` 定位）；license 到期、LLM 双通道连续失败、SaaS 实例异常/资源水位超阈值 → 调用企微群机器人 webhook 推送告警到运维群。
 
 ### 10.5 SaaS 部署拓扑与资源规划（V1.6 增项 C）
 - **选型结论**：不使用"共享实例 + 逻辑隔离"的多租户方案，而是**每租户一套独立实例**（"单实例多部署"，即虚拟私有化）。理由：① 隔离性与合规表述最强（数据物理分离，客户易接受）；② 代码零改造（复用现有 compose 模板，仅参数化）；③ 噪声邻居与资源争抢风险最小。代价是资源成本高于共享方案，按租户定价覆盖。
@@ -894,3 +898,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.18 | 2026-10-30 | §9 密钥管理/反逆向补齐安装器落地（SHA256SUMS 校验、强口令预检）；日志脱敏表述精确化 |
 | V1.19 | 2026-10-30 | §10.5/§12：租户 compose 六服务写入 standard 档 `mem_limit`（合计 ≈5.9G），cgroup 内存硬隔离落地 |
 | V1.20 | 2026-10-30 | §10.5 备份路径修正为 `backup/tenants/{tenantId}/`；补 `restore-tenant.sh` 按需恢复与确认机制 |
+| V1.21 | 2026-10-30 | M1 access_token 提前 300s 刷新落地；§10.2 目录结构、§10.3 备份（三库/审计清理/租户备份）、§10.4 崩溃告警表述按实际重写 |

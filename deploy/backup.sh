@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 每日备份：pg_dump × 2、mongodump、assets（如果存在）
+# 每日备份：pg_dump × 3（adapter/fastgpt/control-plane）、mongodump、assets（如果存在）
 # 用法：./deploy/backup.sh
 set -euo pipefail
 

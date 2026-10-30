@@ -77,6 +77,24 @@ describe('WecomClient', () => {
       expect(apiMock.get).not.toHaveBeenCalled();
     });
 
+    it('3.4.a2 内存缓存剩余 <300s → 提前刷新，不返回临界 token', async () => {
+      const client = await newClient();
+      client.tokenCache = { token: 'old', expireAt: Date.now() + 120_000 };
+
+      await expect(client.getAccessToken()).resolves.toBe('api-token');
+      expect(apiMock.get).toHaveBeenCalled();
+      expect(client.tokenCache.token).toBe('api-token');
+    });
+
+    it('3.4.b2 Redis TTL ≤300 → 视为过期并刷新', async () => {
+      redisMock.get.mockResolvedValueOnce('redis-old');
+      redisMock.ttl.mockResolvedValueOnce(120);
+
+      const client = await newClient();
+      await expect(client.getAccessToken()).resolves.toBe('api-token');
+      expect(apiMock.get).toHaveBeenCalled();
+    });
+
     it('3.4.b 内存未命中但 Redis 有值且 TTL>0 → 写内存缓存并返回', async () => {
       redisMock.get.mockResolvedValueOnce('redis-token');
       redisMock.ttl.mockResolvedValueOnce(7000);
