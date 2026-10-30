@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.13（V1.12 + 限流/上下文/状态文件表述对齐） |
+| 版本 | V1.14（V1.13 + §4 改为迁移指引，§7 业务表按迁移重写见概设） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.22》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.14》 |
+| 上游文档 | 《概要设计 V1.23》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.14》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -373,108 +373,19 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 
 ---
 
-## 4. 数据库 DDL 基线（PG15，默认 schema）
+## 4. 数据库结构（以迁移为准）
 
-```sql
-CREATE TABLE miss_record (
-  id          BIGSERIAL PRIMARY KEY,
-  question    TEXT NOT NULL,
-  chatid      VARCHAR(64),
-  userid      VARCHAR(64),
-  score       NUMERIC(4,3),
-  media_type  VARCHAR(16),
-  status      SMALLINT NOT NULL DEFAULT 0,
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_miss_status_created ON miss_record(status, created_at);
+数据库结构由**追加式编号迁移**定义：`apps/adapter/src/**/NNN-*.sql`（全新安装由 compose 挂载到 `docker-entrypoint-initdb.d/`，存量升级执行镜像内 `/app/migrate/*.sql`）。本节不再重复维护 DDL，避免与迁移漂移。
 
-CREATE TABLE asset (
-  id        SERIAL PRIMARY KEY,
-  asset_type VARCHAR(16) NOT NULL CHECK (asset_type IN ('link','file','video')),
-  title     VARCHAR(128) NOT NULL,
-  url       TEXT,
-  file_path VARCHAR(256),
-  size      BIGINT,
-  md5       VARCHAR(32),
-  enabled   BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_asset_type_enabled ON asset(asset_type, enabled);
+| 领域 | 迁移文件 | 主要表 |
+|---|---|---|
+| 未命中 | `miss/001-miss-record.sql`、`miss/009-miss-media-status.sql` | `miss_record`（+ media_type/status） |
+| 素材 | `media/002-asset.sql`、`media/010-asset-md5.sql` | `asset`（+ md5） |
+| 授权 | `license/003-licensed-chat.sql` | `licensed_chat` |
+| 导入 | `import/004-import-job.sql`、`005-approved-qa.sql`、`006-import-job-stored-path.sql`、`007-import-pipeline.sql`、`013-import-message-stage.sql`、`014-import-dedup-counters.sql` | `import_job`、`import_item`、`approved_qa` |
+| 平台 | `platform/007-tenant.sql`、`008-control-plane.sql`、`011-usage-counters.sql`、`012-tenant-ports.sql`、`015-tenant-offboarding.sql`、`016-runtime-gaps.sql`、`017-tenant-contact.sql` | `tenant`、`tenant_quota`、`tenant_usage_daily`、`platform_audit_log`、`tenant_snapshot`、`tenant_upgrade_batch`、`tenant_offboarding`、`tenant_destroy_confirmation` |
 
-CREATE TABLE import_job (
-  id BIGSERIAL PRIMARY KEY,
-  file_name VARCHAR(256) NOT NULL,
-  file_hash VARCHAR(64) NOT NULL,
-  source_type VARCHAR(16) NOT NULL,
-  total_msgs INTEGER DEFAULT 0, parsed_msgs INTEGER DEFAULT 0,
-  paired_count INTEGER DEFAULT 0, unpaired_count INTEGER DEFAULT 0,
-  masked_count INTEGER DEFAULT 0, blocked_count INTEGER DEFAULT 0,
-  dedup_count INTEGER DEFAULT 0, approved_count INTEGER DEFAULT 0,
-  imported_count INTEGER DEFAULT 0, failed_count INTEGER DEFAULT 0,
-  dataset_name VARCHAR(64),
-  status VARCHAR(16) NOT NULL DEFAULT 'pending',
-  error TEXT,
-  created_by VARCHAR(32),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  finished_at TIMESTAMPTZ
-);
-CREATE INDEX idx_import_job_status ON import_job(status, created_at);
-
-CREATE TABLE import_item (
-  id BIGSERIAL PRIMARY KEY,
-  job_id BIGINT NOT NULL REFERENCES import_job(id) ON DELETE CASCADE,
-  source_hash VARCHAR(64) UNIQUE NOT NULL,
-  question TEXT,
-  answer TEXT,                       -- rejected 条目为 NULL
-  session_hash VARCHAR(32),
-  occurred_at TIMESTAMPTZ,
-  auto_blocked BOOLEAN NOT NULL DEFAULT false,
-  similar_qa_id VARCHAR(64),
-  review_status VARCHAR(12) NOT NULL DEFAULT 'pending',
-  review_note VARCHAR(128),
-  imported_qa_id VARCHAR(64),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_import_item_job ON import_item(job_id, review_status);
-
--- 平台侧（控制面独立 database，非 adapter schema）
-CREATE TABLE tenant (
-  id VARCHAR(16) PRIMARY KEY,
-  name VARCHAR(64) NOT NULL, contact VARCHAR(64) NOT NULL,
-  domain VARCHAR(128) UNIQUE NOT NULL,
-  instance_host VARCHAR(64), port_base INTEGER,
-  db_name VARCHAR(32), plan VARCHAR(16) NOT NULL DEFAULT 'standard',
-  sub_status VARCHAR(12) NOT NULL DEFAULT 'trialing',
-  sub_start_at TIMESTAMPTZ, sub_expire_at TIMESTAMPTZ,
-  license_fp VARCHAR(64), image_version VARCHAR(32),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(), destroyed_at TIMESTAMPTZ
-);
-CREATE TABLE tenant_quota (
-  tenant_id VARCHAR(16) PRIMARY KEY REFERENCES tenant(id) ON DELETE CASCADE,
-  max_chats INTEGER NOT NULL DEFAULT 10, max_msgs_per_day INTEGER NOT NULL DEFAULT 5000,
-  max_docs INTEGER NOT NULL DEFAULT 200, max_qa INTEGER NOT NULL DEFAULT 5000,
-  max_asset_mb INTEGER NOT NULL DEFAULT 2048, llm_token_monthly BIGINT,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE TABLE tenant_usage_daily (
-  tenant_id VARCHAR(16) NOT NULL REFERENCES tenant(id) ON DELETE CASCADE,
-  stat_date DATE NOT NULL,
-  msgs_in INTEGER DEFAULT 0, msgs_triggered INTEGER DEFAULT 0,
-  qa_hit INTEGER DEFAULT 0, qa_miss INTEGER DEFAULT 0,
-  llm_tokens BIGINT DEFAULT 0, active_chats INTEGER DEFAULT 0,
-  asset_mb NUMERIC(12,2), doc_count INTEGER, qa_count INTEGER,
-  PRIMARY KEY (tenant_id, stat_date)
-);
-CREATE TABLE platform_audit_log (
-  id BIGSERIAL PRIMARY KEY,
-  actor VARCHAR(32) NOT NULL, tenant_id VARCHAR(16),
-  action VARCHAR(32) NOT NULL, reason VARCHAR(200) NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  hash_prev VARCHAR(64)
-);
-```
-
-> 上表为初版基线；后续结构变更以 `apps/adapter/src/**/NNN-*.sql` 追加迁移为准（当前 18 个）。关键词由 `config/keywords.yml` 提供（Trie 匹配 + `POST /admin/keywords/reload`），无独立表。
+> 字段摘要见概设 §7.1（适配层）与 §7.4（平台侧）；`scripts/check-migrations.sh` 校验每个迁移都被部署配置引用。
 
 ## 5. Redis 键总表
 
@@ -598,4 +509,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）。*

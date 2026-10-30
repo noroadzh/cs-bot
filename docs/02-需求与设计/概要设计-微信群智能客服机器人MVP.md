@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.22（V1.21 + 反回放状态文件名统一） |
+| 版本 | V1.23（V1.22 + §7.1/§7.2 按迁移与实现重写） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
-| 关联文档 | 《PRD V1.5》《详细设计 V1.13（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.13》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
+| 关联文档 | 《PRD V1.5》《详细设计 V1.14（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.13》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
 
 ## 2. 设计目标与约束
 
@@ -504,92 +504,89 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 
 ## 7. 数据设计
 
-### 7.1 适配层业务表（PostgreSQL，schema=adapter）
+### 7.1 适配层业务表（PostgreSQL，默认 schema）
 
-**miss_record（未命中问题表）**
+> 以追加式迁移为准（`apps/adapter/src/**/NNN-*.sql`），下表为字段摘要。
+
+**miss_record（未命中问题表，001 + 009）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | bigserial PK | |
-| question | text not null | 用户原始问题（学习闭环依赖，留存已获 PRD 确认） |
-| chatid | varchar(64) | 群 ID |
-| userid | varchar(64) | 发言人企微 userid（非明文姓名） |
-| score | numeric(4,3) | 最高相似度得分 |
-| media_type | varchar(16) null | 触发消息为多媒体时的类型标记（voice/video/file，V1.2 增项；图片识别成功后按文本提问记录，为空） |
-| status | smallint default 0 | 0未处理 1已补录 2忽略 |
-| created_at | timestamptz default now() | |
-索引：`(status, created_at)`。
+| trace_id | varchar(64) not null | 请求 traceId（贯穿链路） |
+| chat_id / user_id | varchar(128) not null | 群 ID / 发言人 userid（导出时掩码） |
+| question | text not null | 用户原始问题 |
+| score | decimal(5,4) not null | 最高相似度得分 |
+| engine | varchar(32) not null | 产生结果的引擎（fastgpt / mock 等） |
+| media_type | varchar(16) null | voice/video/file；文本为空（009 增补） |
+| status | smallint not null default 0 | 0 未处理 / 1 已补录 / 2 忽略（009） |
+| created_at | timestamptz default now() | 索引 `(created_at DESC)` |
 
-数据合规约束（V1.1 修订，与 PRD FR-6 对齐）：
-- **脱敏导出**：导出 Excel 中 userid 列做掩码展示（前 2 位 + ****，或配置为哈希截断），默认开启；原始值仅限客户授权管理员经数据库直查。
-- **保留期 90 天**（配置项 MISS_RECORD_RETENTION_DAYS）：适配层每日 03:30 定时任务删除超期记录，失败记 WARN 并次日重试。
-- 全部数据存于客户服务器，不出域；部署/交付手册注明"群消息数据属客户数据，客户方需在群公告/隐私告知中说明机器人处理规则"——告知义务归客户侧。
+数据合规约束（与 PRD FR-6 对齐）：导出时 `userid` 掩码（共享 `maskPII`，首 2 + `***` + 末 2）；保留期 90 天（`MISS_RECORD_RETENTION_DAYS`，每日 03:30 清理，失败 WARN 次日重试）；数据全部在客户服务器，群公告/隐私告知由客户侧承担。
 
 **关键词配置（无独立表）**
 触发关键词由 `config/keywords.yml` 提供（Trie 前缀匹配），`POST /admin/keywords/reload` 热加载；不建 `keyword_trigger` 表。
 
-**asset（素材表，V1.2 增项新增）**
+**asset（素材表，002 + 010）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| id | serial PK | 素材编号，知识库答案以 `[[素材:id]]` 引用 |
-| asset_type | varchar(16) not null | link / file / video |
-| title | varchar(128) not null | 发送时的标题/说明（外发前经 M6 过滤） |
-| url | text | link 类型：公众号文章等 URL |
-| file_path | varchar(256) | file/video 类型：data/assets 下相对路径 |
-| size | bigint | 字节数（上传时校验：文件 ≤20MB、视频 ≤10MB） |
-| md5 | varchar(32) | 重复上传校验 |
-| enabled | boolean default true | 停用后命中答案走降级提示 |
-| created_at | timestamptz default now() | |
-索引：`(asset_type, enabled)`。素材治理责任归客户方（与知识文档口径一致）。
-
-**import_job（导入任务表，V1.5 增项新增）**
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | bigserial PK | 任务/批次编号，对外 jobId |
-| file_name | varchar(256) | 上传原文件名（仅内部追溯） |
-| file_hash | varchar(64) | 源文件 SHA-256（同文件重复上传可直接提示） |
-| source_type | varchar(16) | archive_json / xlsx / csv / txt |
-| total_msgs | integer | 解析到的消息总条数 |
-| parsed_msgs | integer | 解析成功条数 |
-| paired_count | integer | 成功配对问答对数 |
-| unpaired_count | integer | 单边消息进未配对池条数 |
-| masked_count | integer | 脱敏命中条数 |
-| blocked_count | integer | 敏感黑名单强制复核条数 |
-| dedup_count | integer | 批次内去重 + 近似已有跳过条数 |
-| approved_count | integer | 审核通过条数 |
-| imported_count | integer | 实际入库条数 |
-| failed_count | integer | 入库失败条数 |
-| dataset_name | varchar(64) | 写入的 FastGPT collection 名（历史语料-{id}） |
-| status | varchar(16) | uploaded/parsing/parsed/approved/partial/rejected/rolled_back/failed（内部阶段以 §7.1 计数列表达） |
-| error | text null | 失败原因（不含正文） |
-| created_by | varchar(32) | 管理员账号（Basic Auth 用户名，哈希存） |
-| created_at / finished_at | timestamptz | |
-索引：`(status, created_at)`。
-
-**import_item（导入明细表，V1.5 增项新增）**
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | bigserial PK | |
-| job_id | bigint FK import_job(id) | 批次 |
-| source_hash | varchar(64) unique | 问+答归一化 SHA-256（幂等去重键） |
-| question | text | 已脱敏问题 |
-| answer | text | 已脱敏答案（"丢弃"条目不留存正文，写 NULL） |
-| session_hash | varchar(32) | 会话标识哈希（不可逆） |
-| occurred_at | timestamptz | 原对话发生时间 |
-| auto_blocked | boolean default false | 命中敏感黑名单，强制人工复核 |
-| similar_qa_id | varchar(64) null | 现有知识库近似条目标识（score ≥ 0.9） |
-| review_status | varchar(12) | pending / approved / modified / rejected |
-| review_note | varchar(128) null | 审核备注或失败原因 |
-| imported_qa_id | varchar(64) null | FastGPT 侧 QA 记录 ID（回写，用于回滚定位） |
+| id | uuid PK | 素材编号，知识库答案以 `[[素材:<uuid>]]` 引用 |
+| type | varchar(20) | file / link / video（CHECK） |
+| name | text not null | 展示名/链接标题（外发前按 R-3 口径处理） |
+| url | text | link 类型的外链地址 |
+| size | integer | 字节数（上传时校验：文件 ≤20MB、视频 ≤10MB） |
+| md5 | varchar(32) | 重复上传去重（010） |
 | created_at | timestamptz | |
-索引：`(job_id, review_status)`、`(source_hash)`。合规约束：question/answer 入库前已脱敏；rejected 条目正文不落库；明细元数据保留 180 天后清理。
+
+**import_job（导入任务表，004 + 007 + 014 + 016）**
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | uuid PK | 任务编号（对外 jobId） |
+| name | varchar(255) | 任务名（可空） |
+| source_filename | varchar(500) | 上传原文件名 |
+| source_hash | varchar(64) | 源文件 SHA-256 |
+| source_shape | varchar(40) | 内容嗅探识别的结构（007） |
+| status | varchar(20) | uploaded / parsing / parsed / failed / approved / partial / rejected / rolled_back |
+| item_count | integer | 条目数 |
+| parse_error | text null | 解析失败原因（不含正文） |
+| dataset_id | varchar(255) | FastGPT 数据集 ID（016） |
+| dataset_name | varchar(255) | 数据集名 `历史语料-<id>`（007） |
+| total_msgs / parsed_msgs / cleaned_count / paired_count / unpaired_count | integer | 解析与配对计数（007/014） |
+| masked_count / blocked_count / dedup_count / approved_count / imported_count / failed_count | integer | 脱敏/黑名单/去重/审核/入库计数（014） |
+| created_at / updated_at / deleted_at | timestamptz | |
+
+**import_item（导入条目表，004 + 007 + 014）**
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | uuid PK | |
+| job_id | uuid → import_job（ON DELETE CASCADE） | |
+| question / answer_raw / answer_redacted | text（014 起可空） | 原始问答与脱敏后文本；rejected 条目正文清空 |
+| sensitive_flags | jsonb | 命中类型数组（phone/idcard/...） |
+| review_status | varchar(20) | pending / approved / modified / rejected / needs-fix |
+| reviewer_note / reviewer_id / reviewed_at | text / uuid / timestamptz | 审核信息 |
+| auto_blocked | boolean default false | 黑名单强制复核（007） |
+| similar_qa_id | varchar(255) | 近似已有条目（007） |
+| suggest_action | varchar(20) | 建议动作（007） |
+| imported_qa_id | varchar(255) | 入库后的 QA 标识（007） |
+| source_hash / session_hash / occurred_at | varchar(64) / varchar(64) / timestamptz | 幂等键、会话与会话时间（014） |
+| created_at / updated_at / deleted_at | timestamptz | |
+
+**approved_qa（已审核 QA，005）**
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | uuid PK | |
+| question | text UNIQUE not null | 归一化问题（唯一） |
+| answer | text not null | 答案 |
+| source_job_id / source_item_id | uuid（ON DELETE SET NULL） | 来源追溯 |
+| created_at | timestamptz | |
 
 ### 7.2 Redis 键设计
 | Key | 类型 | TTL | 说明 |
 |---|---|---|---|
-| `dedup:{msgid}` | string | 48h | 消息去重幂等 |
-| `ctx:{chatid}:{userid}` | string(JSON) | 600s 滑动 | 近 5 轮上下文 |
-| `ratelimit:{chatid}` / `ratelimit:{chatid}:{userid}` | string(计数) | 60s | 限流窗口 |
-| `wecom:access_token` | string | 7000s | 企微凭证缓存 |
+| `dedup:{msgid}` | string "1"（SET NX） | 172800s | 消息去重幂等 |
+| `ctx:{chatId}:{userId}` | string(JSON) | 600s 滑动 | 近 5 轮上下文 |
+| `rate:group:{chatId}:{minute}` / `rate:user:{chatId}:{userId}:{minute}` | counter | 60s | 按分钟固定窗口限流（Lua INCR+EXPIRE） |
+| `rate:hint:{chatId}` | string "1" | 300s | 群限流提示去重（同群每 5 分钟最多一次） |
+| `wecom:at` / `wecom:at:lock` | string | 7000s / 短锁 | access_token 缓存（剩余 <300s 提前刷新）与刷新锁 |
 
 ### 7.3 FastGPT 侧数据说明
 知识库文档、切分段落、向量（bge embedding，pgvector）、会话记录均由 FastGPT 在其 MongoDB + PostgreSQL 中自管理；适配层不直接读写，仅经 API 交互。人工补录 = 运营人员在 FastGPT 后台将 miss_record 导出问题整理进知识库，无系统对接。
@@ -900,3 +897,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.20 | 2026-10-30 | §10.5 备份路径修正为 `backup/tenants/{tenantId}/`；补 `restore-tenant.sh` 按需恢复与确认机制 |
 | V1.21 | 2026-10-30 | M1 access_token 提前 300s 刷新落地；§10.2 目录结构、§10.3 备份（三库/审计清理/租户备份）、§10.4 崩溃告警表述按实际重写 |
 | V1.22 | 2026-10-30 | M9 反回放状态文件名统一为 `license.lic.antireplay.json`（与实现一致） |
+| V1.23 | 2026-10-30 | §7.1 五张业务表按迁移重写（trace_id/engine、UUID 主键、type/name、dataset_id、review_status 取值）；§7.2 Redis 键改为 rate:*/rate:hint/wecom:at |
