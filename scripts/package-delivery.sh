@@ -32,6 +32,7 @@ copy_file() {
 # --- 白名单 ---
 copy_file deploy/docker-compose.yml
 copy_file deploy/nginx/nginx.conf
+copy_file deploy/nginx/fastgpt-admin-allow.conf
 copy_file deploy/init-perms.sh
 copy_file deploy/install.sh
 copy_file deploy/collect-logs.sh

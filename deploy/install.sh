@@ -103,6 +103,7 @@ if [ "$MODE" = "dry" ]; then
     echo "  # 跳过权限校正（--skip-perms）"
   fi
   echo "  docker load -i images/*.tar（仅当本地无 adapter 镜像）"
+  echo "  生成 deploy/nginx/fastgpt-admin-allow.conf（按 FASTGPT_ADMIN_ALLOW_CIDRS，默认 deny all）"
   echo "  docker compose -f $COMPOSE up -d"
   echo "  curl -k ${HEALTH_URL}（最多 ${HEALTH_TIMEOUT}s）"
   echo "  docker compose -f $COMPOSE ps"
@@ -112,6 +113,14 @@ fi
 cd "$ROOT"
 info "准备目录"
 mkdir -p data data/assets data/import logs backup license config
+
+# 生成 FastGPT 管理后台白名单（默认 deny all）；逻辑见 deploy/render-admin-allow.sh
+info "生成 FastGPT 后台白名单"
+FASTGPT_ADMIN_ALLOW_CIDRS_VALUE="$(env_value FASTGPT_ADMIN_ALLOW_CIDRS)"
+"$ROOT/deploy/render-admin-allow.sh" "$FASTGPT_ADMIN_ALLOW_CIDRS_VALUE" || {
+  echo "[install] ERROR: 生成 FastGPT 后台白名单失败（请检查 FASTGPT_ADMIN_ALLOW_CIDRS）" >&2
+  exit 2
+}
 
 if [ "$SKIP_PERMS" = 0 ]; then
   if [ "$(id -u)" = "0" ]; then

@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.6（V1.5 + 资源限额与验签告警） |
+| 版本 | V1.7（V1.6 + 错误码/日志/配置契约对齐、FastGPT 后台入口） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
@@ -56,37 +56,56 @@ apps/adapter/src/
 
 ### 1.4 统一返回与错误码
 
+**内部 Result**（`packages/shared/src/result.ts`）：
+
 ```ts
-// packages/shared
-export type Result<T> = { ok: true; data: T } | { ok: false; code: ErrCode; msg: string };
-export enum ErrCode {
-  WECOM_SIGN_INVALID = 1001,      // 验签失败（回 401，不入管道）
-  DEDUP_DUP = 1002,               // 重复消息（静默 success）
-  RATE_LIMITED = 1003,            // 限流（静默或提示）
-  NOT_TRIGGERED = 1004,           // 非触发（静默）
-  LICENSE_RESTRICTED = 1005,      // 受限模式（回授权话术）
-  FASTGPT_TIMEOUT = 2001, FASTGPT_5XX = 2002, LLM_TIMEOUT = 2003,
-  LLM_ALL_FAILED = 2004,          // 双通道失败 → 繁忙话术
-  CONF_LOW = 3001,                // 低置信拒答（正常业务，非错误）
-  ASSET_MISSING = 4001, ASSET_SEND_FAIL = 4002,
-  VL_TIMEOUT = 4003, VL_NO_TEXT = 4004,
-  IMPORT_PARSE_FAIL = 5001, IMPORT_FILE_TOO_LARGE = 5002, IMPORT_STATE = 5003,
-  CONFIG_MISSING = 9001, DB_FAIL = 9002, REDIS_FAIL = 9003,
-}
+export class Ok<T> { readonly ok = true as const; constructor(readonly value: T) {} }
+export class Err<E = unknown> { readonly ok = false as const; constructor(readonly error: E) {} }
+export type Result<T, E = unknown> = Ok<T> | Err<E>;
 ```
 
-错误处理三原则：① 可预期业务错误（1002/1003/1004/3001）记 INFO 级结构化日志，不打堆栈；② 外部 IO 错误按概设降级矩阵处理并 WARN；③ 未捕获异常由全局 ExceptionFilter 兜底回 `success`（防企微重推风暴）+ ERROR 日志 + 告警。
+**流水线错误码**（`packages/shared/src/errors.ts`，数值枚举，五位分段）：
+
+| 段 | 枚举 |
+|---|---|
+| 10000 企微 | `WECOM_SIGN_INVALID=10001`、`WECOM_DECRYPT_FAIL=10002`、`WECOM_SEND_FAIL=10003`、`WECOM_UPLOAD_FAIL=10004` |
+| 20000 路由 | `NOT_TRIGGERED=20001`、`DEDUP_DUP=20002`、`RATE_LIMITED=20003`、`ROUTING_ERROR=20004` |
+| 30000 编排 | `LLM_TIMEOUT=30001`、`ORCHESTRATION_ERROR=30002` |
+| 40000 过滤 | `SENSITIVE_HIT=40001` |
+| 50000 素材 | `ASSET_NOT_FOUND=50001`、`ASSET_SEND_FAIL=50002` |
+| 90000 授权 | `LICENSE_RESTRICTED=90001`、`LICENSE_EXPIRED=90002`、`LICENSE_INVALID=90003` |
+
+**管理面 / 平台业务错误码**（响应体 `errCode` 为字符串常量，按模块前缀）：
+
+| 前缀 | 示例 |
+|---|---|
+| 鉴权 | `AUTH_UNAUTHORIZED`、`AUTH_FORBIDDEN`、`INTERNAL_TOKEN_NOT_CONFIGURED`、`PLATFORM_REASON_REQUIRED` |
+| 素材 | `NO_FILE`、`ASSET_TOO_LARGE`、`ASSET_NOT_FOUND`、`MISSING_REQUIRED_FIELDS`、`UNSUPPORTED_MEDIA_TYPE` |
+| 导入 | `IMPORT_NO_FILE`、`IMPORT_FILE_TOO_LARGE`、`IMPORT_FETCH_FAILED`、`IMPORT_BAD_STATE`、`IMPORT_BUSY`、`IMPORT_DUPLICATE_ITEM`、`IMPORT_MANIFEST_EXPIRED` 等 20+ 项 |
+| 平台/租户 | `TENANT_NOT_FOUND`、`TENANT_QUOTA_EXCEEDED`、`TENANT_QUOTA_INVALID`、`TENANT_SECRETS_MISSING`、`TENANT_PROVISION_TIMEOUT`、`TENANT_CREDENTIALS_ALREADY_HANDED_OFF`、`ILLEGAL_TENANT_TRANSITION`、`CAPACITY_USAGE_UNAVAILABLE` 等 |
+| 兜底 | `INTERNAL_ERROR`（未捕获异常，500） |
+
+完整清单以 `apps/adapter/src/**` 中 `errCode:` 字面量与 `errors.ts` 为准（当前字符串码 55 项）。
+
+错误处理三原则：① 可预期业务分支记 INFO 级结构化日志，不打堆栈；② 外部 IO 错误按概设降级矩阵处理并 WARN；③ 未捕获异常由全局 ExceptionFilter 兜底回 `INTERNAL_ERROR`（防企微重推风暴）+ ERROR 日志。
 
 ### 1.5 日志规范（结构化 JSON，pino）
 
-- 字段：`ts, level, module, traceId, chatId, userId(哈希), msgType, errCode, costMs`；**正文仅 DEBUG 级**（生产关闭）。
-- traceId = `msgid`（贯穿 D1–D9 全链路），日志中间件自动注入。
-- 脱敏中间件：`maskPII(text)` 对手机号/身份证/银行卡/姓名模式替换为 `[PII:手机号]` 等，应用于任何即将落盘的正文字段。
+- **基础字段**：`app / version / env / pid / module / traceId`（请求内自动注入）；`traceId` 贯穿 D1–D9。
+- **业务字段**：`chatHash / userHash`（对 chatId/userId 做哈希，不落原始值）、`errCode`、`costMs`、`action`、`detail`。
+- **脱敏（所有级别生效）**：pino `redact` 覆盖 `authorization/password/secret/token/licenseKey/question/answer/content/text/reply`；字符串另经 `maskPIIPatterns`（手机号/身份证/银行卡/邮箱等）与 `maskPII` 中段掩码。
+- **级别**：`LOG_LEVEL` 控制；`/healthz`、`/docs` 访问日志降为 debug；慢操作由 `SLOW_LOG_MS` 触发 `slow` 标记。
 
 ### 1.6 配置规范（M7 落地）
 
 - `.env` → `ConfigService`，启动时用 **zod schema** 全量校验：必填缺失/格式错误 → 打印缺失清单（值打码）→ `process.exit(1)`（fail-fast）。
-- `GET /admin/config-check` 输出：`[{key, present, masked: "ww12***ef78"}]`。
+- `GET /admin/config-check` 返回：
+
+```json
+{ "mode": { "useMockLlm": false, "useMockLicense": false },
+  "config": { "WECHAT_CORP_ID": { "present": true }, "FASTGPT_API_KEY": { "present": true, "masked": "fa****ey" } } }
+```
+
 - 运行期可变项（阈值/超时/话术）支持 `POST /admin/config/reload` 热加载（词库/关键词/导入规则同法）。
 
 ---
@@ -543,4 +562,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；§2.4 补私有化 FastGPT 后台入口。*

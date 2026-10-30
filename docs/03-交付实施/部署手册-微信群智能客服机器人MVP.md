@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 部署手册（私有化部署形态 A 为主，附 SaaS 形态租户开通） |
-| 版本 | V1.9（V1.8 + 内存限额与验签告警说明） |
+| 版本 | V1.10（V1.9 + FastGPT 管理后台入口） |
 | 日期 | 2026-10-12 |
 | 适用对象 | 客户方 IT / 运维人员、交付工程师 |
 | 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.13 / 《详细设计》V1.6） |
@@ -335,6 +335,35 @@ curl -s -u admin:<口令> https://<域名>/admin/usage
 # 5) 素材列表（增项 A）
 curl -s -u admin:<口令> https://<域名>/admin/assets
 ```
+
+### 7.7 FastGPT 管理后台（知识运营）
+
+知识运营需要登录 FastGPT 后台维护知识库。该入口**独立于 443 回调端口**，默认拒绝所有来源：
+
+1. 在 `.env` 配置允许访问的运维网段（逗号分隔 CIDR/IP）：
+
+```dotenv
+FASTGPT_ADMIN_PORT=8443
+FASTGPT_ADMIN_ALLOW_CIDRS=10.0.0.0/8,203.0.113.20/32
+```
+
+2. 重新执行 `sudo ./deploy/install.sh`（会重写 `deploy/nginx/fastgpt-admin-allow.conf` 并重启 nginx）：
+
+```bash
+sudo ./deploy/install.sh
+```
+
+3. 浏览器访问 `https://<域名>:8443`，用 FastGPT 根口令登录（`FASTGPT_ROOT_PASSWORD`）。
+4. 防火墙/安全组仅放行上述运维网段到 8443，**不要对公网开放**。
+
+排查：
+
+| 现象 | 原因 | 处置 |
+|---|---|---|
+| 403 Forbidden | 来源 IP 不在白名单 | 核对 `FASTGPT_ADMIN_ALLOW_CIDRS` 后重跑 install.sh |
+| 8443 连接被拒 | 端口未放行/nginx 未重启 | `docker compose -f deploy/docker-compose.yml ps nginx`；检查安全组 |
+| 页面 502 | FastGPT 未就绪 | `docker compose -f deploy/docker-compose.yml logs fastgpt` |
+| 留空 `FASTGPT_ADMIN_ALLOW_CIDRS` | 默认 deny all | 后台不可访问，需先配置网段 |
 
 ## 8. 部署验证与冒烟测试
 
@@ -681,7 +710,7 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。V1.7（2026-10-29）未命中导出示例补 JSON 格式与掩码说明。V1.8（2026-10-29）补 LLM 双通道失败告警配置与容器自愈说明V1.9（2026-10-29）补容器内存限额表与企微验签失败告警说明。*
+*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。V1.7（2026-10-29）未命中导出示例补 JSON 格式与掩码说明。V1.8（2026-10-29）补 LLM 双通道失败告警配置与容器自愈说明。V1.9（2026-10-29）补容器内存限额表与企微验签失败告警说明。V1.10（2026-10-30）新增 §7.7 FastGPT 管理后台入口（8443 + 白名单）。*
 
 ### 附录 A.1 租户 FastGPT 初始化与密钥更新（运营步骤）
 

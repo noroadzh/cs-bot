@@ -55,6 +55,7 @@ describe('deploy/install.sh', () => {
     });
     expect(out).toContain('docker compose -f deploy/docker-compose.yml up -d');
     expect(out).toContain('/healthz');
+    expect(out).toContain('fastgpt-admin-allow.conf');
     expect(existsSync(join(root, 'data'))).toBe(false);
     expect(existsSync(join(root, 'logs'))).toBe(false);
   });

@@ -7,8 +7,11 @@ services:
     restart: unless-stopped
     ports:
       - "443:443"
+      # FastGPT 管理后台（知识运营）：默认 deny all，仅白名单网段可访问
+      - "${FASTGPT_ADMIN_PORT:-8443}:8443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/fastgpt-admin-allow.conf:/etc/nginx/fastgpt-admin-allow.conf:ro
       - ./nginx/certs:/etc/nginx/certs:ro
       - ./nginx/logs:/var/log/nginx
     depends_on:

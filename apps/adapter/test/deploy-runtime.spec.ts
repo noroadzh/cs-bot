@@ -30,6 +30,20 @@ describe('adapter runtime mounts', () => {
     expect(compose).not.toContain('${CSBOT_UID:-0}');
   });
 
+  it('FastGPT 管理后台经 nginx 8443 反代且默认拒绝', () => {
+    const nginxConf = readFileSync(join(ROOT, 'deploy', 'nginx', 'nginx.conf'), 'utf8');
+    expect(nginxConf).toContain('listen 8443 ssl');
+    expect(nginxConf).toContain('include /etc/nginx/fastgpt-admin-allow.conf');
+    expect(nginxConf).toContain('proxy_pass http://fastgpt:3000');
+
+    const allow = readFileSync(join(ROOT, 'deploy', 'nginx', 'fastgpt-admin-allow.conf'), 'utf8');
+    expect(allow).toContain('deny all;');
+    expect(allow).not.toContain('allow ');
+
+    expect(compose).toContain('${FASTGPT_ADMIN_PORT:-8443}:8443');
+    expect(compose).toContain('./nginx/fastgpt-admin-allow.conf:/etc/nginx/fastgpt-admin-allow.conf:ro');
+  });
+
   it('提供一键部署脚本（预检/启动/健康等待）', () => {
     const install = readFileSync(join(ROOT, 'deploy', 'install.sh'), 'utf8');
     expect(install).toContain('docker compose -f "$COMPOSE"');

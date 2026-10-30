@@ -36,6 +36,7 @@ describe('package-delivery', () => {
 
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/docker-compose.yml');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/nginx.conf');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/fastgpt-admin-allow.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/install.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/collect-logs.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/.env.template');
@@ -73,6 +74,7 @@ describe('package-delivery', () => {
       for (const rel of [
         'deploy/docker-compose.yml',
         'deploy/nginx/nginx.conf',
+        'deploy/nginx/fastgpt-admin-allow.conf',
         'deploy/init-perms.sh',
         'deploy/install.sh',
         'deploy/collect-logs.sh',
