@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.7（V1.6 + 错误码/日志/配置契约对齐、FastGPT 后台入口） |
+| 版本 | V1.8（V1.7 + license-native 签名与启动校验位置对齐） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.9》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.2》 |
+| 上游文档 | 《概要设计 V1.15》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.11》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -163,15 +163,30 @@ class FastGPTClient {
 
 ### 2.4 license-native（Rust，M9 核心，R-1 例外说明）
 
+接口以 `packages/license-native/index.d.ts` 为准：
+
+```ts
+// 验签 + 过期 + 空指纹检查（不绑定机器指纹，绑定由调用方做）
+verify(payloadJson: string, sigB64: string): VerifyResult
+// 采集并哈希宿主指纹（Linux；非 Linux 抛 GenericFailure）
+fingerprint(): string
+// 反回放：以 statePath 推进时间戳；now <= 上次记录 → ok:false 且不写文件
+antireplay(statePath: string | null, now: number): AntireplayResult
+// 反调试自检：debugPort(9229) / TracerPid / LD_PRELOAD
+selfcheck(): SelfcheckResult
 ```
-packages/license-native/src/lib.rs
-  pub fn verify(payload_json: String, sig_b64: String) -> Bool   // Ed25519 验签（公钥编译期内嵌）
-  pub fn fingerprint() -> String                                 // 采集并哈希宿主指纹
-  pub fn antireplay(last_ts: i64, now: i64) -> Bool              // 回拨判定
-  pub fn selfcheck(js_ctx_hash: String) -> Bool                  // JS 入参防篡改自校验
-```
-- 产物 `index.linux-x64-gnu.node`，strip + 无调试符号；`verify` 内嵌固定公钥；检测 `--inspect`/ptrace 附加 → 返回 false 并落 `license.tamper` 标记（告警）。
-- license.lic 文件格式：`base64(json payload) + "." + base64(Ed25519 signature)`（类 JWT 紧凑形式）。
+
+返回结构：
+
+| 类型 | 字段 |
+|---|---|
+| `VerifyResult` | `valid: boolean`、`reason`（valid / bad-format / bad-payload / bad-signature / expired / empty-fingerprint / not-embedded / native-error）、`fingerprint`、`expiresAtMs`、`daysLeft`、`maxChats` |
+| `AntireplayResult` | `ok`、`advanced`、`lastTs` |
+| `SelfcheckResult` | `clean`、`evidence: string[]` |
+
+- 产物 `index.linux-x64-gnu.node`，strip + 无调试符号；公钥编译期内嵌。
+- license.lic 格式：`base64(payload JSON) + "." + base64(Ed25519 signature)`（类 JWT 紧凑形式）。
+- 调用方 `NativeLicenseVerifier` 负责组合：`selfcheck` → `verify` → `fingerprint()` 与 `payload.fingerprint` 比对 → `antireplay`。
 
 ---
 
@@ -277,16 +292,18 @@ send(final)；随后按 assets 逐个 AssetSender.send()（增项 A，失败降�
 
 ### 3.8 M9 授权许可（license/）
 
-**启动强校验（main.ts，先于 HTTP listen）**
+**启动强校验（`AppModule.onModuleInit` → `LicenseService.startupCheck()`，Nest 初始化期，早于 HTTP listen）**
 
 ```
-lic = read license/license.lic (0600)
-payload, sig = split('.')
-ok1 = native.verify(payload, sig)                    // 验签（公钥在 Rust 内）
-ok2 = native.fingerprint() == payload.fingerprint    // 机器指纹
-ok3 = now < payload.expires_at                       // 有效期
-ok4 = native.antireplay(state.lastTs, now)           // 回拨（state 存 license.state JSON）
-all ok → 缓存 {valid:true, until, maxChats} TTL 1h；否则 exit(1)（日志给原因码）
+ConfigService.initialize()
+→ Redis 探活 → PG 探活
+→ NestFactory.create(AppModule)            // 期间触发 AppModule.onModuleInit
+     → LicenseService.startupCheck()
+         1) native.selfcheck() → clean=false 时记录 evidence（production exit(1)）
+         2) doVerify(): 读 license/license.lic → verify() → 指纹比对 → antireplay(statePath, now)
+         3) 缓存 {valid, reason, expiresAtMs, daysLeft, maxChats}，TTL 1h
+         4) production 且 !valid → exit(1)；mock 模式仅 warn
+→ Swagger / app.listen
 ```
 
 **运行期**：Guard 在管道 D3 位读缓存（<1ms）；每日 03:00 复核 + 写 `license.state {lastTs}`（0600）。失效→受限模式：`/healthz` unhealthy、回调只回授权话术（1005），FastGPT 后台不受限。
@@ -562,4 +579,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；§2.4 补私有化 FastGPT 后台入口。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。*

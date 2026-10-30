@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.14（V1.13 + FastGPT 管理后台入口） |
+| 版本 | V1.15（V1.14 + 平台侧表按迁移重写） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
-| 关联文档 | 《PRD V1.5》《详细设计 V1.1（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.1》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
+| 关联文档 | 《PRD V1.5》《详细设计 V1.8（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.11》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
 
 ## 2. 设计目标与约束
 
@@ -586,52 +586,57 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 ### 7.3 FastGPT 侧数据说明
 知识库文档、切分段落、向量（bge embedding，pgvector）、会话记录均由 FastGPT 在其 MongoDB + PostgreSQL 中自管理；适配层不直接读写，仅经 API 交互。人工补录 = 运营人员在 FastGPT 后台将 miss_record 导出问题整理进知识库，无系统对接。
 
-### 7.4 平台侧表（SaaS 形态，V1.6 增项；存于控制面独立数据库，仅元数据）
+### 7.4 平台侧表（SaaS 形态，存于控制面独立数据库，仅元数据）
+
+> 以追加式迁移为准（`apps/adapter/src/platform/007,008,011,012,015,016,017-*.sql`），下表为字段摘要。
+
 **tenant（租户注册表）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| id | varchar(16) PK | 租户编号（如 T-0007），用于实例/DB/域名命名 |
-| name / contact | varchar(64) / varchar(64) | 租户名称、联系人（不含知识库内容） |
-| domain | varchar(128) unique | 租户访问域名（回调与后台） |
-| instance_host / port_base | varchar(64) / integer | 实例部署位置与端口段起点 |
-| db_name | varchar(32) | 独立 database 名 `tenant_{id}`（含 Redis/Mongo 实例标识） |
-| plan | varchar(16) | 资源档位 standard / enhanced |
-| sub_status | varchar(12) | trialing / active / grace / suspended / terminated |
-| sub_start_at / sub_expire_at | timestamptz | 订阅起止（驱动授权证书有效期） |
-| license_fp | varchar(64) | 该实例机器指纹哈希（授权绑定） |
-| image_version | varchar(32) | 当前部署版本（升级编排用） |
-| created_at / destroyed_at | timestamptz | |
+| id | uuid PK | 租户 ID（gen_random_uuid） |
+| name | varchar(255) | 租户名称 |
+| status | varchar(30) | created / provisioning / active / grace / suspended / paused / terminated / provisioning_failed |
+| host / port | varchar(255) / integer | 实例地址与端口（`tenant_port_seq` 从 30000 步长 10） |
+| database_url | text | 租户独立 DB 连接串（provisioned 后填充） |
+| contact | varchar(255) | 联系人（升级/到期通知，017 增补） |
+| credentials_handed_at | timestamptz | 凭证一次性交接时间（016 增补） |
+| expired_at | timestamptz | 订阅/授权到期 |
+| last_provision_log | text | 最近一次编排输出（排障） |
+| created_at / updated_at / deleted_at | timestamptz | |
 
 **tenant_quota（租户配额）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| tenant_id | varchar(16) PK | |
-| max_chats / max_msgs_per_day | integer | 群数上限、日消息量上限 |
-| max_docs / max_qa / max_asset_mb | integer | 文档数 / QA 对数 / 素材容量上限（0=不限） |
-| llm_token_monthly | bigint null | 月度 token 上限（可选，默认不限） |
-| updated_at | timestamptz | 变更即下发实例 |
+| id | uuid PK | |
+| tenant_id | uuid UNIQUE → tenant | |
+| max_chats / max_storage_mb / max_api_calls / max_users | integer | 群数 / 存储 MB / API 调用 / 用户数上限（0=不限） |
+| max_llm_tokens_per_month | integer | 月度 token 上限（0=不限） |
+| max_docs / max_qa / max_asset_mb | integer | 文档数 / QA 对数 / 素材容量（016 增补，0=不限） |
+| created_at / updated_at | timestamptz | 变更即下发实例 |
 
 **tenant_usage_daily（用量日报，仅计数）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| tenant_id + stat_date | 复合 PK | |
-| msgs_in / msgs_triggered / qa_hit / qa_miss | integer | 消息与命中计数（**无正文**） |
-| llm_tokens | bigint | LLM 消耗估算 |
-| active_chats | integer | 当日在服群数 |
-| asset_mb / doc_count / qa_count | numeric | 容量水位快照（由适配层日报上报） |
-索引：`(stat_date)`。
+| id | uuid PK | |
+| tenant_id + day | uuid + date（UNIQUE） | 租户与日期 |
+| chat_count / api_call_count / storage_bytes / user_count | integer/bigint | 基础计数 |
+| msgs_triggered / qa_hit / qa_miss | integer | 触发与命中（011 增补） |
+| llm_tokens / active_chats | bigint / integer | token 与在服群数（011） |
+| asset_mb / doc_count / qa_count | numeric/integer | 容量水位（011/016） |
 
-**platform_audit_log（运维审计，只追加）**
+**platform_audit_log（运维审计，只追加，链式）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| id | bigserial PK | |
-| actor | varchar(32) | 运维账号 |
-| tenant_id | varchar(16) null | 目标租户 |
-| action | varchar(32) | provision / renew / suspend / upgrade / export / destroy / shell_access |
-| reason | varchar(200) | 操作原因（必填） |
-| created_at | timestamptz | |
-| hash_prev | varchar(64) | 前一条哈希（链式防篡改） |
-保留 180 天，异地留存；不记录任何租户正文数据。
+| id | uuid PK | |
+| seq | bigserial | 插入顺序（审计链按此串接） |
+| tenant_id | uuid null | 目标租户 |
+| action | varchar(100) | 见 `platform-audit` 规格动作词表 |
+| actor | varchar(255) | 操作者标识 |
+| payload | jsonb | 操作详情（含 `reason`，由 `PlatformReasonGuard` 注入） |
+| prev_hash / hash | varchar(64) | 链式哈希（sha256(prev_hash+action+actor+payload+created_at)） |
+| created_at | timestamptz | 保留 180 天，清理前导出异地 |
+
+**其他平台表**（详见迁移）：`tenant_snapshot`、`tenant_upgrade_batch`（008）、`tenant_offboarding`、`tenant_destroy_confirmation`（015）。
 
 ## 8. 接口设计
 
@@ -871,3 +876,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.12 | 2026-10-29 | R-2 落地为统一 `FastGPTClient`（问答/数据集/检索/collection 计数共用凭据与超时）；§11.2 双通道失败补告警与节流；自愈表述由 systemd 改为容器 restart + 宿主 docker 自启；R-3 收敛为「含动态内容的出站文本必须过 M6」 |
 | V1.13 | 2026-10-29 | §10.1 内存限额以 `mem_limit` 落地（含 Redis maxmemory）；镜像版本对齐实际；§12 风险 4 补验签失败告警实现 |
 | V1.14 | 2026-10-30 | §10.1 端口矩阵补 8443（FastGPT 管理后台，默认 deny、仅白名单网段）；修正 fastgpt 端口 3001→3000 |
+| V1.15 | 2026-10-30 | §7.4 平台侧表按实际迁移重写（UUID 主键、status/host/port、payload 审计、配额维度），补充升级/快照/注销表清单 |
