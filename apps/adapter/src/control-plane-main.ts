@@ -9,6 +9,8 @@ import { NestFactory } from '@nestjs/core';
 import { ConfigService } from './config/config.service.js';
 import { ControlPlaneAppModule } from './control-plane/control-plane-app.module.js';
 import { loadControlPlaneConfig } from './control-plane/control-plane.config.js';
+import { mountAdminConsole } from './console/mount-console.js';
+import { join } from 'node:path';
 
 async function bootstrap(): Promise<void> {
   const cfg = loadControlPlaneConfig();
@@ -16,6 +18,9 @@ async function bootstrap(): Promise<void> {
 
   const app = await NestFactory.create(ControlPlaneAppModule);
   app.enableShutdownHooks();
+  if (mountAdminConsole(app, join(process.cwd(), '../admin-web/dist-platform'))) {
+    console.log('[control-plane] admin console at /console');
+  }
   await app.listen(cfg.PORT, cfg.HOST);
   console.log(`[control-plane] listening on ${cfg.HOST}:${cfg.PORT}`);
 

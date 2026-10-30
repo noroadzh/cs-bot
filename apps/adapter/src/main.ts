@@ -14,6 +14,8 @@ import { AppLogger } from './common/logger.js';
 import { httpLoggingMiddleware } from './common/http-logging.middleware.js';
 import { Redis } from 'ioredis';
 import { SWAGGER_UI_PATH, OPENAPI_JSON_PATH } from './common/docs-paths.js';
+import { mountAdminConsole } from './console/mount-console.js';
+import { join } from 'node:path';
 
 const logger = new AppLogger('Bootstrap');
 
@@ -86,6 +88,10 @@ async function bootstrap() {
       res.json(document);
     });
     logger.log({ phase: 'ready', detail: `swagger-ui at /${SWAGGER_UI_PATH}, openapi json at ${OPENAPI_JSON_PATH}` });
+  }
+
+  if (mountAdminConsole(app, join(process.cwd(), '../admin-web/dist-tenant'))) {
+    logger.log({ phase: 'ready', detail: 'admin-console' });
   }
 
   const PORT = config.PORT ?? 3000;

@@ -1,0 +1,30 @@
+{
+  "name": "@cs-bot/admin-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:tenant": "VITE_SURFACE=tenant VITE_MOCK=1 vite --port 5173",
+    "dev:platform": "VITE_SURFACE=platform VITE_MOCK=1 vite --port 5174",
+    "build:tenant": "VITE_SURFACE=tenant vite build",
+    "build:platform": "VITE_SURFACE=platform vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "antd": "^5.22.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/dom": "^10.4.0",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.6",
+    "vitest": "^3.0.0"
+  }
+}

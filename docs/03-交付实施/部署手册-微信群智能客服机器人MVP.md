@@ -612,7 +612,7 @@ tar czf logs.tgz logs deploy/nginx/logs
 1. 联系交付方平台运营，提供：企业名称、联系人、订阅档位（标准/增强）、企微 CorpID。
 2. 平台 30 分钟内完成租户实例开通（独立数据库/独立域名/独立证书），返回：租户域名、管理员初始口令（一次性展示）。
 3. 客户通过约定安全渠道（加密邮件/工单）提供企微 Secret/Token/AESKey 与 LLM Key；平台运营经 `PUT /platform/tenants/:id/secrets` 写入租户密钥库（AES-256-GCM），必要时 `POST .../restart` 生效。
-   > 说明：本期管理面为纯 API，**没有租户自助管理页面**；可视化运营后台属二期增项（报价单「独立运营后台」）。
+   > 说明：租户运营台挂在数据面同源 `/console`，SaaS 控制台挂在控制面同源 `/console`。静态目录未构建时这两个入口不挂载。接口 URL、Basic Auth 与 IP 白名单不变。构建命令：`pnpm -C apps/admin-web build:tenant` 与 `build:platform`。目录可用 `ADMIN_CONSOLE_DIR` 覆盖。
 4. 企微后台把回调 URL 配置为 `https://<租户域名>/wecom/callback`，保存校验通过即完成。
 5. 日常：知识运营在租户专属 FastGPT 后台维护知识库；升级由平台统一执行（提前 3 个工作日通知）。
 6. 订阅到期：前 30/15/7 天提醒 → 7 天宽限期（问答可用；加群由适配层准入拦截，知识库变更需运营在 FastGPT 后台人工冻结，适配层无法强制）→ 宽限期满仅提示续期；续费即时恢复。

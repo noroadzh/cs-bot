@@ -9,6 +9,8 @@ package-lock.json
 # Node
 node_modules/
 dist/
+dist-tenant/
+dist-platform/
 *.log
 
 # IDE
