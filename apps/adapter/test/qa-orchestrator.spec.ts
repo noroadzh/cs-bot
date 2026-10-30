@@ -109,6 +109,26 @@ describe('QaOrchestrator', () => {
     expect(sender.sendText).toHaveBeenCalledWith('chat-1', '抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。', undefined, 'trace-3:0');
   });
 
+  it('1.6.c2 empty quotes (score 0) → records miss and replies with refusal', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine({
+      ask: jest.fn(async () => ({ ok: true, value: { answer: 'uncited answer', quotes: [], score: 0 } })),
+    });
+    const miss = stubMiss();
+    const sender = makeSender();
+    const orch = new QaOrchestrator(engine, stubContext(), stubFilter(), miss, stubAsset(), stubAssetResolver(), stubUsage(), sender as any);
+
+    await orch.handle(makeMsg(), 'trace-uncited', 'keyword');
+
+    expect(miss.record).toHaveBeenCalledTimes(1);
+    expect(sender.sendText).toHaveBeenCalledWith(
+      'chat-1',
+      '抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。',
+      undefined,
+      'trace-uncited:0',
+    );
+  });
+
   it('1.6.d sends LLM error as slow reply without throwing', async () => {
     const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
     const engine = stubEngine({ ask: jest.fn(async () => ({ ok: false, error: { code: -1, message: 'timeout' } })) });

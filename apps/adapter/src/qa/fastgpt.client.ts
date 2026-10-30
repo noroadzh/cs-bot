@@ -168,7 +168,7 @@ export function parseChatResponse(raw: unknown): FastGptChatResult {
     .filter((q) => q.id !== '' || q.content !== '')
     .sort((a, b) => b.score - a.score);
   const answer = data?.choices?.[0]?.message?.content ?? data?.data?.[0]?.content ?? '';
-  // 有引用取最高分；否则透传原生 data[0].score；两者皆无时按 FastGPT 惯例记 0.8
-  const score = quotes.length > 0 ? quotes[0].score : (data?.data?.[0]?.score ?? 0.8);
+  // 规格：score = max(quotes[].score)，空引用为 0（无可信检索结果 → 走拒答与未命中记录）
+  const score = quotes.length > 0 ? quotes[0].score : (data?.data?.[0]?.score ?? 0);
   return { answer, quotes, score };
 }

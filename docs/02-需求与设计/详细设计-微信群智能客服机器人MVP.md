@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.16（V1.15 + R-8 导入队列与内存暫挂表述） |
+| 版本 | V1.17（V1.16 + 全量核对：置信度归零与各节表述） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
@@ -170,7 +170,7 @@ class FastGPTClient {
 ```
 
 - `chat`：POST `/api/v1/chat/completions`，解析 `choices/data` 与 `responseData[].quoteList`；超时取 `LLM_TIMEOUT_MS`（默认 15s），重试 1 次由调用方（引擎）控制。
-- 置信度：`score = max(quoteList[].score)`；无引用时透传 `data[0].score`，皆无则 0.8。
+- 置信度：`score = max(quoteList[].score)`；无引用时透传 `data[0].score`，皆无则 **0**（走拒答与未命中记录，符合 `qa-orchestration` 规格）。
 - 数据集写/删由 `HttpFastGptDatasetClient` 委托；近似检索由 `HttpFastGptSearchClient` 委托；三者共享同一凭据与 base URL。
 - 测试可注入 `FastGPTClient` 或裸 axios 实例。
 
@@ -215,14 +215,14 @@ selfcheck(): SelfcheckResult
 3. 解密流程（严格官方 WXBizMsgCrypt）：
    s = AESDecrypt(Base64(EncodingAESKey), Encrypt)      // 16B 随机串|msg_len|msg|receiveid
    校验 receiveid == CorpID，msg_len 一致性
-   SHA1(sort(token, timestamp, nonce, Encrypt)) == msg_signature，否则 1001 → 401
+   SHA1(sort(token, timestamp, nonce, Encrypt)) == msg_signature，否则 `WECOM_SIGN_INVALID` → 401
 4. 解析 XML → InboundMsg{ ToUserName, FromUserName(userid), ChatId(群), MsgType,
    Content?, MsgId?, MediaId?, PicUrl?, CreateTime }
-5. 立即回 HTTP 200 空体（被动应答位留给答案，见 §3.1.2）
+5. 立即回 HTTP 200 空体（群聊无被动回包，答案经主动发送，见下）
 6. 投递管道（异步，不阻塞回调线程）：pipeline.process(msg)
 ```
 
-**被动回复与主动补发（3.5s 竞速）**：`pipeline.process` 内部 `Promise.race([answerPromise, sleep(3500)])`；超时者回空被动包（`success`），答案就绪后 `WecomClient.sendText` 主动补发（带 `client_msg_id = traceId` 幂等）。
+**主动发送**：群聊场景答案就绪后由 `WecomClient.sendText` 主动发送（`client_msg_id = traceId` 幂等）；单聊/应用消息场景才保留 3.5s 被动竞速（超时回 `success` 后补发）。
 
 **去重（D2 前置）**：`SETNX dedup:{msgid} EX 172800`，返回 0 → 直接终止（`DEDUP_DUP`）。
 
@@ -262,10 +262,10 @@ answer = await FastGPTClient.ask({ question, history: ctx.history })
 score = answer.quotes.length ? max(quote.score) : 0
 if (score < CONFIDENCE_THRESHOLD /*0.75*/) {
     miss.record({ question, chatId, userId, score, mediaType })
-    replyText = REJECT_TEMPLATE      // "抱歉，这个问题我还没学会…@人工客服"
+    replyText = REFUSAL_TEXT         // "抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。"
 } else {
     replyText = compose(answer.answer, quotes)   // 答案 ≤2000 字分段 + 「来源：xx.pdf」
-    assets = parseAssetRefs(replyText)            // /\[\[素材:(\d+)\]\]/g，≤2 个（FR-10）
+    assets = parseAssetRefs(replyText)            // /\[\[素材:([a-f0-9-]+)\]\]/g，≤2 个（FR-10）
     replyText = stripAssetRefs(replyText)
 }
 final = SensitiveFilter.sweep(replyText)          // 命中 → 整段替换 + 审计
@@ -274,7 +274,7 @@ send(final)；随后按 assets 逐个 AssetSender.send()（增项 A，失败降�
 ```
 
 - 长答案分段：>2048 字节按句号边界切 ≤2000 字节多段，间隔 300ms 发送（防频控）。
-- `LLM_TIMEOUT`/`LLM_ALL_FAILED`：繁忙话术 + 告警（企微群 webhook）。
+- `LLM_TIMEOUT`（双通道失败）：繁忙话术 + `LlmAlertService` 告警（企微群 webhook，冷却期去重）。
 
 ### 3.5 M5 未命中记录（miss/）
 
@@ -300,8 +300,8 @@ send(final)；随后按 assets 逐个 AssetSender.send()（增项 A，失败降�
 4. 识别文本 → 作为 question 走 M3/M4 正常链路；全程走主动补发通道（不占 3.5s 被动窗口）
 ```
 
-**素材管理**：`POST /admin/assets`（multipart：类型/title/文件）→ 校验大小（file≤20MB/video≤10MB）与 md5 去重 → 存 `data/assets/{id}.{ext}`（0600）+ asset 表入库。
-**素材外发**：`AssetSender.send(chatId, asset)`：link→sendText（title+URL）；file/video→uploadMedia→sendFile/sendVideo；失败→补发降级提示 + WARN（4001/4002）。
+**素材管理**：`POST /admin/assets`（multipart `file` 或 JSON `{url,name}`；类型由 MIME/来源推断）→ 校验大小（file≤20MB/video≤10MB）与 md5 去重 → 存 `data/assets/{id}.{ext}`（0600）+ asset 表入库。
+**素材外发**：`AssetSender.send(chatId, asset)`：link→sendText（title+URL）；file/video→uploadMedia→sendFile/sendVideo；失败→补发降级提示 + WARN（`ASSET_SEND_FAIL`）。
 
 ### 3.8 M9 授权许可（license/）
 
@@ -320,7 +320,7 @@ ConfigService.initialize()
 ```
 
 **运行期**：Guard 在管道 D3 位读缓存（<1ms）；每日 03:00 复核 + 写 `license.lic.antireplay.json {lastTs}`（0600）。失效→受限模式：`/healthz` unhealthy、回调只回授权话术（`LICENSE_RESTRICTED`），FastGPT 后台不受限。
-**群数上限**：接入配置加载时校验 `chats.length > maxChats` → 拒新群 + 告警（老群不动）。
+**群数上限**：运行时新群准入校验（`licensed_chat` 已授权群数 ≥ `maxChats`）→ 拒新群 + 告警；老群不受影响。
 **续期**：`POST /admin/license/reload` 重跑校验并刷新缓存。
 
 ### 3.9 M10 历史导入（import/，增项 B）
@@ -347,7 +347,7 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 4. 无 A 的 Q / 无 Q 的 A → unpaired（人工补配，不入库）
 ```
 
-**脱敏（正则表，配置于 import-rules.yml）**
+**脱敏（内置正则 + `config/import-names.txt` 姓名词典；`import-rules.yml` 负责清洗规则）**
 
 | 规则 | 正则（示例） | 替换 |
 |---|---|---|
@@ -355,7 +355,7 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 | 身份证 | `\d{17}[\dXx]` | `[身份证号]` |
 | 银行卡 | `\d{16,19}`（Luhn 校验通过） | `[银行卡号]` |
 | 地址 | `(省|市|区|路|号|栋|室)` 组合模式 | `[地址]` |
-| 姓名 | 姓氏表 + 1-2 字（保守模式，宁漏勿错） | `[姓名]` |
+| 姓名 | 标签（姓名/联系人/收货人）+ 词典匹配（最长优先） | `[姓名]`/`<NAME:n>` |
 
 **入库/回滚**：`confirm` → 通过条目按 50 条/批 `FastGPTClient.upsertQa('历史语料-{jobId}')`，失败退避重试 3 次；`rollback` → `deleteDataset`。
 
@@ -369,7 +369,7 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 
 **用量上报（D10）**：adapter 每日 02:30 `POST {CONTROL_PLANE_URL}/report`，body 仅计数：`{tenantId, date, msgsIn, triggered, hit, miss, tokens, activeChats, docCount, qaCount, assetMb}`；失败本地缓存 7 天后丢弃（不影响问答）。
 
-**订阅状态机迁移**：每日 03:00 扫描 `sub_expire_at`：T-30/15/7 通知；到期→grace；grace+7d→suspended（向实例签发过期证书或置 license 失效）；续费→`renew`（签新证书 + 实例 reload）。
+**订阅状态机迁移**：每日 09:00 扫描 `expired_at`：T-30/15/7 通知；到期→grace；grace+7d→suspended（向实例签发过期证书或置 license 失效）；续费→`renew`（签新证书 + 实例 reload）。
 
 ---
 
@@ -477,7 +477,7 @@ Dockerfile（多阶段 distroless 产物）：
 ```
 
 - 本地档附加镜像：`local-models-compose.yml`（vllm + xinference）。
-- 控制面镜像单独构建（SaaS 形态才交付）。
+- 控制面与数据面共用同一镜像（`control-plane-main.ts` 独立入口，仅 SaaS 叠加启动）。
 
 ## 9. 测试设计
 
@@ -518,4 +518,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）V1.15（2026-10-30）§6.5 平台鉴权按实际重写（Basic+IP+reason+双签/令牌，无 mTLS；跳板归属说明）。V1.16（2026-10-30）§3.9 R-8 改为 `ImportTaskQueue`/增量 200MB 或 80% 限额/每 5s 轮询。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）V1.15（2026-10-30）§6.5 平台鉴权按实际重写（Basic+IP+reason+双签/令牌，无 mTLS；跳板归属说明）。V1.16（2026-10-30）§3.9 R-8 改为 `ImportTaskQueue`/增量 200MB 或 80% 限额/每 5s 轮询。V1.17（2026-10-30）§2.3 空引用 score=0；§3.1 主动发送/错误码；§3.4 拒答文案/素材 UUID；§3.7 上传参数与 ASSET_*；§3.8 群数上限运行期；§3.9 脱敏来源；§3.10 09:00/expired_at；§8 同镜像双入口。*

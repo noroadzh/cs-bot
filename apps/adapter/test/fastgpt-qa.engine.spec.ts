@@ -4,7 +4,7 @@
  * 对应 src/qa/fastgpt-qa.engine.ts 的分支：
  * - 正常响应走 choices[0].message.content（OpenAI 兼容格式）
  * - 无 choices 时降级读 data[0].content（FastGPT 原生格式）
- * - data[0].score 存在时透传，不存在时用默认 0.8
+ * - data[0].score 存在时透传；无引用且无原生得分时 score=0（走拒答）
  * - req.history 缺省 → 不写入 history 消息
  * - req.datasetIds 缺省 → 回落到 config.FASTGPT_DATASET_IDS 单元素数组
  * - req.datasetIds 缺省且 config 无 DATASET_IDS → 空数组
@@ -57,13 +57,13 @@ async function buildEngine() {
 }
 
 describe('FastGPTQaEngine', () => {
-  it('正常路径：OpenAI 兼容 choices 格式 → 返回 answer + 默认 score 0.8', async () => {
+  it('正常路径：OpenAI 兼容 choices 格式 → 返回 answer，无引用时 score=0', async () => {
     post.mockResolvedValueOnce({ data: { choices: [{ message: { content: '这是答案' } }] } });
     const engine = await buildEngine();
 
     const value = expectOk(await engine.ask(req({ question: '怎么退款？' })));
 
-    expect(value).toEqual({ answer: '这是答案', quotes: [], score: 0.8, source: 'primary' });
+    expect(value).toEqual({ answer: '这是答案', quotes: [], score: 0, source: 'primary' });
   });
 
   it('降级路径：无 choices → 读 data[0].content 且透传 data[0].score', async () => {
@@ -75,13 +75,13 @@ describe('FastGPTQaEngine', () => {
     expect(value).toEqual({ answer: '原生格式答案', quotes: [], score: 0.93, source: 'primary' });
   });
 
-  it('空响应兜底：既无 choices 也无 data → answer 空串 + score 0.8', async () => {
+  it('空响应兜底：既无 choices 也无 data → answer 空串 + score 0', async () => {
     post.mockResolvedValueOnce({ data: {} });
     const engine = await buildEngine();
 
     const value = expectOk(await engine.ask(req()));
 
-    expect(value).toEqual({ answer: '', quotes: [], score: 0.8, source: 'primary' });
+    expect(value).toEqual({ answer: '', quotes: [], score: 0, source: 'primary' });
   });
 
   it('history 映射为 histories，messages 仅当前问题', async () => {
@@ -165,7 +165,12 @@ describe('FastGPTQaEngine', () => {
   it('主通道重试一次：首次失败后重试成功，不再走 fallback', async () => {
     post
       .mockRejectedValueOnce(new Error('blip'))
-      .mockResolvedValueOnce({ data: { choices: [{ message: { content: '重试成功' } }] } });
+      .mockResolvedValueOnce({
+        data: {
+          choices: [{ message: { content: '重试成功' } }],
+          responseData: [{ quoteList: [{ id: 'q1', content: 'c', score: 0.9 }] }],
+        },
+      });
     const engine = await buildEngine();
 
     const value = expectOk(await engine.ask(req()));
@@ -224,7 +229,12 @@ describe('FastGPTQaEngine', () => {
     post
       .mockRejectedValueOnce(new Error('fastgpt down'))
       .mockRejectedValueOnce(new Error('fastgpt down'))
-      .mockResolvedValueOnce({ data: { choices: [{ message: { content: '云回退答案' } }] } });
+      .mockResolvedValueOnce({
+        data: {
+          choices: [{ message: { content: '云回退答案' } }],
+          responseData: [{ quoteList: [{ id: 'q9', content: 'c', score: 0.9 }] }],
+        },
+      });
     const engine = await buildEngine();
     const value = expectOk(await engine.ask(req()));
     expect(value.source).toBe('fallback');

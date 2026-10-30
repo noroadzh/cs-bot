@@ -201,7 +201,7 @@ export class FastGPTQaEngine implements IQAEngine {
       .sort((a, b) => b.score - a.score);
     const answer =
       data?.choices?.[0]?.message?.content ?? data?.data?.[0]?.content ?? '';
-    const score = quotes.length > 0 ? quotes[0].score : (data?.data?.[0]?.score ?? 0.8);
+    const score = quotes.length > 0 ? quotes[0].score : (data?.data?.[0]?.score ?? 0);
     return { answer, quotes, score, source };
   }
 }

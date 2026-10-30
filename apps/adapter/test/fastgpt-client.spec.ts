@@ -75,7 +75,7 @@ describe('parseChatResponse', () => {
     expect(res).toMatchObject({ answer: '原生', score: 0.93, quotes: [] });
   });
 
-  it('defaults score to 0.8 when no quote and no native score', () => {
-    expect(parseChatResponse({}).score).toBe(0.8);
+  it('defaults score to 0 when there is no quote and no native score', () => {
+    expect(parseChatResponse({}).score).toBe(0);
   });
 });
