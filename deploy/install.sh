@@ -40,8 +40,52 @@ REQUIRED_ENV=(
 missing=()
 
 env_value() {
+  [ -f "$ROOT/.env" ] || return 0
   awk -F= -v k="$1" '$1==k { sub(/^[^=]*=/, ""); print; exit }' "$ROOT/.env" 2>/dev/null \
-    | sed 's/^["'\'']//; s/["'\'']$//'
+    | sed 's/^["'\'']//; s/["'\'']$//' || true
+}
+
+# 已知弱口令/默认值（空格分隔，匹配时前后加空格）
+WEAK_SECRETS=" cs postgres password 123456 12345678 fastgpt123456 filetoken1234567890 please_change_me admin redis test changeme "
+
+# 强口令校验：required 缺失记缺项；已填写则要求长度 ≥12 且不在黑名单
+check_secret() {
+  local key="$1" mode="$2" v len
+  v="$(env_value "$key")"
+  if [ -z "$v" ]; then
+    [ "$mode" = "required" ] && missing+=("${key}（必填强口令，示例：openssl rand -base64 24）")
+    return 0
+  fi
+  len=${#v}
+  if [ "$len" -lt 12 ]; then
+    missing+=("${key}（长度 ${len} < 12，请用 openssl rand -base64 24 生成）")
+    return 0
+  fi
+  case "$WEAK_SECRETS" in
+    *" $v "*) missing+=("${key}（仍为默认/常见值，请用 openssl rand -base64 24 生成）") ;;
+  esac
+}
+
+# 交付包完整性校验（存在 SHA256SUMS.txt 才校验；不匹配即失败）
+verify_checksums() {
+  local f="$ROOT/SHA256SUMS.txt"
+  if [ ! -f "$f" ]; then
+    warn "未找到 SHA256SUMS.txt，跳过完整性校验（自建包）"
+    return 0
+  fi
+  local hash="sha256sum"
+  command -v sha256sum >/dev/null 2>&1 || hash="shasum -a 256"
+  local out rc=0 line n=0
+  out="$(cd "$ROOT" && $hash -c SHA256SUMS.txt 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    while IFS= read -r line; do
+      case "$line" in
+        *FAILED*|*失败*) missing+=("完整性校验失败: $line"); n=$((n + 1)) ;;
+      esac
+    done <<< "$out"
+    [ "$n" -eq 0 ] && missing+=("完整性校验失败（校验命令返回 ${rc}，详见 ${f}）")
+  fi
+  return 0
 }
 
 preflight() {
@@ -73,6 +117,15 @@ preflight() {
     mem_gb=$((mem_kb / 1024 / 1024))
     [ "$mem_gb" -ge 7 ] || warn "宿主内存 ${mem_gb}G 低于建议的 7G，容器内存限额可能偏紧"
   fi
+
+  # 交付包完整性（概设 §9：重算不一致则拒绝启动）
+  verify_checksums
+
+  # 强口令（概设 §9：FastGPT 后台口令强密码等）
+  check_secret ADMIN_PASSWORD required
+  check_secret POSTGRES_PASSWORD required
+  check_secret FASTGPT_ROOT_PASSWORD required
+  check_secret REDIS_PASSWORD optional
 }
 
 report_missing() {
