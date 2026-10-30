@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.23（V1.22 + §7.1/§7.2 按迁移与实现重写） |
+| 版本 | V1.24（V1.23 + §6 时序与降级表述对齐实际） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
@@ -293,8 +293,8 @@
 ## 5. 核心模块设计
 
 ### M1 企微接入模块
-- **职责**：回调验签（msg_signature+timestamp+nonce+Token 的 SHA1）、AES-CBC 消息加解密、XML/JSON 消息解析、被动回复（5s 窗口）与主动发消息（client 凭证缓存 access_token，提前 5 分钟刷新）。
-- **关键流程**：POST /wecom/callback → 验签失败直接 401（不响应业务）→ 解密 → 产出标准化 InboundMessage → 交 M2；回复优先走被动回包，超时则降级主动发消息 API。
+- **职责**：回调验签（msg_signature+timestamp+nonce+Token 的 SHA1）、AES-CBC 消息加解密、XML/JSON 消息解析、消息收发（**群聊经主动发消息 `appchat/send`**；单聊/应用消息可走被动回包，5s 窗口）与 client 凭证缓存（access_token，提前 5 分钟刷新）。
+- **关键流程**：POST /wecom/callback → 验签失败直接 401（不响应业务）→ 解密 → 产出标准化 InboundMessage → 交 M2；**群聊回复一律走主动发消息 API**，单聊/应用消息优先被动回包、超时降级主动发送。
 - **接口定义**：
   - `POST /wecom/callback?msg_signature=&timestamp=&nonce=` → 企微回调入口。
   - 内部：`WecomCrypto.verify()/decrypt()/encrypt()`；`WecomClient.sendText(chatid, content)`；增项扩展：`downloadMedia(mediaId): Buffer`（企微素材下载，3 天有效）、`uploadMedia(type, buffer): mediaId` 与 `sendFile(chatid, mediaId, title)` / `sendVideo(chatid, mediaId, title, desc)`（M8 素材外发使用）。
@@ -327,7 +327,7 @@ triggers:
 
 ### M5 未命中记录模块
 - **职责**：未命中/低置信问题落库，支持导出 Excel（xlsx）。
-- **关键流程**：M4 hit=false → 异步入库（不阻塞回复）→ 管理接口按时间段查询/导出。
+- **关键流程**：M4 hit=false → 写入 M5（本地 PG，毫秒级）→ 管理接口按时间段查询/导出。
 - **接口定义**：`MissRecord.save({question, chatid, userid, score, status})`；`GET /admin/miss-records?from=&to=&format=xlsx`（Basic Auth）。
 - **导出形态确认**：API + Basic Auth 直接返回 xlsx 文件流（Content-Disposition 附件），不做 Web 页面；操作手册提供 curl 与浏览器直接访问示例；管理页面归二期，本期 25 人天基线不变。
 
@@ -342,7 +342,7 @@ triggers:
 
 ### M8 多媒体处理模块【增项包，对应 PRD FR-9/FR-10】
 - **职责**：入站多媒体处理（图片识别转文本提问、语音/视频/文件引导兜底）与出站素材外发（链接/文件/视频消息）。
-- **入站图片流程**：M2 判定 @机器人 且 MsgType=image → M1 `downloadMedia` → 调通义 qwen-vl（复用通义 fallback 账号，硬超时 10s；提示词固定："提取图片中与咨询/操作相关的文字，归纳为一句中文问题；无有效内容时仅返回 [NO_TEXT]"）→ 识别结果替换问题文本，交 M3/M4 走正常问答链路（上下文/置信度/拒答/过滤全复用）→ 返回 [NO_TEXT] 或调用失败时回复引导话术。图片识别路径全程异步（走主动发消息补发通道，不占用被动 5s 窗口与文本 8s 性能预算）。
+- **入站图片流程**：M2 判定 @机器人 且 MsgType=image → M1 `downloadMedia` → 调通义 qwen-vl（复用通义 fallback 账号，硬超时 10s；提示词固定："提取图片中与咨询/操作相关的文字，归纳为一句中文问题；无有效内容时仅返回 [NO_TEXT]"）→ 识别结果替换问题文本，交 M3/M4 走正常问答链路（上下文/置信度/拒答/过滤全复用）→ 返回 [NO_TEXT] 或调用失败时回复引导话术。图片识别路径全程异步（走主动发消息通道，不占用同步回复窗口与文本 8s 性能预算）。
 - **语音/视频/文件入站**：不下载不解析，直接回复引导话术 + miss_record 落库（media_type 标记 voice/video/file）。
 - **素材外发流程**：M4 收到答案后正则提取 `[[素材:<uuid>]]`（`\[\[素材:([a-f0-9-]+)\]\]`） → 查 asset 表（enabled=true）→ 剥离标记先发文本答案（@提问人）→ 逐个发送素材：link → `sendText`（标题 + URL）；file/video → `uploadMedia` 后 `sendFile`/`sendVideo` → 任一素材发送失败即补发降级提示话术并记 WARN。单条答案素材上限 2 个；文件 ≤20MB、视频 ≤10MB，超限直接走降级路径。
 - **素材管理**：管理接口（Basic Auth，与 miss-records 一致）：`POST /admin/assets`（multipart 上传文件/视频，或 JSON 提交链接）、`GET /admin/assets`（清单）、`DELETE /admin/assets/:id`（逻辑停用）。素材文件存宿主机 `data/assets/`，纳入每日备份。
@@ -482,12 +482,12 @@ triggers:
   │       │        │        │        │         │        │◀────────│◀─────────│        │
   │       │        │        │        │         │写回上下文◀───────│答案+来源  │        │
   │       │        │        │        │◀────────────────│─────────────────────────────▶│AC 过滤
-  │       │◀被动回复(加密)──│◀───────│        │         │        │         │          │◀通过
+  │       │◀主动发消息    ──│◀───────│        │         │        │         │          │◀通过
   │◀──────│        │        │        │        │         │        │         │          │
 ```
 
 ### 6.2 低置信拒答流程
-FastGPT 返回最高分 < 0.75 → M4 采用拒答话术（不经 LLM 二次改写）→ M5 异步入库 → M6 过滤 → 正常回包。端到端不额外增加 LLM 调用，延迟不受影响。
+FastGPT 返回最高分 < 0.75 → M4 采用拒答话术（不经 LLM 二次改写）→ 同时写入 M5（本地 PG，毫秒级）→ M6 过滤 → 回包。端到端不额外增加 LLM 调用，延迟不受影响。
 
 ### 6.3 消息去重流程
 ```
@@ -497,8 +497,8 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 ```
 
 ### 6.4 异常降级流程
-- **被动回复 5s 窗口将超时**：适配层内部计时 3.5s 未拿到答案 → 先回空 success → 答案就绪后走主动发消息 API 补发。
-- **DeepSeek 超时/5xx**：FastGPT 模型配置中启用通义 fallback 通道重试 1 次；双通道均失败 → 回复"系统繁忙，请稍后再试"并告警。
+- **群聊无被动回复**：本产品面向群聊，回答一律走**主动发消息**（`appchat/send`）；仅单聊/应用消息场景存在 3.5s 被动窗口，超时则先回空 success、答案就绪后补发。
+- **DeepSeek 超时/5xx**：由适配层 fallback 通道（`LLM_FALLBACK_BASE_URL`，通义兼容端点）重试 1 次；双通道均失败 → 回复"系统繁忙，请稍后再试"并告警（`LlmAlertService`，冷却期去重）。
 - **Redis 不可用**：降级为无上下文单轮问答（M3 fail-open），去重降级为内存 LRU 短期去重。
 - **FastGPT 不可用**：直接回复固定降级话术，不阻塞回调线程。
 
@@ -898,3 +898,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.21 | 2026-10-30 | M1 access_token 提前 300s 刷新落地；§10.2 目录结构、§10.3 备份（三库/审计清理/租户备份）、§10.4 崩溃告警表述按实际重写 |
 | V1.22 | 2026-10-30 | M9 反回放状态文件名统一为 `license.lic.antireplay.json`（与实现一致） |
 | V1.23 | 2026-10-30 | §7.1 五张业务表按迁移重写（trace_id/engine、UUID 主键、type/name、dataset_id、review_status 取值）；§7.2 Redis 键改为 rate:*/rate:hint/wecom:at |
+| V1.24 | 2026-10-30 | §6.1 改主动发消息；§6.2 M5 写入改同步毫秒级；§6.4 被动窗口标注单聊专用、fallback 改为适配层 `LLM_FALLBACK_*` |
