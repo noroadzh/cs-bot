@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.8（V1.7 + license-native 签名与启动校验位置对齐） |
+| 版本 | V1.9（V1.8 + 授权接口响应按 LicenseState 对齐） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.15》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.11》 |
+| 上游文档 | 《概要设计 V1.16》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.12》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -40,7 +40,7 @@ apps/adapter/src/
 ├── context/          (M3)     # ContextService（Redis 上下文）
 ├── orchestration/    (M4)     # QaOrchestrator + FastGPTClient + ConfidenceJudge
 ├── miss/             (M5)     # MissService + MissExportService(xlsx)
-├── filter/           (M6)     # SensitiveFilterService(DFA) + 词库热加载
+├── filter/           (M6)     # SensitiveFilterService(Aho-Corasick) + 词库热加载
 ├── config/           (M7)     # ConfigService(zod 校验) + HealthController
 ├── media/            (M8)     # MediaRecognizeService(qwen-vl) + AssetService + AssetSender
 ├── license/          (M9)     # LicenseService(调 license-native) + 受限模式 Guard
@@ -509,8 +509,11 @@ POST /admin/import-jobs/:id/retry         → 202
 
 ### 6.4 授权（M9）
 ```
-GET  /admin/license        → {valid, reason?, expiresAt, daysLeft, maxChats, fingerprint}
-POST /admin/license/reload → {valid, expiresAt}
+GET  /admin/license        → LicenseState + currentUsage
+POST /admin/license/reload → LicenseState（重跑 startupCheck）
+
+LicenseState = { valid, reason, mock, fingerprint, expiresAtMs, daysLeft, maxChats }
+currentUsage = { messagesReceived, assetsSent }
 ```
 
 ### 6.5 平台控制面（/platform/*，独立服务，仅 SaaS）
@@ -552,7 +555,7 @@ Dockerfile（多阶段 distroless 产物）：
 | routing | @解析（含昵称变体）；关键词命中/未命中；固定窗口边界（第 20/21 次） |
 | context | TTL 续期、5 轮截断、Redis 故障 fail-open |
 | orchestration | score 0.749/0.75 分界；素材引用 ≤2；长答案分段；双通道降级 |
-| filter | DFA 命中/不命中/词库热切换原子性 |
+| filter | 自动机命中/不命中/词库热切换原子性 |
 | license | 验签失败/指纹不符/过期/回拨/缓存过期重验 |
 | import | QA 配对（30min 断窗/多轮合并/单边池）；脱敏正则全表；幂等重试 |
 
@@ -579,4 +582,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。*
