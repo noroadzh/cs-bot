@@ -4,6 +4,7 @@ import { WecomCrypto } from './wecom-crypto.js';
 import { IMessageSender } from '../qa/message-sender.port.js';
 import { ConfigService } from '../config/config.service.js';
 import { UsageService } from '../usage/usage.service.js';
+import { OpsAlertService } from '../common/ops-alert.service.js';
 
 /**
  * WecomModule 提供 IMessageSender 的实现（WecomClient）。
@@ -17,6 +18,8 @@ import { UsageService } from '../usage/usage.service.js';
       inject: [ConfigService, UsageService],
     },
     WecomCrypto,
+    // OpsAlertService 的构造参数是可选配置对象，用工厂注册避免 Nest 解析
+    { provide: OpsAlertService, useFactory: () => new OpsAlertService() },
     { provide: IMessageSender, useExisting: WecomClient },
   ],
   exports: [WecomClient, WecomCrypto, IMessageSender],
