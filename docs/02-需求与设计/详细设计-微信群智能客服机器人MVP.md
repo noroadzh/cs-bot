@@ -3,7 +3,7 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.10（V1.9 + 实例资源指标与定时任务补齐） |
+| 版本 | V1.11（V1.10 + 工程组织与测试设计对齐实际） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
@@ -21,34 +21,46 @@
 ```
 cs-bot/
 ├── apps/
-│   ├── adapter/               # 适配层（NestJS，消息管道 + 管理面）
-│   └── control-plane/         # 平台控制面（NestJS，仅 SaaS 形态构建）
+│   └── adapter/                 # 适配层（NestJS，消息管道 + 管理面）
+│       ├── src/main.ts          # 数据面入口（config → redis/pg 探活 → Nest → listen）
+│       ├── src/control-plane/   # 平台控制面模块（仅 SaaS 启用）
+│       └── src/control-plane-main.ts  # 控制面独立入口（与数据面共用镜像）
 ├── packages/
-│   ├── shared/                # 两应用共享：类型、错误码、脱敏工具、Result
-│   └── license-native/        # Rust napi-rs 源码与 .node 预编译产物
-├── deploy/                    # compose 模板、nginx、config 出厂文件、backup.sh
-└── tools/                     # 签发工具（license-issuer，仅交付方内部使用）
+│   ├── shared/                  # 共享：类型、错误码、Result、脱敏工具
+│   └── license-native/          # Rust napi-rs 源码与 .node 预编译产物
+├── deploy/                      # compose（基线 + SaaS 叠加）、nginx、install/collect 脚本
+└── tools/                       # 签发工具（license-issuer，仅交付方内部使用）
 ```
 
-### 1.2 adapter 模块划分（与概设 M1–M11 一一对应）
+> 控制面与数据面**同一镜像、两个入口**：`main.ts` 挂载完整 `AppModule`；`control-plane-main.ts` 只挂载 `ControlPlaneAppModule`（独立端口 3100、独立数据库与鉴权）。不单独构建 `apps/control-plane` 包。
+
+### 1.2 adapter 模块划分（与概设 M1–M11 对应）
 
 ```
 apps/adapter/src/
-├── main.ts                    # bootstrap：config 校验 fail-fast → license 启动强校验 → 任务注册
-├── wecom/            (M1)     # WecomController(回调) + WecomCrypto + WecomClient
-├── routing/          (M2)     # TriggerService（@/关键词/静默）+ RateLimiter + DedupService
-├── context/          (M3)     # ContextService（Redis 上下文）
-├── orchestration/    (M4)     # QaOrchestrator + FastGPTClient + ConfidenceJudge
-├── miss/             (M5)     # MissService + MissExportService(xlsx)
-├── filter/           (M6)     # SensitiveFilterService(Aho-Corasick) + 词库热加载
-├── config/           (M7)     # ConfigService(zod 校验) + HealthController
-├── media/            (M8)     # MediaRecognizeService(qwen-vl) + AssetService + AssetSender
-├── license/          (M9)     # LicenseService(调 license-native) + 受限模式 Guard
-├── import/           (M10)    # ImportService + parsers/ + qa-pairing/ + ImportController
-└── report/           (D10)    # UsageReportService（仅 SaaS 开关启用）
+├── main.ts            # 数据面入口：config fail-fast → redis/pg 探活 → Nest → listen
+├── control-plane-main.ts  # 控制面入口（独立端口/DB/鉴权）
+├── wecom/        (M1)  # WecomController + WecomCrypto + WecomClient
+├── routing/      (M2)  # TriggerService + RateLimiter + DedupService + KeywordTrie
+├── context/      (M3)  # ContextService（Redis 上下文）
+├── qa/           (M4)  # QaOrchestrator + FastGPTClient + FastGPT/Mock 引擎 + LlmAlert
+├── miss/         (M5)  # MissService + MissExportService(xlsx/json) + MissCleanup
+├── filter/       (M6)  # SensitiveFilterService(Aho-Corasick) + 词库热加载
+├── config/       (M7)  # ConfigService(zod 校验) + 配置 DTO
+├── admin/              # 管理面控制器（miss/assets/import/license/usage/config-check）
+├── health/             # HealthController（依赖探活 + license + usage + resources）
+├── media/        (M8)  # MediaRecognizeService + AssetService + AssetSender + 引用解析
+├── license/      (M9)  # LicenseService + native/mock verifier + Gate + 运行期调度
+├── import/       (M10) # ImportJobService + 解析器 + 配对 + 审核/回滚 + 清理
+├── usage/        (D10) # UsageService + Reporter + CapacityUsage/Guard + Webhook
+├── platform/     (M11) # 租户/配额/订阅/升级/审计/监控/密钥/注销 + provisioner
+├── control-plane/      # 控制面应用装配与独立配置
+├── internal/           # 内部接口（/internal/tenant/sync）
+├── common/             # 日志、脱敏、信号量、资源指标、异常过滤器、请求上下文
+└── types/              # 全局类型声明
 ```
 
-依赖方向强制单向（ESLint `nx/enforce-module-boundaries`）：`wecom → routing → license → context/media → orchestration → filter → wecom`；横切（miss/config）被引用不引用管道模块；**禁止反向 import**（R-1~R-8 的工程落地）。
+依赖方向以模块划分与代码评审保证（`wecom → routing → license → context/media → qa → filter → wecom`；横切 `miss/config/admin/health` 被引用不引用管道模块；禁止反向 import）。当前仓库未配置 ESLint 边界规则，`nx/enforce-module-boundaries` 为后续可选项。
 
 ### 1.3 分层约定
 
@@ -243,7 +255,7 @@ Lua 脚本 `tokenbucket.lua`：INCR + EXPIRE 原子化，避免竞态。
 - 超过 5 轮：`LPUSH` 语义截断（数组 shift 最旧）。
 - 读失败（REDIS_FAIL）→ fail-open 返回空历史（A5 决策），WARN。
 
-### 3.4 M4 问答编排（orchestration/）
+### 3.4 M4 问答编排（qa/）
 
 ```
 answer = await FastGPTClient.ask({ question, history: ctx.history })
@@ -561,9 +573,11 @@ Dockerfile（多阶段 distroless 产物）：
 | license | 验签失败/指纹不符/过期/回拨/缓存过期重验 |
 | import | QA 配对（30min 断窗/多轮合并/单边池）；脱敏正则全表；幂等重试 |
 
-### 9.2 集成测试（docker compose 起 6 容器）
+### 9.2 集成测试
 
-企微回调模拟器（官方算法构造加密报文）→ 端到端断言：触发/静默/拒答/上下文/去重/限流/敏感词替换/素材外发/受限模式。
+**默认（`TEST_PG_URL`）**：真实 PostgreSQL + 假外部依赖（InMemoryDatasetClient、假 docker/cert/授权），覆盖导入重管线、控制面开通/注销、租户配额等端到端流程；未设置 `TEST_PG_URL` 时整套 skip。
+
+**可选真实栈冒烟**：`scripts/acceptance-real.sh`（`REAL_COMPOSE=1` 才执行，默认 skip）启动 nginx/adapter/fastgpt/pg/mongo/redis 六容器，做触发/静默/拒答/敏感词/素材/受限模式的真实链路验证。
 
 ### 9.3 压测验收（对应 PRD 指标）
 
@@ -584,4 +598,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。*
