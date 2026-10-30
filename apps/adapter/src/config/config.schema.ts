@@ -79,6 +79,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   // 出站并发上限
   LLM_CONCURRENCY: EnvInt(4),
   /** 双通道失败告警：窗口内失败次数阈值 / 窗口 / 冷却 */
+  /** 运维事件告警冷却（验签失败等），默认 30 分钟 */
+  OPS_ALERT_COOLDOWN_MS: EnvInt(1_800_000),
   LLM_ALERT_THRESHOLD: EnvInt(3),
   LLM_ALERT_WINDOW_MS: EnvInt(300_000),
   LLM_ALERT_COOLDOWN_MS: EnvInt(1_800_000),

@@ -2,7 +2,7 @@
  * 企微回调控制器
  * 握手验证 + 消息解密路由
  */
-import { Controller, Post, Query, Body, Req, Res, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Query, Body, Req, Res, HttpCode, HttpStatus, Optional } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ApiBody, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { WecomCrypto } from './wecom-crypto.js';
@@ -11,6 +11,7 @@ import { RoutingService } from '../routing/routing.service.js';
 import { MediaRecognizeService } from '../media/media-recognize.service.js';
 import { UsageService } from '../usage/usage.service.js';
 import { MissService } from '../miss/miss.service.js';
+import { OpsAlertService } from '../common/ops-alert.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { LicenseGateService } from '../license/license-gate.service.js';
 import {
@@ -55,6 +56,7 @@ export class WecomController {
     private readonly wecomClient: WecomClient,
     private readonly licenseGate: LicenseGateService,
     private readonly miss: MissService,
+    @Optional() private readonly opsAlert: OpsAlertService = new OpsAlertService(),
   ) {}
 
   @Post('callback')
@@ -89,6 +91,7 @@ export class WecomController {
     if (echostr !== undefined) {
       const decrypt = await this.crypto.decryptMsg(msgSignature, timestamp, nonce, echostr);
       if (!decrypt) {
+        this.alertSignatureFailure(traceId, 'echostr');
         res.status(HttpStatus.UNAUTHORIZED).json({ errCode: ErrCode.WECOM_SIGN_INVALID });
         return;
       }
@@ -99,6 +102,7 @@ export class WecomController {
     const encrypt = typeof body === 'string' ? body : (body as any).Encrypt ?? '';
     const decrypted = await this.crypto.decryptMsg(msgSignature, timestamp, nonce, encrypt);
     if (!decrypted) {
+      this.alertSignatureFailure(traceId, 'message');
       res.status(HttpStatus.UNAUTHORIZED).json({ errCode: ErrCode.WECOM_SIGN_INVALID });
       return;
     }
@@ -248,6 +252,16 @@ export class WecomController {
       this.logger.error({ traceId, chatId, detail: 'guidance-send-fail', err: (err as Error).message });
     }
   }
+  /** 验签失败按冷却期推送一次运维告警（不阻塞 401 响应） */
+  private alertSignatureFailure(traceId: string, stage: 'echostr' | 'message'): void {
+    void this.opsAlert
+      .alert(
+        'wecom-signature',
+        `企微回调验签失败（stage=${stage}），请核对 Token/AESKey 与企微后台配置；traceId=${traceId}`,
+      )
+      .catch(() => undefined);
+  }
+
 }
 
 function detectImageMime(buf: Buffer): string {

@@ -66,6 +66,13 @@ preflight() {
   local tars=("$ROOT"/images/*.tar)
   if [ -e "${tars[0]}" ]; then image_ok=1; fi
   [ "$image_ok" = 1 ] || missing+=("adapter 镜像（本地 cs-bot-adapter:latest 或 images/*.tar）")
+  # 宿主内存提示（不阻断）：4C8G 基线 + 系统开销应 ≥7G
+  if [ -r /proc/meminfo ]; then
+    local mem_kb mem_gb
+    mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo)"
+    mem_gb=$((mem_kb / 1024 / 1024))
+    [ "$mem_gb" -ge 7 ] || warn "宿主内存 ${mem_gb}G 低于建议的 7G，容器内存限额可能偏紧"
+  fi
 }
 
 report_missing() {

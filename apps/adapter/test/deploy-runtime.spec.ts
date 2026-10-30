@@ -40,6 +40,19 @@ describe('adapter runtime mounts', () => {
     expect(install).not.toContain('docker-compose.saas.yml up');
   });
 
+  it('每个服务都有内存限额且总和不超过 6.5G，Redis 配 maxmemory', () => {
+    const limits = [...compose.matchAll(/mem_limit:\s*(\d+)m/g)].map((m) => Number(m[1]));
+    expect(limits).toHaveLength(6);
+    expect(limits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(6500);
+    expect(compose).toContain('--maxmemory 384mb');
+    expect(compose).toContain('--maxmemory-policy allkeys-lru');
+  });
+
+  it('SaaS 叠加文件为控制面加了内存限额', () => {
+    const saas = readFileSync(join(ROOT, 'deploy', 'docker-compose.saas.yml'), 'utf8');
+    expect(saas).toMatch(/control-plane:\n(?:.*\n)*?\s+mem_limit: \d+m/);
+  });
+
   it('提供宿主目录权限校正脚本', () => {
     const script = readFileSync(join(ROOT, 'deploy', 'init-perms.sh'), 'utf8');
     expect(script).toContain('CSBOT_UID:-65532');

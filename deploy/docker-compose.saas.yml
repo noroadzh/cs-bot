@@ -7,6 +7,7 @@ services:
       CONTROL_PLANE_URL: http://control-plane:3100
 
   control-plane:
+    mem_limit: 512m
     build:
       context: ..
       dockerfile: deploy/Dockerfile.adapter

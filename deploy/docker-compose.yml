@@ -2,6 +2,7 @@ version: "3.8"
 
 services:
   nginx:
+    mem_limit: 128m
     image: nginx:1.27-alpine
     restart: unless-stopped
     ports:
@@ -17,6 +18,7 @@ services:
       - csbot
 
   adapter:
+    mem_limit: 512m
     build:
       context: ..
       dockerfile: deploy/Dockerfile.adapter
@@ -51,6 +53,7 @@ services:
       - csbot
 
   fastgpt:
+    mem_limit: 2560m
     image: labring/fastgpt:v4.8.17
     restart: unless-stopped
     depends_on:
@@ -70,6 +73,7 @@ services:
       - csbot
 
   pg:
+    mem_limit: 1229m
     image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
@@ -113,6 +117,7 @@ services:
       - csbot
 
   mongo:
+    mem_limit: 1024m
     image: mongo:7
     restart: unless-stopped
     volumes:
@@ -121,9 +126,11 @@ services:
       - csbot
 
   redis:
+    mem_limit: 512m
     image: redis:7-alpine
     restart: unless-stopped
-    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    # maxmemory 低于容器限额，为 fork/碎片留余量；上下文/去重允许淘汰
+    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-}
     volumes:
       - redis-data:/data
     healthcheck:

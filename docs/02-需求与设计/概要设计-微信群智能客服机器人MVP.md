@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.12（V1.11 + FastGPT 单一客户端、LLM 双通道告警、容器自愈表述、R-3 边界） |
+| 版本 | V1.13（V1.12 + 资源限额落地、验签失败告警） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
@@ -702,15 +702,17 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 ### 10.1 Docker Compose 服务与资源分配（4C8G，预算 ≤6.5G）
 | 服务 | 镜像 | 内存限额 | 说明 |
 |---|---|---|---|
-| nginx | nginx:1.25-alpine | 128M | TLS 终结/反代 |
+| nginx | nginx:1.27-alpine | 128M | TLS 终结/反代 |
 | adapter | 自研镜像（node:20-alpine 基座） | 512M | 适配层，CPU 1.0 |
 | fastgpt | fastgpt 官方镜像（锁定 tag） | 2.5G | embedding 走外部 API 时可下调 |
-| mongo | mongo:6 | 1G | FastGPT 独占 |
-| pg | pgvector/pg15 镜像 | 1.2G | 适配层+FastGPT 共用，独立 database |
+| mongo | mongo:7 | 1G | FastGPT 独占 |
+| pg | pgvector/pg16 镜像 | 1.2G | 适配层+FastGPT 共用，独立 database |
 | redis | redis:7-alpine | 512M | maxmemory 384M + allkeys-lru |
 | watchtower（可选） | — | 64M | 镜像更新，可裁剪 |
 | vllm（可选，增项 D） | vllm/vllm-openai 官方镜像 | GPU 显存独立（T4 16G/A10 24G）+ 2G 内存 | 本地推理，OpenAI 兼容端点接入 FastGPT；不占 4C8G 预算（需另配 GPU 服务器或 GPU 实例） |
 | xinference（可选，增项 D） | xinf 轻量镜像 | 2C2G | 本地 embedding（bge-m3），FastGPT embedding 渠道指向本端点 |
+
+> 上表限额已以 `mem_limit` 落在 `deploy/docker-compose.yml`；Redis 另配 `--maxmemory 384mb --maxmemory-policy allkeys-lru`，容器限额 512M 留出 fork/碎片余量。
 
 > 资源档位（V1.8）：**云 API 档** = 基线 4C8G/6.5G 预算；**本地 GPU 档** = 8C16G + GPU（T4/A10/L4，Qwen2.5-7B/14B）；**本地 CPU 档** = 8C32G（仅 int4 小模型，低量兑底）。选型依据见 §4.3 规格对照表。
 
@@ -866,3 +868,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.10 | 2026-10-29 | 文档契约对齐：导入接口统一为 `/admin/import-jobs`；关键词改为 `config/keywords.yml` 配置文件口径（无 `keyword_trigger` 表）；与详细设计 V1.2、部署手册 V1.2 同步 |
 | V1.11 | 2026-10-29 | 细节对齐：限流改为按分钟固定窗口；素材标记改为 `[[素材:<uuid>]]`；与详细设计 V1.3 同步 |
 | V1.12 | 2026-10-29 | R-2 落地为统一 `FastGPTClient`（问答/数据集/检索/collection 计数共用凭据与超时）；§11.2 双通道失败补告警与节流；自愈表述由 systemd 改为容器 restart + 宿主 docker 自启；R-3 收敛为「含动态内容的出站文本必须过 M6」 |
+| V1.13 | 2026-10-29 | §10.1 内存限额以 `mem_limit` 落地（含 Redis maxmemory）；镜像版本对齐实际；§12 风险 4 补验签失败告警实现 |

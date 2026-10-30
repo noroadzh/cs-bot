@@ -56,17 +56,18 @@ function makeRouting(dispatchImpl?: (...a: any[]) => any) {
   return { dispatch } as any;
 }
 
-function makeController(crypto: any, routing: any, gateCheck?: jest.Mock) {
+function makeController(crypto: any, routing: any, gateCheck?: jest.Mock, opsAlert?: any) {
   const { WecomController, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT } = require('../src/wecom/wecom.controller.js');
   const usageService = { increment: jest.fn(), snapshot: jest.fn() };
   const recognizeService = { recognizeImage: jest.fn() };
   const wecomClient = { sendText: jest.fn(), sendMedia: jest.fn(), downloadMedia: jest.fn() };
   const licenseGate = { check: gateCheck ?? jest.fn(async () => ({ allowed: true })) };
   const miss = { record: jest.fn(async () => undefined) };
-  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate, miss);
+  const alert = opsAlert ?? { alert: jest.fn(async () => true) };
+  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate, miss, alert);
   // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
-  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss, __imageQueue: (controller as any).imageQueue });
-  return { controller, wecomClient, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
+  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss, __alert: alert, __imageQueue: (controller as any).imageQueue });
+  return { controller, wecomClient, alert, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
 }
 
 beforeAll(() => setConfig({ REQUIRE_GROUP_CHAT_ID: false }));
@@ -101,6 +102,18 @@ describe('WecomController.callback', () => {
       expect(res.statusCode).toBe(401);
       expect(res.json).toHaveBeenCalledWith({ errCode: expect.any(Number) });
       expect(res.send).not.toHaveBeenCalled();
+    });
+
+    it('验签/解密失败同时推送一次运维告警（不改变 401）', async () => {
+      const crypto = makeCrypto({ decryptMsg: jest.fn(() => Promise.resolve(null)) });
+      const { controller, alert } = makeController(crypto, makeRouting());
+
+      const res = makeRes();
+      await controller.callback({ msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce, echostr: 'echo-cipher' }, {}, {} as any, res);
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(res.statusCode).toBe(401);
+      expect(alert.alert).toHaveBeenCalledWith('wecom-signature', expect.stringContaining('验签失败'));
     });
   });
 
