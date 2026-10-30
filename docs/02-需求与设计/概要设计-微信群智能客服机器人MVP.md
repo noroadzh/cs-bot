@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.25（V1.24 + 跳板归属与平台鉴权表述） |
+| 版本 | V1.26（V1.25 + M11 租户接口表按实现修正） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
@@ -447,8 +447,10 @@ triggers:
   | 方法 | 路径 | 说明 |
   |---|---|---|
   | POST | /platform/tenants | 创建租户并触发开通编排 |
-  | GET | /platform/tenants | 租户列表（状态/配额/订阅到期日/用量摘要） |
-  | GET | /platform/tenants/:id | 租户详情（实例信息、用量趋势、订阅状态） |
+  | GET | /platform/tenants | 租户列表（分页、`status` 过滤、按创建时间倒序；仅租户行，不含配额/用量） |
+  | GET | /platform/tenants/:id | 租户详情（实例信息 + 配额 + 当日用量摘要） |
+  | GET | /platform/tenants/:id/usage | 区间用量（按日序列，用于趋势） |
+  | POST | /platform/tenants/:id/quota/consume | 原子消耗配额（超限 429 / 租户不存在 404） |
   | POST | /platform/tenants/:id/renew | 续期（签发新证书并热加载） |
   | PATCH | /platform/tenants/:id/quota | 调整配额（即时下发实例） |
   | POST | /platform/tenants/:id/suspend、/resume | 暂停/恢复服务（违约、到期、应急） |
@@ -900,3 +902,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.23 | 2026-10-30 | §7.1 五张业务表按迁移重写（trace_id/engine、UUID 主键、type/name、dataset_id、review_status 取值）；§7.2 Redis 键改为 rate:*/rate:hint/wecom:at |
 | V1.24 | 2026-10-30 | §6.1 改主动发消息；§6.2 M5 写入改同步毫秒级；§6.4 被动窗口标注单聊专用、fallback 改为适配层 `LLM_FALLBACK_*` |
 | V1.25 | 2026-10-30 | M11/§9/§12 明确跳板由交付方运维侧提供（产品只记 shell-access 审计）；详设 §6.5 鉴权链重写（无 mTLS） |
+| V1.26 | 2026-10-30 | M11 租户列表/详情描述改为实际（列表不含配额/用量；详情含 quota+当日摘要），补 `/tenants/:id/usage` 与 `/quota/consume` |
