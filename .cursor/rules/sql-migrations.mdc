@@ -1,0 +1,29 @@
+---
+description: 数据面 SQL 迁移的目录、文件名和收集范围。
+globs: apps/adapter/src/**/*.sql
+alwaysApply: false
+---
+
+# SQL 迁移
+
+数据面迁移文件名必须是 `NNN-描述.sql`（三位数字），放在所属模块：
+
+- `apps/adapter/src/miss/`
+- `apps/adapter/src/media/`
+- `apps/adapter/src/license/`
+- `apps/adapter/src/import/`
+
+`shell-provisioner` 的 `writeInitDb` 只扫描这四个目录。控制面表放在 `apps/adapter/src/platform/NNN-*.sql`，不会进入租户 initdb。
+
+新序号取当前最大号 + 1，不复用已有序号。DDL 与现有迁移一样写幂等语句。
+
+```sql
+-- apps/adapter/src/media/019-asset-title.sql
+ALTER TABLE asset ADD COLUMN IF NOT EXISTS title text;
+```
+
+```text
+apps/adapter/src/platform/asset-extra.sql
+```
+
+上面这种数据面表放进 `platform/`、且文件名没有三位序号的写法不符合本规则。

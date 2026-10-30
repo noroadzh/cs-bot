@@ -1,0 +1,18 @@
+---
+description: adapter 单测必须离线，覆盖率门禁以 jest.config.cjs 为准。
+globs: apps/adapter/test/**/*.spec.ts,apps/adapter/jest.config.cjs
+alwaysApply: false
+---
+
+# Adapter 测试
+
+单测放在 `apps/adapter/test/**/*.spec.ts`。Redis、PostgreSQL、企微、FastGPT 用 stub 或 `jest.mock`，不发起真实网络或本地套接字。
+
+集成测试只放 `apps/adapter/test/integration/`，依赖 `TEST_PG_URL`，未设置时 skip。真实栈冒烟只走 `scripts/acceptance-real.sh`。
+
+改 `wecom` `routing` `context` `qa` `filter` `miss` `media` 或 `config` `license` `admin` `health` `common` 时，补对应 spec。门禁在 `apps/adapter/jest.config.cjs`：全局 ≥75%；管道目录 ≥80%；横切目录 ≥60%。覆盖率不足时补测试，保持阈值不变。
+
+```bash
+pnpm -C apps/adapter test
+pnpm -C apps/adapter test:cov
+```

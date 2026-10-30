@@ -1,0 +1,19 @@
+---
+description: cs-bot 行为口径与变更顺序。冲突时按规格、概设、详设、代码取舍。
+alwaysApply: true
+---
+
+# 口径与变更
+
+本仓库是微信群智能客服适配层（NestJS）。实现、测试、提交以本仓库约定为准，不套用 Ruflo / swarm 编排。
+
+行为冲突时按此顺序取舍，并说明差异：
+
+1. `openspec/specs/`
+2. `docs/02-需求与设计/概要设计-微信群智能客服机器人MVP.md`（R-1～R-8 优先于详设）
+3. `docs/02-需求与设计/详细设计-微信群智能客服机器人MVP.md`
+4. 当前代码、`NNN-*.sql`、`apps/adapter/jest.config.cjs`
+
+新行为先补对应 openspec，再改代码。概要设计与详细设计仅内部使用，不写入客户交付物。
+
+控制面与数据面共用 `apps/adapter`：数据面 `src/main.ts`，控制面 `src/control-plane-main.ts`。保持这一布局。

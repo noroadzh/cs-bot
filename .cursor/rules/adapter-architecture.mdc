@@ -1,0 +1,29 @@
+---
+description: 适配层模块边界与 R-1～R-8。企微和 FastGPT 各只有一个出口。
+alwaysApply: true
+---
+
+# 适配层边界
+
+分层：`Controller → Service → Client/Repository`。外部 IO 经接口注入。
+
+依赖方向：`wecom → routing → license → context/media → qa → filter`，出站经 `IMessageSender` 回到 `WecomClient`。`qa` 禁止直接 import `WecomClient`。禁止模块环。`miss` / `config` / `admin` / `health` 不得反向依赖管道模块。
+
+- R-1 企微 HTTP 只走 `apps/adapter/src/wecom/wecom-client.ts` 的 `WecomClient`（含素材外发）。
+- R-2 FastGPT 只走 `apps/adapter/src/qa/fastgpt.client.ts` 的 `FastGPTClient`。
+- R-3 含动态内容的出站群文本先过 `filter`。固定话术与素材标题除外。
+- R-4 授权闸门在管道入口。受限模式不进入 context / qa / filter。
+- R-5 配置只读 `ConfigService`。密钥只来自环境变量，zod 校验失败则进程退出。
+- R-6 素材只写 `data/assets/`；导入临时文件只写 `data/import/` 并随即删除；license 只在 `license/`。
+- R-7 只访问 Redis 与本库 PostgreSQL，不连 FastGPT 的 Mongo / pgvector。
+- R-8 导入单并发且可暂挂，实时问答优先。
+
+```ts
+// 问答出站
+@Inject(IMessageSender) private readonly sender: IMessageSender
+
+// 禁止
+import { WecomClient } from '../wecom/wecom-client.js';
+```
+
+管道错误用 `packages/shared` 的 `ErrCode`（1xxxx 企微、2xxxx 路由、3xxxx 编排、4xxxx 过滤、5xxxx 素材、9xxxx 授权）。管理面和平台用字符串 `errCode`，沿用已有前缀（如 `TENANT_NOT_FOUND`）。未捕获异常返回 `INTERNAL_ERROR`。
