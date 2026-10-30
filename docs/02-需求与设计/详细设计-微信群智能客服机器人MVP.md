@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.19（V1.18 + 分段 client_msg_id、运营台入口） |
+| 版本 | V1.20（V1.19 + 运营台工程结构与页面对应） |
 | 日期 | 2026-10-30 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.29》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.6》、《部署手册 V1.14》 |
+| 上游文档 | 《概要设计 V1.30》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.7》、《部署手册 V1.14》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG16+pgvector（pgvector 0.7）；Redis7；Mongo7；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -21,10 +21,13 @@
 ```
 cs-bot/
 ├── apps/
-│   └── adapter/                 # 适配层（NestJS，消息管道 + 管理面）
-│       ├── src/main.ts          # 数据面入口（config → redis/pg 探活 → Nest → listen）
-│       ├── src/control-plane/   # 平台控制面模块（仅 SaaS 启用）
-│       └── src/control-plane-main.ts  # 控制面独立入口（与数据面共用镜像）
+│   ├── adapter/                 # 适配层（NestJS，消息管道 + 管理面）
+│   │   ├── src/main.ts          # 数据面入口（config → redis/pg 探活 → Nest → listen）
+│   │   ├── src/control-plane/   # 平台控制面模块（仅 SaaS 启用）
+│   │   └── src/control-plane-main.ts  # 控制面独立入口（与数据面共用镜像）
+│   └── admin-web/               # 运营台（Vite + React；两次构建）
+│       ├── dist-tenant/         # VITE_SURFACE=tenant，数据面挂到 /console
+│       └── dist-platform/       # VITE_SURFACE=platform，控制面挂到 /console
 ├── packages/
 │   ├── shared/                  # 共享：类型、错误码、Result、脱敏工具
 │   └── license-native/          # Rust napi-rs 源码与 .node 预编译产物
@@ -33,6 +36,8 @@ cs-bot/
 ```
 
 > 控制面与数据面**同一镜像、两个入口**：`main.ts` 挂载完整 `AppModule`；`control-plane-main.ts` 只挂载 `ControlPlaneAppModule`（独立端口 3100、独立数据库与鉴权）。不单独构建 `apps/control-plane` 包。
+>
+> 运营台静态目录存在时才挂载：数据面默认 `../admin-web/dist-tenant`，控制面默认 `../admin-web/dist-platform`，可用 `ADMIN_CONSOLE_DIR` 覆盖。目录缺失时进程照常启动且不提供 `/console`。静态处理只匹配 `/console`，`/wecom/callback` 不经过这层。控制面未启用时不挂平台页。
 
 ### 1.2 adapter 模块划分（与概设 M1–M11 对应）
 
@@ -403,6 +408,22 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 
 > 交付形态：本期在同源 `/console` 提供运营台（数据面为租户页，控制面为平台页），只调用本节接口。知识运营仍由 FastGPT 自带后台承担。URL、入参、出参与 Basic Auth + IP 白名单保持不变，运营台不得另开登录接口或放宽白名单。
 
+### 6.0 运营台
+
+浏览器把账号和口令编码后写入 `sessionStorage`，之后的请求设置 `Authorization: Basic`。401 清掉会话并回到登录页。口令、license 和密钥不写入前端日志。空列表、401 和接口错误在页面上可见。
+
+租户页只调用 `/admin/*`：
+
+| 页面 | 接口 |
+|---|---|
+| 未命中列表与 xlsx | `GET /admin/miss-records`（`format=xlsx` 下载） |
+| 素材上传、列表、删除 | `POST/GET/DELETE /admin/assets` |
+| 导入：上传、解析、逐条审核、批量通过、未配对补配、确认、回滚、重试 | `/admin/import-jobs` 及其子路径（见 §6.3） |
+| 授权状态与热加载 | `GET /admin/license`、`POST /admin/license/reload` |
+| 配置自检、配置重载、关键词重载 | `GET /admin/config-check`、`POST /admin/config/reload`、`POST /admin/keywords/reload` |
+
+平台页只调用 `/platform/*`。创建、开通、续期、暂停、恢复、重启、终止、改配额、导出、注销、密钥交接、写入密钥、记录跳板审计，请求体带非空 `reason`，或改用请求头 `X-Operator-Reason`。原因为空时页面不发请求。终止、导出、注销、写入密钥先经确认框。注销仍提交两名不同的 `approvals` 和一次性 `confirmToken`。跳板只调用现有 `POST /platform/tenants/:id/shell-access` 记审计，不打开终端。列表与详情、用量、审计查询走对应 GET，见 §6.5。
+
 ### 6.1 未命中导出
 `GET /admin/miss-records?from=2026-10-01&to=2026-10-11&format=xlsx` → `200 application/vnd.openxml…`（流式 xlsx）；`format=json` → `{total, items:[{question, chatId, score, mediaType, status, createdAt, userId}]}`；`userId` 经共享掩码函数（首 2 + `***` + 末 2），响应不含原始 `user_id`/`trace_id`/`engine`。
 
@@ -518,4 +539,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.19（2026-10-30）§3.1 主动发送幂等键改为 `${traceId}:${段号}`；§6 运营台纳入本期且接口契约不变。V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）V1.15（2026-10-30）§6.5 平台鉴权按实际重写（Basic+IP+reason+双签/令牌，无 mTLS；跳板归属说明）。V1.16（2026-10-30）§3.9 R-8 改为 `ImportTaskQueue`/增量 200MB 或 80% 限额/每 5s 轮询。V1.17（2026-10-30）§2.3 空引用 score=0；§3.1 主动发送/错误码；§3.4 拒答文案/素材 UUID；§3.7 上传参数与 ASSET_*；§3.8 群数上限运行期；§3.9 脱敏来源；§3.10 09:00/expired_at；§8 同镜像双入口。V1.18（2026-10-30）§1 基线与上游版本；§3.2 关键词样例与前缀匹配；§3.4 `engine.ask`；§3.9 `ensureDataset`+`writeBatch`；§3.10 订阅扫描按小时与 suspended=`compose stop`；§7 license 复核为自调度、09:00 归订阅提醒。*
+*版本记录：V1.20（2026-10-30）§1.1 补 `apps/admin-web` 与 `/console` 挂载条件；§6.0 补页面与现有接口的对应及登录、原因、双签。V1.19（2026-10-30）§3.1 主动发送幂等键改为 `${traceId}:${段号}`；§6 运营台纳入本期且接口契约不变。V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）V1.15（2026-10-30）§6.5 平台鉴权按实际重写（Basic+IP+reason+双签/令牌，无 mTLS；跳板归属说明）。V1.16（2026-10-30）§3.9 R-8 改为 `ImportTaskQueue`/增量 200MB 或 80% 限额/每 5s 轮询。V1.17（2026-10-30）§2.3 空引用 score=0；§3.1 主动发送/错误码；§3.4 拒答文案/素材 UUID；§3.7 上传参数与 ASSET_*；§3.8 群数上限运行期；§3.9 脱敏来源；§3.10 09:00/expired_at；§8 同镜像双入口。V1.18（2026-10-30）§1 基线与上游版本；§3.2 关键词样例与前缀匹配；§3.4 `engine.ask`；§3.9 `ensureDataset`+`writeBatch`；§3.10 订阅扫描按小时与 suspended=`compose stop`；§7 license 复核为自调度、09:00 归订阅提醒。*
