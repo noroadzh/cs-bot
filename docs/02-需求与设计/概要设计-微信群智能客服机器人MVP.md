@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.19（V1.18 + 租户实例内存硬限额） |
+| 版本 | V1.20（V1.19 + 租户按需恢复） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
@@ -784,7 +784,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
   | 扩展 | > 20 | 引入轻量调度（Docker Swarm 或 K8s） | 超出本期范围，届时改造 provisioner 后端即可（接口不变） |
 - **每租户实例规格**：standard = 4C8G/100G SSD（同等私有化基线）；enhanced = 8C16G/200G SSD（大知识库/多群）。租户 compose 由 `ShellProvisioner` 渲染，六服务均写入 standard 档 `mem_limit`（nginx 128M / adapter 512M / fastgpt 2.5G / pg 1.2G / mongo 1G / redis 512M，合计 ≈5.9G），实现 cgroup 内存硬隔离；enhanced 档需按档位调整模板。
 - **成本参考**（用于订阅定价，需按实际云商价格核对）：standard 单租户折算 ≈ ¥300–450/月（计算+存储+带宽+备份，不含 LLM API）；LLM API 按用量由租户自备 Key 或平台代付（建议平台代付、计入订阅档位，便于计量）。
-- **备份与恢复**：每租户每日 02:00 快照（pg_dump + 数据目录）保留 7 天，存独立对象存储路径 `backup/{tenantId}/`；订阅期内 1 次按需恢复。
+- **备份与恢复**：每租户每日 02:00 快照（`scripts/backup-tenants.sh`：pg_dump + mongodump + data/license），保留 7 天，产物路径 `backup/tenants/{tenantId}/<YYYYmmdd_HHMMSS>/`；订阅期内 1 次按需恢复，使用 `scripts/restore-tenant.sh <tenantId> --yes`（默认只打印计划，需显式确认；恢复含 public schema 重建、mongorestore --drop、data/license 解包）。
 - **发布与灰度**：镜像版本矩阵 + 分批升级（金丝雀 1 个内部租户 → 24h 观察 → 分批全量），每租户升级前自动快照，失败自动回滚（详见 M11）。
 - **与私有化形态的运维差异**：私有化形态适配层不上报任何数据；SaaS 形态下适配层每日向控制面上报**计数类**用量（无正文），上报失败本地缓存 7 天后丢弃，不影响问答链路。
 
@@ -893,3 +893,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.17 | 2026-10-30 | M11 补容器资源水位（healthz resources + 水位告警）；§8.3 与 M11 接口清单补全 |
 | V1.18 | 2026-10-30 | §9 密钥管理/反逆向补齐安装器落地（SHA256SUMS 校验、强口令预检）；日志脱敏表述精确化 |
 | V1.19 | 2026-10-30 | §10.5/§12：租户 compose 六服务写入 standard 档 `mem_limit`（合计 ≈5.9G），cgroup 内存硬隔离落地 |
+| V1.20 | 2026-10-30 | §10.5 备份路径修正为 `backup/tenants/{tenantId}/`；补 `restore-tenant.sh` 按需恢复与确认机制 |
