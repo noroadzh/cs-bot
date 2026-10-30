@@ -48,6 +48,10 @@ export interface MonitorOptions {
   maxRestartsPerHour?: number;
   /** 告警去重窗口 */
   alertWindowMs?: number;
+  /** 资源水位告警阈值（%） */
+  resourceAlertPct?: number;
+  /** 连续多少次超过阈值才告警 */
+  resourceAlertStreak?: number;
   /** 租户 id 列表（周期巡检必需） */
   listTenants?: () => Promise<string[]>;
   now?: () => number;
@@ -61,6 +65,9 @@ export class PlatformMonitor implements OnModuleInit, OnModuleDestroy {
   private readonly alertWindowMs: number;
   private readonly listTenants?: () => Promise<string[]>;
   private readonly now: () => number;
+  private readonly resourceAlertPct: number;
+  private readonly resourceAlertStreak: number;
+  private readonly resourceHits = new Map<string, number>();
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private readonly failures = new Map<string, number>();
@@ -77,6 +84,8 @@ export class PlatformMonitor implements OnModuleInit, OnModuleDestroy {
     this.failureThreshold = Math.max(opts.failureThreshold ?? 2, 1);
     this.maxRestartsPerHour = Math.max(opts.maxRestartsPerHour ?? 3, 0);
     this.alertWindowMs = opts.alertWindowMs ?? 3_600_000;
+    this.resourceAlertPct = Math.min(Math.max(opts.resourceAlertPct ?? 90, 1), 100);
+    this.resourceAlertStreak = Math.max(opts.resourceAlertStreak ?? 3, 1);
     this.listTenants = opts.listTenants;
     this.now = opts.now ?? (() => Date.now());
   }
@@ -120,6 +129,7 @@ export class PlatformMonitor implements OnModuleInit, OnModuleDestroy {
       const now = this.now();
       for (const inst of instances) {
         const id = inst.tenantId;
+        await this.checkResourceWater(inst);
         if (inst.healthy) {
           this.failures.delete(id);
           continue;
@@ -158,6 +168,29 @@ export class PlatformMonitor implements OnModuleInit, OnModuleDestroy {
     } finally {
       this.running = false;
     }
+  }
+
+  /** 资源水位：连续 N 次超阈值告警一次（不重启） */
+  private async checkResourceWater(inst: InstanceHealth): Promise<void> {
+    const cpu = inst.cpuPct ?? 0;
+    const mem = inst.memPct ?? 0;
+    const over = cpu >= this.resourceAlertPct || mem >= this.resourceAlertPct;
+    if (!over) {
+      this.resourceHits.delete(inst.tenantId);
+      return;
+    }
+    const hits = (this.resourceHits.get(inst.tenantId) ?? 0) + 1;
+    if (hits < this.resourceAlertStreak) {
+      this.resourceHits.set(inst.tenantId, hits);
+      return;
+    }
+    this.resourceHits.set(inst.tenantId, 0);
+    await this.alert(inst.tenantId, 'resource_high', {
+      cpuPct: cpu,
+      memPct: mem,
+      thresholdPct: this.resourceAlertPct,
+      streak: hits,
+    });
   }
 
   /** 对异常实例执行重启（若注入了重启动作） */
@@ -261,10 +294,13 @@ export class HttpHealthSource implements HealthSource {
         httpsAgent,
       });
       const rates = computeFailRates(resp.data?.usage);
+      const res = resp.data?.resources as { cpuPct?: unknown; memPct?: unknown } | undefined;
       return {
         tenantId,
         healthy: resp.status === 200,
         ...rates,
+        cpuPct: typeof res?.cpuPct === 'number' ? res.cpuPct : undefined,
+        memPct: typeof res?.memPct === 'number' ? res.memPct : undefined,
       };
     } catch {
       return { tenantId, healthy: false, qaFailRate: 0, llmFailRate: 0 };

@@ -158,6 +158,9 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_VERIFY_TLS: EnvBool(true),
   PLATFORM_INSTANCE_TIMEOUT_MS: EnvInt(8000),
   TENANT_ADMIN_ALLOW_CIDRS: EnvString.default(''),
+  /** 资源水位告警：阈值(%) 与连续次数 */
+  PLATFORM_RESOURCE_ALERT_PCT: EnvInt(90),
+  PLATFORM_RESOURCE_ALERT_STREAK: EnvInt(3),
   PLATFORM_MONITOR_INTERVAL_MS: EnvInt(60000),
   PLATFORM_RESTART_FAILURE_THRESHOLD: EnvInt(2),
   PLATFORM_RESTART_MAX_PER_HOUR: EnvInt(3),

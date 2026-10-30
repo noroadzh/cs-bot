@@ -3,13 +3,13 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | adapter 单元测试报告（Jest） |
-| 版本 | V1.5 |
+| 版本 | V1.6 |
 | 日期 | 2026-10-29 |
 | 适用对象 | 交付工程师、内部开发 |
-| 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计 V1.16》《详细设计 V1.9》） |
+| 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计 V1.17》《详细设计 V1.10》） |
 | 测试范围 | `apps/adapter`（NestJS 适配层）单元测试 |
 | 运行方式 | 本地 `cd apps/adapter && pnpm test:cov`；CI `pnpm -F @cs-bot/adapter test:cov` |
-| 关联文档 | 《部署手册 V1.12》《详细设计 V1.9》 |
+| 关联文档 | 《部署手册 V1.12》《详细设计 V1.10》 |
 
 > 本报告记录 2026-10-29 一次全量单测执行结果，用于交付存档。覆盖率为 Jest `--coverage`（v8）采集，仅统计 `apps/adapter/src` 下被测源码；`packages/*` 与 `apps/web` 不在范围。集成/验收套件需真实 PG，按环境条件跳过，单独执行（见 §1.1）。
 
@@ -19,8 +19,8 @@
 
 | 指标 | 值 | 阈值 | 状态 |
 |---|---|---|---|
-| Test Suites | 104 passed / 117 total（13 个集成/验收套件按条件跳过） | — | ✅ |
-| Tests | 977 passed / 1028 total（51 skipped） | — | ✅ |
+| Test Suites | 106 passed / 119 total（13 个集成/验收套件按条件跳过） | — | ✅ |
+| Tests | 985 passed / 1036 total（51 skipped） | — | ✅ |
 | Snapshots | 0 | — | — |
 | 耗时 | 106.5 s（首次含 ts-jest 编译） | — | — |
 | Statements 覆盖率 | 94.44 % | ≥ 75 % | ✅ |

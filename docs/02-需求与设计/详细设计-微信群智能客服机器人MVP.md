@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.9（V1.8 + 授权接口响应按 LicenseState 对齐） |
+| 版本 | V1.10（V1.9 + 实例资源指标与定时任务补齐） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.16》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.12》 |
+| 上游文档 | 《概要设计 V1.17》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.12》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -119,6 +119,7 @@ export type Result<T, E = unknown> = Ok<T> | Err<E>;
 | 能力 | 实现 | 说明 |
 |---|---|---|
 | 实例与超时 | `axios.create({ baseURL, timeout })` | WecomClient 10s；FastGPT 主/备各一实例；VL 10s |
+| 资源水位 | `apps/adapter/src/common/resource-metrics.ts` | `/healthz` 输出 `resources.{cpuPct,memPct}`：cgroup v2/v1 内存占用比，CPU 用 loadavg/核数；异常时返回 0 |
 | 并发上限 | `apps/adapter/src/common/semaphore.ts` | FIFO 信号量：`LLM_CONCURRENCY=4`、`WECOM_CONCURRENCY=8`、`VL_CONCURRENCY=2`（可配） |
 | 重试 | 客户端内建 | 企微发送 `WECOM_SEND_MAX_ATTEMPTS=3` + 退避；FastGPT 失败退避 `LLM_RETRY_DELAY_MS=1000` 后重试 1 次；同幂等请求才重试 |
 
@@ -528,6 +529,7 @@ currentUsage = { messagesReceived, assetsSent }
 | 导入临时区清理 | `40 3 * * *` | 删 `data/import/*`、>30d review.xlsx、>180d import_item |
 | 到期提醒 | `0 9 * * *` | 距 expires ≤15 天 → 运维群 webhook 告警 |
 | 用量上报（SaaS） | `30 2 * * *` | POST /report（失败缓存 7 天） |
+| 审计清理 | `50 3 * * *` | 导出 180 天前审计 JSONL 到 `PLATFORM_AUDIT_ARCHIVE_DIR`，成功后删除本地行 |
 | 备份脚本 | 宿主 cron `0 2 * * *` | pg_dump + mongodump + assets（deploy/backup.sh） |
 
 ## 8. 构建、交付与反逆向管线
@@ -582,4 +584,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。*

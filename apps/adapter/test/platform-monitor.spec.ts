@@ -83,6 +83,44 @@ describe('PlatformMonitor', () => {
     expect(audit.some((a) => a.action === 'tenant.alert' && a.payload.reason === 'restart_failed')).toBe(true);
   });
 
+  it('alerts once after consecutive high resource probes without restarting', async () => {
+    const health: any = {
+      calls: 0,
+      async probe(id: string) {
+        this.calls += 1;
+        return { tenantId: id, healthy: true, qaFailRate: 0, llmFailRate: 0, cpuPct: 95, memPct: 40 };
+      },
+    };
+    const m = make(health, async (id) => { restarts.push(id); }, {
+      resourceAlertPct: 90,
+      resourceAlertStreak: 3,
+    });
+
+    await m.tick();
+    await m.tick();
+    expect(audit.some((a) => a.payload?.reason === 'resource_high')).toBe(false);
+
+    await m.tick();
+    const alerts = audit.filter((a) => a.payload?.reason === 'resource_high');
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].payload).toMatchObject({ cpuPct: 95, memPct: 40, thresholdPct: 90 });
+    expect(restarts).toEqual([]);
+  });
+
+  it('does not alert on a single high spike', async () => {
+    let n = 0;
+    const health: any = {
+      async probe(id: string) {
+        n += 1;
+        return { tenantId: id, healthy: true, qaFailRate: 0, llmFailRate: 0, cpuPct: n === 1 ? 99 : 10, memPct: 10 };
+      },
+    };
+    const m = make(health, undefined, { resourceAlertPct: 90, resourceAlertStreak: 2 });
+    await m.tick();
+    await m.tick();
+    expect(audit.some((a) => a.payload?.reason === 'resource_high')).toBe(false);
+  });
+
   it('does not run when no tenant list is configured', async () => {
     const health = source([false]);
     const monitor = new PlatformMonitor(health, async () => { restarts.push('x'); });

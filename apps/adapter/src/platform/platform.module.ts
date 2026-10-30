@@ -97,6 +97,8 @@ export class PlatformModule {
                 intervalMs: ConfigService.instance.PLATFORM_MONITOR_INTERVAL_MS,
                 failureThreshold: ConfigService.instance.PLATFORM_RESTART_FAILURE_THRESHOLD,
                 maxRestartsPerHour: ConfigService.instance.PLATFORM_RESTART_MAX_PER_HOUR,
+                resourceAlertPct: ConfigService.instance.PLATFORM_RESOURCE_ALERT_PCT,
+                resourceAlertStreak: ConfigService.instance.PLATFORM_RESOURCE_ALERT_STREAK,
                 listTenants: async () => (await tenants.list()).rows.map((t) => t.id),
               },
             ),

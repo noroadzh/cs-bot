@@ -63,6 +63,7 @@ describe('HealthController.check', () => {
     const out = await capture(() => makeController({ valid: true, mock: true }).check());
     expect(out.threw).toBe(false);
     expect(out.res).toMatchObject({
+      resources: { cpuPct: expect.any(Number), memPct: expect.any(Number) },
       status: 'ok',
       license: { valid: true, mock: true },
       usage: { messagesReceived: 10, messagesAnswered: 6, messagesMissed: 4, llmFailures: 1 },
@@ -90,6 +91,7 @@ describe('HealthController.check', () => {
   it('依赖全好但 license 失效 → deps 仅含 license，license 字段被透传', async () => {
     const out = await capture(() => makeController({ valid: false, mock: false, reason: 'expired' }).check());
     const body = (out as any).err.getResponse();
+    expect(body.resources).toEqual({ cpuPct: expect.any(Number), memPct: expect.any(Number) });
     expect(body.deps).toEqual(['license']);
     expect(body.license).toEqual({ valid: false, mock: false, reason: 'expired' });
   });

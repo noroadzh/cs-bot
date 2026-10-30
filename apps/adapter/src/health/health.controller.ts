@@ -4,6 +4,7 @@ import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Redis } from 'ioredis';
 import type { Client as PgClient } from 'pg';
 import { LicenseService } from '../license/license.service.js';
+import { readResourceMetrics } from '../common/resource-metrics.js';
 import { UsageService } from '../usage/usage.service.js';
 import { HealthResponseDto, HealthDegradedResponseDto } from '../common/dto/health-response.dto.js';
 
@@ -31,6 +32,7 @@ export class HealthController {
     } catch { deps.push('postgresql'); }
     const licenseState = await this.license.verifyAndCache();
     if (!licenseState.valid) deps.push('license');
+    const resources = readResourceMetrics();
     const snapshot = this.usage.getUsage();
     const c = snapshot.counters;
     const usage = {
@@ -47,10 +49,10 @@ export class HealthController {
     };
     if (deps.length > 0) {
       throw new HttpException(
-        { status: 'degraded', deps, license: licenseState, usage },
+        { status: 'degraded', deps, license: licenseState, usage, resources },
         HttpStatus.SERVICE_UNAVAILABLE,
       );
     }
-    return { status: 'ok', license: { valid: licenseState.valid, mock: licenseState.mock }, usage };
+    return { status: 'ok', license: { valid: licenseState.valid, mock: licenseState.mock }, usage, resources };
   }
 }

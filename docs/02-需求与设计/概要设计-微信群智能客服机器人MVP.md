@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.16（V1.15 + 端口基线与敏感词算法表述修正） |
+| 版本 | V1.17（V1.16 + 资源水位监控与接口清单补全） |
 | 日期 | 2026-10-12 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
-| 关联文档 | 《PRD V1.5》《详细设计 V1.9（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.12》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
+| 关联文档 | 《PRD V1.5》《详细设计 V1.10（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.12》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
 
 ## 2. 设计目标与约束
 
@@ -438,7 +438,7 @@ triggers:
   - 镜像版本矩阵管理；升级批次化（每批 ≤ 10% 实例或按租户档位分组），先金丝雀（1 个内部租户）→ 观察 24h（错误率/延迟）→ 全量。
   - 每租户升级前自动快照（pg_dump + 数据目录），失败自动回滚到上一版本镜像与快照；升级窗口选低峰（默认 02:00–04:00），提前 3 个工作日通知租户。
 - **监控、告警与审计**：
-  - 聚合各实例 `/healthz`、问答失败率、LLM 失败率、容器资源水位；租户实例异常自动重启并告警。
+  - 聚合各实例 `/healthz`、问答失败率、LLM 失败率、容器资源水位（`resources.cpuPct/memPct`）；实例异常自动重启并告警，资源水位连续 ≥ 阈值（默认 90%×3 次）推送 `tenant.alert`（不重启）。
   - 运维访问审计：跳板入口 + 每次进入实例记录（操作人/时间/租户/原因/时长），审计日志不可删改（只追加，异地留存 180 天）；默认不查看知识库与问答正文，故障排查需租户书面同意。
 - **租户注销与数据删除（Offboarding）**：
   1. 发起需双方确认（控制面双签记录）；2. 生成导出包（知识库文档 + `assets` + `pg_dump` + config，加密交付）；3. 租户确认收货；4. T+7 删除实例、数据目录、备份与证书，写入删除确认单；5. 注册表置 terminated（仅保留名称/联系人/时间等最小元数据）。
@@ -456,6 +456,14 @@ triggers:
   | POST | /platform/upgrades | 批量升级（批次、金丝雀、回滚） |
   | GET | /platform/usage | 平台总览（租户数/资源水位/异常实例） |
   | GET | /platform/audit-log | 运维访问审计日志查询 |
+  | GET | /platform/audit-log/verify | 审计链完整性校验 |
+  | POST | /platform/tenants/:id/provision | 触发开通编排（模板渲染/证书/授权/启动） |
+  | POST | /platform/tenants/:id/restart | 重启租户实例 |
+  | PUT | /platform/tenants/:id/secrets | 写入/轮换租户密钥（加密存储） |
+  | POST | /platform/tenants/:id/credentials/handoff | 一次性领取生成的管理员/FastGPT 口令 |
+  | POST | /platform/tenants/:id/shell-access | 记录运维 shell 访问审计（跳板调用） |
+  | POST | /platform/sweep | 手动触发到期/宽限扫描 |
+  | POST | /platform/report | 接收实例用量上报（Bearer token，无正文） |
 - **数据表**：`tenant`、`tenant_quota`、`tenant_usage_daily`、`platform_audit_log`（见 §7.4 平台侧表）。
 
 ## 6. 关键流程时序（ASCII）
@@ -673,8 +681,10 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | GET | /healthz | 健康检查（容器 + compose） |
 | GET | /admin/miss-records?from&to&format=xlsx | 未命中导出：Basic Auth，直接返回 xlsx 文件流，不做 Web 页面（V1.1 确认） |
 | POST | /admin/keywords/reload | 触发关键词热加载 |
+| POST | /admin/config/reload | 配置热加载（阈值/超时/话术） |
+| GET | /admin/usage | 用量计数查询 |
 | GET | /admin/config-check | 配置自检（值打码） |
-| POST | /admin/assets、GET /admin/assets、DELETE /admin/assets/:id | 素材上传（multipart/JSON）/清单/停用，Basic Auth（V1.2 增项） |
+| POST | /admin/assets、GET /admin/assets、GET /admin/assets/:id、DELETE /admin/assets/:id | 素材上传（multipart/JSON）/清单/详情/删除，Basic Auth（V1.2 增项） |
 | GET | /admin/license | 授权状态查询：有效性/剩余天数/群数上限/指纹哈希（V1.3） |
 | POST | /admin/license/reload | 证书热重载，续期后免重启生效（V1.3） |
 | POST | /admin/import-jobs、GET /admin/import-jobs、GET /admin/import-jobs/:id | 历史会话导入：上传创建任务/批次列表/进度查询，Basic Auth（V1.5 增项） |
@@ -682,7 +692,9 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | POST | /admin/import-jobs/:id/confirm | 提交审核结果并触发批量入库（V1.5 增项） |
 | POST | /admin/import-jobs/:id/rollback | 批次下线回滚（V1.5 增项） |
 | POST | /admin/import-jobs/:id/retry | 失败条目重试（V1.5 增项） |
-| — | /platform/* | 平台控制面接口（仅 SaaS 形态，独立服务，清单见 §M11，V1.6 增项 C） |
+| 其他 | `/admin/import-jobs/from-url`、`/:id/parse`、`/:id/items`、`/:id/approve-all`、`/:id/unpaired`、`/:id/unpaired/pair`、`DELETE /:id`、`/counts`、`/lock/release` | 导入配套端点（上传 URL、后台解析、条目/批量通过、补配、删除、计数、租约释放） |
+| POST | /internal/tenant/sync | 控制面→实例的配额/状态同步（Bearer 内部 token） |
+| — | /platform/* | 平台控制面接口（仅 SaaS 形态，独立服务，完整清单见 §M11 与 Swagger `/docs`，V1.6 增项 C） |
 
 ## 9. 安全设计
 
@@ -878,3 +890,4 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.14 | 2026-10-30 | §10.1 端口矩阵补 8443（FastGPT 管理后台，默认 deny、仅白名单网段）；修正 fastgpt 端口 3001→3000 |
 | V1.15 | 2026-10-30 | §7.4 平台侧表按实际迁移重写（UUID 主键、status/host/port、payload 审计、配额维度），补充升级/快照/注销表清单 |
 | V1.16 | 2026-10-30 | §9 端口基线含 8443 管理口、传输安全补 /admin 与 /healthz；M6 改为 Aho-Corasick 自动机 |
+| V1.17 | 2026-10-30 | M11 补容器资源水位（healthz resources + 水位告警）；§8.3 与 M11 接口清单补全 |
