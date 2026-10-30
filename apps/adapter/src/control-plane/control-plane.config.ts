@@ -23,6 +23,7 @@ export const ControlPlaneConfigSchema = z.preprocess(preprocessEnv, z.object({
   LICENSE_ISSUER: EnvString.default('shell'),
   LICENSE_ISSUER_BIN: EnvString.default('/app/tools/license-issuer/license-issuer.mjs'),
   LICENSE_ISSUER_KEY: EnvString.optional().default(''),
+  LICENSE_SIGN_CMD: EnvString.optional().default(''),
   LICENSE_ISSUER_OUT_DIR: EnvString.default('data/licenses'),
   PLATFORM_LICENSE_FINGERPRINT: EnvString.optional().default(''),
   PLATFORM_HEALTH_URL_TEMPLATE: EnvString.default('http://{host}/healthz'),
@@ -36,6 +37,12 @@ export const ControlPlaneConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_UPGRADE_CANARY_ID: EnvString.optional().default(''),
 
   OPS_WEBHOOK_URL: EnvString.optional().default(''),
+  EMAIL_WEBHOOK_URL: EnvString.optional().default(''),
+  SMTP_HOST: EnvString.optional().default(''),
+  SMTP_PORT: EnvInt(587),
+  SMTP_FROM: EnvString.optional().default(''),
+  SMTP_USER: EnvString.optional().default(''),
+  SMTP_PASSWORD: EnvString.optional().default(''),
   CONTROL_PLANE_TOKEN: EnvString.optional().default(''),
 
   LOG_LEVEL: EnvString.default('info'),

@@ -232,6 +232,24 @@ describe('ShellProvisioner.render', () => {
     expect(limits.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(6500);
   });
 
+  it('enhanced 档六项内存合计大于 standard 且不超过 16G', async () => {
+    fsWriteFile.mockClear();
+    const standard = tenant();
+    await p.render(standard);
+    const standardContent = fsWriteFile.mock.calls.at(-1)?.[1] as string;
+    const standardSum = [...standardContent.matchAll(/mem_limit: (\d+)m/g)]
+      .reduce((sum, m) => sum + Number(m[1]), 0);
+    fsWriteFile.mockClear();
+    await p.render(tenant({ plan: 'enhanced' }));
+    const content = fsWriteFile.mock.calls.at(-1)?.[1] as string;
+    const limits = [...content.matchAll(/mem_limit: (\d+)m/g)].map((m) => Number(m[1]));
+    const sum = limits.reduce((a, b) => a + b, 0);
+    expect(limits).toHaveLength(6);
+    expect(sum).toBeGreaterThan(standardSum);
+    expect(sum).toBeLessThanOrEqual(16384);
+    expect(content).toContain('mem_limit: 5120m');
+  });
+
   it('TENANT_ADMIN_ALLOW_CIDRS 非空时开放 8443 并写入 allow/deny', async () => {
     fsWriteFile.mockClear();
     fsMkdir.mockClear();

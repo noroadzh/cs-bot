@@ -69,21 +69,25 @@ suite('M11 8.2 跨租户隔离抽测（逻辑层）', () => {
         }
       }
 
-      // 各写一条独有语料（source_* 留空，避免外键）
-      await a.query(
-        `INSERT INTO approved_qa (id, question, answer) VALUES (gen_random_uuid(), '租户A独有问题', '答案A')`,
-      );
-      await b.query(
-        `INSERT INTO approved_qa (id, question, answer) VALUES (gen_random_uuid(), '租户B独有问题', '答案B')`,
-      );
+      // 各写 20 条独有语料（source_* 留空，避免外键）
+      for (let i = 0; i < 20; i++) {
+        await a.query(
+          `INSERT INTO approved_qa (id, question, answer) VALUES (gen_random_uuid(), $1, '答案A')`,
+          [`租户A独有问题-${i}`],
+        );
+        await b.query(
+          `INSERT INTO approved_qa (id, question, answer) VALUES (gen_random_uuid(), $1, '答案B')`,
+          [`租户B独有问题-${i}`],
+        );
+      }
 
-      const aOwn = await a.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question = '租户A独有问题'`);
-      const aCrossB = await a.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question = '租户B独有问题'`);
-      const bOwn = await b.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question = '租户B独有问题'`);
-      const bCrossA = await b.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question = '租户A独有问题'`);
+      const aOwn = await a.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question LIKE '租户A独有问题-%'`);
+      const aCrossB = await a.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question LIKE '租户B独有问题-%'`);
+      const bOwn = await b.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question LIKE '租户B独有问题-%'`);
+      const bCrossA = await b.query(`SELECT count(*)::int AS n FROM approved_qa WHERE question LIKE '租户A独有问题-%'`);
 
-      expect(aOwn.rows[0].n).toBe(1);
-      expect(bOwn.rows[0].n).toBe(1);
+      expect(aOwn.rows[0].n).toBe(20);
+      expect(bOwn.rows[0].n).toBe(20);
       // 跨租户检索 0 命中
       expect(aCrossB.rows[0].n).toBe(0);
       expect(bCrossA.rows[0].n).toBe(0);

@@ -5,6 +5,7 @@
 import axios, { AxiosInstance } from 'axios';
 import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
+import { requestContext } from '../common/request-context.js';
 import { AppLogger } from '../common/logger.js';
 import { ErrCode } from '@cs-bot/shared';
 import type { IMessageSender } from '../qa/message-sender.port.js';
@@ -76,6 +77,11 @@ export class WecomClient implements IMessageSender {
   }
 
   async sendText(chatId: string, content: string, atUser?: string, clientMsgId?: string): Promise<void> {
+    const slot = requestContext.getStore()?.passiveReply;
+    if (slot?.hold) {
+      slot.parts.push(content);
+      return;
+    }
     const id = clientMsgId ?? crypto.randomUUID();
     await this.withSendRetry('sendText', async () => {
       const token = await this.getAccessToken();

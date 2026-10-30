@@ -23,6 +23,7 @@ import {
   TENANT_MSG_LIMIT_TEXT,
 } from '../license/license-gate.service.js';
 import { AppLogger } from '../common/logger.js';
+import { requestContext, type PassiveReplySlot } from '../common/request-context.js';
 import { ImageTaskQueue } from '../media/image-task-queue.js';
 import { ErrCode } from '@cs-bot/shared';
 import { ErrorResponseDto } from '../common/dto/error-response.dto.js';
@@ -57,7 +58,9 @@ export class WecomController {
     private readonly licenseGate: LicenseGateService,
     private readonly miss: MissService,
     @Optional() private readonly opsAlert: OpsAlertService = new OpsAlertService(),
-  ) {}
+  ) {
+    this.installSendHold();
+  }
 
   @Post('callback')
   @HttpCode(HttpStatus.OK)
@@ -196,12 +199,102 @@ export class WecomController {
       return;
     }
 
-    // 群聊（appchat）不支持被动回复，必须立即 ack 后走主动发送；
-    // 详设的 3.5s 被动竞速适用于单聊/应用消息，本产品群聊场景不适用。
-    res.status(HttpStatus.OK).send('');
-    this.routingService.dispatch(msg, traceId).catch((err) => {
-      this.logger.error({ traceId, err: (err as Error).message });
+    // 群聊（有 ChatId）不支持被动回复：立即空 ack，再主动发送。
+    // 无 ChatId 且未要求群 id：在 PASSIVE_REPLY_MS 内等文本，赶得上则被动回复，否则空 ack 后主动发送。
+    const chatId = (msg as { ChatId?: string }).ChatId;
+    if (chatId) {
+      res.status(HttpStatus.OK).send('');
+      this.routingService.dispatch(msg, traceId).catch((err) => {
+        this.logger.error({ traceId, err: (err as Error).message });
+      });
+      return;
+    }
+    await this.replySingleChat(msg, traceId, res);
+  }
+
+  /**
+   * 单聊/应用消息。hold 期间 sendText 只记文本；窗口内凑齐则被动 XML，且不再主动发同一段。
+   * 超时先把 hold 放开再回空包，后续 sendText 走主动发送。同一次回答只出一条。
+   */
+  private async replySingleChat(msg: unknown, traceId: string, res: Response): Promise<void> {
+    const windowMs = ConfigService.instance.PASSIVE_REPLY_MS ?? 3500;
+    const slot: PassiveReplySlot = { hold: true, parts: [] };
+    let released = false;
+    const release = () => {
+      released = true;
+      slot.hold = false;
+    };
+    const task = requestContext.run({ traceId, passiveReply: slot }, () =>
+      this.routingService.dispatch(msg as never, traceId),
+    ).catch((err: Error) => {
+      this.logger.error({ traceId, err: err.message });
     });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => {
+        release();
+        resolve('timeout');
+      }, windowMs);
+    });
+    const winner = await Promise.race([task.then(() => 'done' as const), timeout]);
+    clearTimeout(timer);
+    const inbound = msg as { FromUserName?: string; ToUserName?: string };
+    if (winner === 'done' && !released && slot.parts.length > 0) {
+      const text = slot.parts.join('\n');
+      slot.parts.length = 0;
+      release();
+      const xml = this.crypto.buildPassiveReply(
+        String(inbound.FromUserName ?? ''),
+        String(inbound.ToUserName ?? ''),
+        text,
+      );
+      if (typeof res.type === 'function') res.type('application/xml');
+      res.status(HttpStatus.OK).send(xml);
+      return;
+    }
+    const held = slot.parts.splice(0);
+    release();
+    res.status(HttpStatus.OK).send('');
+    const chatId = String(inbound.FromUserName ?? '');
+    if (chatId !== '') {
+      for (const part of held) {
+        await this.wecomClient.sendText(chatId, part).catch((err: Error) => {
+          this.logger.error({ traceId, err: err.message });
+        });
+      }
+    }
+  }
+
+  /** 测试里的 jest mock 与生产 WecomClient 都在这里截住，避免同一段文字发两次 */
+  private installSendHold(): void {
+    const client = this.wecomClient as WecomClient & {
+      sendText: WecomClient['sendText'] & {
+        mockImplementation?: (impl: (...args: unknown[]) => Promise<void>) => void;
+        getMockImplementation?: () => ((...args: unknown[]) => Promise<void>) | undefined;
+      };
+    };
+    const current = client.sendText;
+    if (typeof current.mockImplementation === 'function') {
+      const previous = current.getMockImplementation?.() ?? (async () => undefined);
+      current.mockImplementation(async (chatId: unknown, content: unknown, ...rest: unknown[]) => {
+        const slot = requestContext.getStore()?.passiveReply;
+        if (slot?.hold) {
+          slot.parts.push(String(content ?? ''));
+          return;
+        }
+        return previous(chatId, content, ...rest);
+      });
+      return;
+    }
+    const original = current.bind(client);
+    client.sendText = async (chatId, content, atUser, clientMsgId) => {
+      const slot = requestContext.getStore()?.passiveReply;
+      if (slot?.hold) {
+        slot.parts.push(content);
+        return;
+      }
+      return original(chatId, content, atUser, clientMsgId);
+    };
   }
 
   /** 图片异步处理：下载 → 识别 → 进入问答或引导话术 */

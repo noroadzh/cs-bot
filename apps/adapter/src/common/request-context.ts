@@ -6,10 +6,17 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 
+/** 单聊被动回复窗口：hold 为真时 sendText 只累积文本，不主动发送 */
+export interface PassiveReplySlot {
+  hold: boolean;
+  parts: string[];
+}
+
 export interface RequestContext {
   traceId: string;
   /** 平台变更操作的必填原因（审计） */
   auditReason?: string;
+  passiveReply?: PassiveReplySlot;
 }
 
 export const requestContext = new AsyncLocalStorage<RequestContext>();

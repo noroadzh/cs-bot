@@ -107,13 +107,14 @@ export class ShellProvisioner implements TenantProvisioner {
     }
     await this.writeInitDb(initDir);
 
+    const mem = memoryLimits(tenant.plan);
     const content = [
       '# 由 cs-bot 控制面自动渲染，请勿手工编辑',
-      '# 资源硬隔离（概设 §10.5 standard 档 = 私有化基线；enhanced 档另行调整模板）',
+      `# 资源硬隔离 plan=${tenant.plan === 'enhanced' ? 'enhanced' : 'standard'}`,
       `name: ${project}`,
       'services:',
       '  nginx:',
-      '    mem_limit: 128m',
+      `    mem_limit: ${mem.nginx}`,
       '    image: nginx:1.27-alpine',
       '    restart: unless-stopped',
       '    ports:',
@@ -130,7 +131,7 @@ export class ShellProvisioner implements TenantProvisioner {
       '    networks:',
       `      - ${net}`,
       '  adapter:',
-      '    mem_limit: 512m',
+      `    mem_limit: ${mem.adapter}`,
       '    image: ${CSBOT_IMAGE:-cs-bot-adapter:latest}',
       '    container_name: ' + project,
       '    restart: unless-stopped',
@@ -165,7 +166,7 @@ export class ShellProvisioner implements TenantProvisioner {
       '    networks:',
       `      - ${net}`,
       '  fastgpt:',
-      '    mem_limit: 2560m',
+      `    mem_limit: ${mem.fastgpt}`,
       '    image: labring/fastgpt:v4.8.17',
       '    restart: unless-stopped',
       '    env_file:',
@@ -190,7 +191,7 @@ export class ShellProvisioner implements TenantProvisioner {
       '    networks:',
       `      - ${net}`,
       '  pg:',
-      '    mem_limit: 1229m',
+      `    mem_limit: ${mem.pg}`,
       '    image: pgvector/pgvector:pg16',
       '    restart: unless-stopped',
       '    env_file:',
@@ -209,7 +210,7 @@ export class ShellProvisioner implements TenantProvisioner {
       '    networks:',
       `      - ${net}`,
       '  mongo:',
-      '    mem_limit: 1024m',
+      `    mem_limit: ${mem.mongo}`,
       '    image: mongo:7',
       '    restart: unless-stopped',
       '    volumes:',
@@ -217,7 +218,7 @@ export class ShellProvisioner implements TenantProvisioner {
       '    networks:',
       `      - ${net}`,
       '  redis:',
-      '    mem_limit: 512m',
+      `    mem_limit: ${mem.redis}`,
       '    image: redis:7-alpine',
       '    restart: unless-stopped',
       '    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]',
@@ -432,4 +433,33 @@ ${adminCidrs.length > 0 ? `  # 租户 FastGPT 后台（初始化/知识运营）
       });
     });
   }
+}
+
+/** 概设 §10.5：standard ≈ 4C8G（合计 ≤ 6.5GB），enhanced ≈ 8C16G（合计 ≤ 16GB） */
+function memoryLimits(plan: string | undefined): {
+  nginx: string;
+  adapter: string;
+  fastgpt: string;
+  pg: string;
+  mongo: string;
+  redis: string;
+} {
+  if (plan === 'enhanced') {
+    return {
+      nginx: '256m',
+      adapter: '1024m',
+      fastgpt: '5120m',
+      pg: '2560m',
+      mongo: '2048m',
+      redis: '1024m',
+    };
+  }
+  return {
+    nginx: '128m',
+    adapter: '512m',
+    fastgpt: '2560m',
+    pg: '1229m',
+    mongo: '1024m',
+    redis: '512m',
+  };
 }

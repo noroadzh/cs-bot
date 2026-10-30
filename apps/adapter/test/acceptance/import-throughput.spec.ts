@@ -1,5 +1,7 @@
 /**
  * 验收：1 万条历史会话导入 ≤10 分钟（解析 + 配对）
+ * 报告写入 artifacts/acceptance/import-throughput-*.json，断言失败前也会落盘。
+ * 未设置 TEST_PG_URL 时跳过。
  */
 import { describe, it, expect, beforeAll, afterAll, jest } from '@jest/globals';
 import { Pool } from 'pg';
@@ -67,9 +69,6 @@ suite('验收：导入吞吐', () => {
     const parsed = await svc.parseJob(created.job.id);
     const elapsedMs = Date.now() - start;
 
-    expect(parsed.status).toBe('parsed');
-    expect(elapsedMs).toBeLessThan(TARGET_MS);
-
     const outDir = join(process.cwd(), '..', '..', 'artifacts', 'acceptance');
     await mkdir(outDir, { recursive: true });
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -90,6 +89,9 @@ suite('验收：导入吞吐', () => {
       ),
       'utf8',
     );
+
+    expect(parsed.status).toBe('parsed');
+    expect(elapsedMs).toBeLessThan(TARGET_MS);
 
     await pool.query('DELETE FROM import_job WHERE id = $1', [created.job.id]);
     await fs.rm(join(process.cwd(), 'data', 'import', created.job.id), { recursive: true, force: true });

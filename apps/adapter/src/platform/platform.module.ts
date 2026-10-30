@@ -27,7 +27,13 @@ import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
 import { ShellUpgradeDeps } from './upgrade-runner.js';
 import { TenantOffboarding } from './tenant-offboarding.js';
 import { PgOffboardingRepo } from './tenant-offboarding.pg.js';
-import { EmailWebhookNotifier, MultiNotifier, SubscriptionReminder, WebhookNotifier } from './subscription-reminder.js';
+import {
+  EmailWebhookNotifier,
+  LogOnlyNotifier,
+  SmtpNotifier,
+  SubscriptionReminder,
+  WebhookNotifier,
+} from './subscription-reminder.js';
 
 @Module({})
 export class PlatformModule {
@@ -53,12 +59,7 @@ export class PlatformModule {
         {
           provide: SubscriptionReminder,
           useFactory: () =>
-            new SubscriptionReminder(
-              new MultiNotifier([
-                new WebhookNotifier(ConfigService.instance.OPS_WEBHOOK_URL ?? ''),
-                new EmailWebhookNotifier(ConfigService.instance.EMAIL_WEBHOOK_URL ?? ''),
-              ]),
-            ),
+            new SubscriptionReminder(tenantMailNotifier(), new WebhookNotifier(ConfigService.instance.OPS_WEBHOOK_URL ?? '')),
         },
         {
           provide: TenantSecretStore,
@@ -149,4 +150,19 @@ export class PlatformModule {
       exports: [TenantService, TenantQuotaService, PlatformAuditService],
     };
   }
+}
+
+function tenantMailNotifier() {
+  const cfg = ConfigService.instance;
+  if (cfg.SMTP_HOST) {
+    return new SmtpNotifier({
+      host: cfg.SMTP_HOST,
+      port: cfg.SMTP_PORT ?? 587,
+      from: cfg.SMTP_FROM || 'cs-bot@localhost',
+      user: cfg.SMTP_USER || undefined,
+      password: cfg.SMTP_PASSWORD || undefined,
+    });
+  }
+  if (cfg.EMAIL_WEBHOOK_URL) return new EmailWebhookNotifier(cfg.EMAIL_WEBHOOK_URL);
+  return new LogOnlyNotifier();
 }

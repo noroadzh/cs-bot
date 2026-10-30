@@ -60,13 +60,18 @@ function makeController(crypto: any, routing: any, gateCheck?: jest.Mock, opsAle
   const { WecomController, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT } = require('../src/wecom/wecom.controller.js');
   const usageService = { increment: jest.fn(), snapshot: jest.fn() };
   const recognizeService = { recognizeImage: jest.fn() };
-  const wecomClient = { sendText: jest.fn(), sendMedia: jest.fn(), downloadMedia: jest.fn() };
+  const activeSend = jest.fn(async (..._args: any[]) => undefined);
+  const wecomClient = {
+    sendText: jest.fn((...args: any[]) => activeSend(...args)),
+    sendMedia: jest.fn(),
+    downloadMedia: jest.fn(),
+  };
   const licenseGate = { check: gateCheck ?? jest.fn(async () => ({ allowed: true })) };
   const miss = { record: jest.fn(async () => undefined) };
   const alert = opsAlert ?? { alert: jest.fn(async () => true) };
   const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate, miss, alert);
   // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
-  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __gate: licenseGate, __miss: miss, __alert: alert, __imageQueue: (controller as any).imageQueue });
+  Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __activeSend: activeSend, __gate: licenseGate, __miss: miss, __alert: alert, __imageQueue: (controller as any).imageQueue });
   return { controller, wecomClient, alert, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };
 }
 
@@ -454,6 +459,72 @@ describe('WecomController.callback', () => {
       expect(controller.__client.sendText).toHaveBeenCalledWith('c1', expect.stringContaining('只读'));
       expect(routing.dispatch).not.toHaveBeenCalled();
       expect(res.statusCode).toBe(200);
+    });
+  });
+
+  describe('单聊被动回复', () => {
+    const query = { msg_signature: BASE_ARGS.msgSignature, timestamp: BASE_ARGS.timestamp, nonce: BASE_ARGS.nonce };
+
+    it('有 ChatId 时立即空 ack，不等待 dispatch', async () => {
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => { release = resolve; });
+      const crypto = makeCrypto({
+        parseXml: jest.fn(() => Promise.resolve({ MsgType: 'text', Content: 'hi', ChatId: 'wr-group' })),
+      });
+      const routing = makeRouting(jest.fn(() => pending));
+      const { controller } = makeController(crypto, routing);
+      const res = makeRes();
+      await controller.callback(query, 'cipher', {} as any, res);
+      expect(res.send).toHaveBeenCalledWith('');
+      expect(routing.dispatch).toHaveBeenCalledTimes(1);
+      release();
+      await pending;
+    });
+
+    it('窗口内得到文本则回被动 XML，且不主动发送', async () => {
+      setConfig({ REQUIRE_GROUP_CHAT_ID: false, PASSIVE_REPLY_MS: 2000 });
+      const buildPassiveReply = jest.fn((_from: string, _to: string, content: string) => `<xml>${content}</xml>`);
+      const holder: { client?: { sendText: (...a: unknown[]) => Promise<void> } } = {};
+      const routing = makeRouting(jest.fn(async () => {
+        await holder.client!.sendText('user-1', '窗口内答案');
+      }));
+      const crypto = makeCrypto({
+        buildPassiveReply,
+        parseXml: jest.fn(() => Promise.resolve({
+          MsgType: 'text', Content: 'hi', FromUserName: 'user-1', ToUserName: 'bot',
+        })),
+      });
+      const { controller } = makeController(crypto, routing);
+      holder.client = controller.__client;
+      const res = makeRes();
+      res.type = jest.fn(() => res);
+      await controller.callback(query, 'cipher', {} as any, res);
+      expect(buildPassiveReply).toHaveBeenCalledWith('user-1', 'bot', '窗口内答案');
+      expect(res.send).toHaveBeenCalledWith('<xml>窗口内答案</xml>');
+      expect(controller.__activeSend).not.toHaveBeenCalled();
+    });
+
+    it('超时则空 ack，之后的文本走主动发送', async () => {
+      setConfig({ REQUIRE_GROUP_CHAT_ID: false, PASSIVE_REPLY_MS: 30 });
+      const holder: { client?: { sendText: (...a: unknown[]) => Promise<void> } } = {};
+      const routing = makeRouting(jest.fn(() => new Promise<void>((resolve) => {
+        setTimeout(() => {
+          void holder.client!.sendText('user-1', '超时答案').then(() => resolve());
+        }, 80);
+      })));
+      const crypto = makeCrypto({
+        buildPassiveReply: jest.fn(() => '<xml/>'),
+        parseXml: jest.fn(() => Promise.resolve({
+          MsgType: 'text', Content: 'hi', FromUserName: 'user-1', ToUserName: 'bot',
+        })),
+      });
+      const { controller } = makeController(crypto, routing);
+      holder.client = controller.__client;
+      const res = makeRes();
+      await controller.callback(query, 'cipher', {} as any, res);
+      expect(res.send).toHaveBeenCalledWith('');
+      await new Promise((r) => setTimeout(r, 120));
+      expect(controller.__activeSend).toHaveBeenCalledWith('user-1', '超时答案');
     });
   });
 });

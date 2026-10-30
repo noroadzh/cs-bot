@@ -74,7 +74,13 @@ function selectLicenseIssuer(cfg: typeof ConfigService.instance): LicenseIssuer 
     case 'noop':
       return new NoopLicenseIssuer();
     case 'shell':
-      return new ShellLicenseIssuer(cfg.LICENSE_ISSUER_BIN, cfg.LICENSE_ISSUER_KEY, cfg.LICENSE_ISSUER_OUT_DIR);
+      return new ShellLicenseIssuer(
+        cfg.LICENSE_ISSUER_BIN,
+        cfg.LICENSE_ISSUER_KEY,
+        cfg.LICENSE_ISSUER_OUT_DIR,
+        60_000,
+        cfg.LICENSE_SIGN_CMD ?? '',
+      );
     default:
       throw new Error(`unsupported LICENSE_ISSUER="${cfg.LICENSE_ISSUER}" (supported: shell, noop)`);
   }
@@ -156,11 +162,12 @@ export class TenantService implements OnModuleDestroy {
       ? new Date(input.subscriptionExpiresAt).toISOString()
       : new Date(now.getTime() + 365 * 86_400_000).toISOString();
 
+    const plan = input.plan === 'enhanced' ? 'enhanced' : 'standard';
     const res = await this.pool.query(
-      `INSERT INTO tenant (id, name, contact, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at)
-       VALUES ($1, $2, $3, 'created', $4, nextval('tenant_port_seq'), NULL, $5, $5, $6, NULL, NULL)
-       RETURNING id, name, contact, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at`,
-      [randomUUID(), trimmedName, input.contact ?? null, input.domain ?? null, now.toISOString(), expiredAt],
+      `INSERT INTO tenant (id, name, contact, plan, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at)
+       VALUES ($1, $2, $3, $4, 'created', $5, nextval('tenant_port_seq'), NULL, $6, $6, $7, NULL, NULL)
+       RETURNING id, name, contact, plan, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at`,
+      [randomUUID(), trimmedName, input.contact ?? null, plan, input.domain ?? null, now.toISOString(), expiredAt],
     );
 
     const tenant = mapTenantRow(res.rows[0]);
@@ -569,7 +576,7 @@ export class TenantService implements OnModuleDestroy {
     const total = Number(countRes.rows[0].cnt);
 
     const dataRes = await this.pool.query(
-      `SELECT id, name, contact, status, host, port, database_url, created_at, updated_at,
+      `SELECT id, name, contact, plan, status, host, port, database_url, created_at, updated_at,
               expired_at, last_provision_log, deleted_at
        FROM tenant WHERE ${whereStr}
        ORDER BY created_at DESC
@@ -602,7 +609,7 @@ export class TenantService implements OnModuleDestroy {
 
   async requireTenant(id: string, includeDeleted = false): Promise<Tenant> {
     const res = await this.pool.query(
-      `SELECT id, name, contact, status, host, port, database_url, created_at, updated_at,
+      `SELECT id, name, contact, plan, status, host, port, database_url, created_at, updated_at,
               expired_at, last_provision_log, deleted_at
        FROM tenant WHERE id = $1${includeDeleted ? '' : ' AND deleted_at IS NULL'}`,
       [id],
@@ -769,6 +776,8 @@ function mapTenantRow(row: Record<string, unknown>): Tenant {
   return {
     id: String(row.id),
     name: String(row.name),
+    contact: row.contact == null ? null : String(row.contact),
+    plan: row.plan === 'enhanced' ? 'enhanced' : 'standard',
     status: String(row.status) as Tenant['status'],
     host: row.host === null || row.host === undefined ? null : String(row.host),
     port: row.port === null || row.port === undefined ? null : Number(row.port),

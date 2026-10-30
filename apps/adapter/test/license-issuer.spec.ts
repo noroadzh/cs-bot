@@ -5,7 +5,7 @@ import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { generateKeyPairSync, verify } from 'node:crypto';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -35,6 +35,16 @@ describe('license-issuer', () => {
     expect(payload).toMatchObject({ fingerprint: 'fp-123', max_chats: 15 });
     expect(typeof payload.expires_at_ms).toBe('number');
     expect(verify(null, Buffer.from(payloadJson, 'utf8'), publicKey, Buffer.from(sigB64, 'base64'))).toBe(true);
+  });
+
+  it('NODE_ENV=production 时拒绝路径中含 /test_keys/ 的私钥', async () => {
+    const keyDir = join(dir, 'test_keys');
+    await mkdir(keyDir, { recursive: true });
+    const keyPath = join(keyDir, 'k.pem');
+    await writeFile(keyPath, 'not-a-real-key');
+    await expect(execFileP('node', [
+      CLI, '--key', keyPath, '--fingerprint', 'fp', '--expires', '1', '--max-chats', '1',
+    ], { env: { ...process.env, NODE_ENV: 'production' } })).rejects.toThrow(/test signing key/);
   });
 
   it('运行时 Dockerfile 不复制 tools/', async () => {

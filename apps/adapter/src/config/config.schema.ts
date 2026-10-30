@@ -71,6 +71,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   ALLOWED_CHAT_IDS: EnvString.default(''),
   /** 群聊场景要求每条触发消息必须带 ChatId（缺失则丢弃并告警，不回退私聊） */
   REQUIRE_GROUP_CHAT_ID: EnvBool(true),
+  /** 单聊/应用消息被动回复等待（毫秒）。超时则回空包并主动发送 */
+  PASSIVE_REPLY_MS: EnvInt(3500),
 
   // 群聊回复队列（按 chat+user 串行）
   REPLY_QUEUE_ENABLED: EnvBool(true),
@@ -151,6 +153,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LICENSE_ISSUER: EnvString.default('noop'),
   LICENSE_ISSUER_BIN: EnvString.default('tools/license-issuer/license-issuer'),
   LICENSE_ISSUER_KEY: EnvString.optional().default(''),
+  /** 设置后由该命令对 payload JSON 签名（stdin → stdout base64），不读取 PEM */
+  LICENSE_SIGN_CMD: EnvString.optional().default(''),
   LICENSE_ISSUER_OUT_DIR: EnvString.default('data/licenses'),
   PLATFORM_LICENSE_FINGERPRINT: EnvString.optional().default(''),
   PLATFORM_HEALTH_URL_TEMPLATE: EnvString.default('http://{host}/healthz'),
@@ -168,6 +172,11 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_RESTART_MAX_PER_HOUR: EnvInt(3),
   PLATFORM_UPGRADE_SCRIPT: EnvString.default('scripts/tenant-upgrade.sh'),
   EMAIL_WEBHOOK_URL: EnvString.optional().default(''),
+  SMTP_HOST: EnvString.optional().default(''),
+  SMTP_PORT: EnvInt(587),
+  SMTP_FROM: EnvString.optional().default(''),
+  SMTP_USER: EnvString.optional().default(''),
+  SMTP_PASSWORD: EnvString.optional().default(''),
   PLATFORM_AUDIT_ARCHIVE_DIR: EnvString.default('backup/audit'),
   PLATFORM_UPGRADE_WINDOW: EnvString.default('02:00-04:00'),
   PLATFORM_UPGRADE_NOTICE_DAYS: EnvInt(3),

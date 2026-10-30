@@ -62,10 +62,56 @@ describe('ShellLicenseIssuer', () => {
     const key = join(dir, 'issuer.pem');
     await writeFile(key, 'KEY');
     const issuer = new ShellLicenseIssuer(join(dir, 'bin.sh'), key);
-    await issuer.issue({ id: 'T-1', host: 't1.example.com' });
+    await issuer.issue({
+      id: 'T-1',
+      host: 't1.example.com',
+      fingerprint: 'fp-1',
+      expiresAtMs: 1_700_000_000_000,
+      maxChats: 15,
+    });
     const args = (await readFile(out, 'utf8')).trim().split('\n');
-    expect(args).toEqual(['issue', '--tenant', 'T-1', '--host', 't1.example.com', '--key', key]);
+    expect(args).toEqual([
+      '--key', key,
+      '--fingerprint', 'fp-1',
+      '--expires', '1700000000000',
+      '--max-chats', '15',
+    ]);
   }, 60_000);
+
+  it('缺少 fingerprint 时不调用 CLI', async () => {
+    const issuer = new ShellLicenseIssuer(join(dir, 'missing'), join(dir, 'nope.pem'));
+    await expect(issuer.issue({ id: 'T-1', host: 't1.example.com' })).rejects.toThrow(/fingerprint/);
+  });
+
+  it('LICENSE_SIGN_CMD 读取 stdin 上的 payload，stdout 作为签名', async () => {
+    const script = join(dir, 'sign.sh');
+    await writeFile(script, '#!/bin/sh\ncat >/dev/null\nprintf \'SIG64\\n\'\n');
+    await chmod(script, 0o755);
+    const issuer = new ShellLicenseIssuer('unused', '', dir, 5_000, script);
+    await issuer.issue({ id: 'T-2', host: 'h', fingerprint: 'fp-sign', expiresAtMs: 10, maxChats: 1 });
+    const saved = await readFile(join(dir, 'T-2', 'license', 'license.lic'), 'utf8');
+    expect(saved.endsWith('.SIG64')).toBe(true);
+    const payload = JSON.parse(Buffer.from(saved.slice(0, saved.lastIndexOf('.')), 'base64').toString('utf8'));
+    expect(payload).toMatchObject({ payload: 'CSBOT', fingerprint: 'fp-sign', max_chats: 1 });
+  });
+
+  it('production 拒绝 test_keys 路径', async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const issuer = new ShellLicenseIssuer('bin', '/opt/test_keys/k.pem');
+      await expect(issuer.issue({
+        id: 'T',
+        host: 'h',
+        fingerprint: 'fp',
+        expiresAtMs: 1,
+        maxChats: 1,
+      })).rejects.toThrow(/test signing key/);
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
 });
 
 describe('ShellUpgradeDeps', () => {

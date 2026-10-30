@@ -4,8 +4,8 @@
  * mock 全栈（真实 adapter + 本地 PG + 内存 Redis + FastGPT/企微 mock），
  * 通过 ApacheBench 打回调接口，产出 artifacts/acceptance/ 报告。
  *
- * 验收口径：P95 ≤ 8000ms、失败请求 0。回调为异步 ack 模型，
- * 该延迟衡量的是 webhook 应答时延（企微侧重试阈值），不是完整 QA 时延。
+ * 验收口径：P95 ≤ 8000ms、失败请求 0。这里的 P95 是回调 ack 时延
+ * （企微侧重试阈值）。端到端问答耗时另见 pipeline-budget 单测里的管道开销。
  * 另一个阶段以 20/min 群限流重启应用，验证 ab 压测下限流确实生效并写入报告。
  *
  * 依赖：TEST_PG_URL；本机需安装 ab（ApacheBench）。缺失则 skip。

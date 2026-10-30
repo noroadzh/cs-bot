@@ -60,13 +60,14 @@ export class TenantExpirySweepService implements OnModuleDestroy {
     if (!this.reminder) return;
     try {
       const res = await this.pool.query(
-        `SELECT id, name, expired_at FROM tenant
+        `SELECT id, name, contact, expired_at FROM tenant
          WHERE deleted_at IS NULL AND expired_at IS NOT NULL
            AND status IN ('trialing', 'active', 'grace')`,
       );
       const tenants = res.rows.map((r) => ({
         id: String(r.id),
         name: String(r.name),
+        contact: r.contact == null ? null : String(r.contact),
         expiresAt: new Date(r.expired_at),
       }));
       const sent = await this.reminder.dispatch(tenants, new Date());
@@ -221,7 +222,7 @@ export class TenantExpirySweepService implements OnModuleDestroy {
   /** 读单个租户（供测试与 controller） */
   async getTenant(id: string): Promise<Tenant | null> {
     const res = await this.pool.query(
-      `SELECT id, name, status, host, port, database_url, created_at, updated_at,
+      `SELECT id, name, contact, plan, status, host, port, database_url, created_at, updated_at,
               expired_at, last_provision_log, deleted_at
        FROM tenant WHERE id = $1`,
       [id],
@@ -239,6 +240,8 @@ export function mapTenantRow(row: Record<string, unknown>): Tenant {
   return {
     id: String(row.id),
     name: String(row.name),
+    contact: row.contact == null ? null : String(row.contact),
+    plan: row.plan === 'enhanced' ? 'enhanced' : 'standard',
     status: String(row.status) as TenantStatus,
     host: row.host === null || row.host === undefined ? null : String(row.host),
     port: row.port === null || row.port === undefined ? null : Number(row.port),

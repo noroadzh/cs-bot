@@ -35,10 +35,11 @@ export function issueLicense(payload, privateKeyPem) {
 
 function parseArgs(argv) {
   const out = {};
-  for (let i = 0; i < argv.length; i += 2) {
+  for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (!k?.startsWith('--')) continue;
     out[k.slice(2)] = argv[i + 1];
+    i += 1;
   }
   return out;
 }
@@ -52,6 +53,10 @@ function usage(msg) {
 function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.key || !args.fingerprint || !args.expires || !args['max-chats']) usage('missing required args');
+  if (process.env.NODE_ENV === 'production' && String(args.key).includes('/test_keys/')) {
+    console.error('refusing test signing key in production');
+    process.exit(1);
+  }
   const expiresRaw = args.expires;
   const expiresAtMs = /^\d+$/.test(expiresRaw) ? Number(expiresRaw) : Date.parse(expiresRaw);
   if (!Number.isFinite(expiresAtMs)) usage(`invalid --expires: ${expiresRaw}`);

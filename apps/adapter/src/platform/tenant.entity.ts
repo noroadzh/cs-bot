@@ -19,6 +19,8 @@ export interface Tenant {
   id: string;
   name: string;
   contact?: string | null;
+  /** standard = 4C8G 内存模板；enhanced = 8C16G 内存模板 */
+  plan?: 'standard' | 'enhanced';
   status: TenantStatus;
   host: string | null;
   port: number | null;

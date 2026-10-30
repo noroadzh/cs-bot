@@ -2,6 +2,7 @@
  * M11 运营：配额预警、订阅提醒通知、D10 上报、审计清理
  */
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import net from 'node:net';
 
 const axiosPost: any = jest.fn();
 jest.mock('axios', () => ({ default: { post: axiosPost }, post: axiosPost }));
@@ -16,7 +17,7 @@ import {
   WebhookQuotaWarningNotifier,
 } from '../src/platform/quota-warning.js';
 import { computeFailRates, buildHealthUrl } from '../src/platform/platform-monitor.js';
-import { MultiNotifier, SubscriptionReminder, WebhookNotifier } from '../src/platform/subscription-reminder.js';
+import { MultiNotifier, SmtpNotifier, SubscriptionReminder, WebhookNotifier } from '../src/platform/subscription-reminder.js';
 import { PlatformAuditService } from '../src/platform/platform-audit.service.js';
 import {
   buildControlPlanePayload,
@@ -64,14 +65,84 @@ describe('subscription notifier', () => {
     const days = (n: number) => new Date(now.getTime() + n * 86_400_000);
     const count = await reminder.dispatch(
       [
-        { id: 'a', name: 'A', expiresAt: days(30) },
-        { id: 'b', name: 'B', expiresAt: days(15) },
-        { id: 'c', name: 'C', expiresAt: days(20) },
+        { id: 'a', name: 'A', expiresAt: days(30), contact: 'a@example.com' },
+        { id: 'b', name: 'B', expiresAt: days(15), contact: 'b@example.com' },
+        { id: 'c', name: 'C', expiresAt: days(20), contact: 'c@example.com' },
       ],
       now,
     );
     expect(count).toBe(2);
-    expect(sent.length).toBe(4); // 每租户 tenant + ops
+    expect(sent.length).toBe(4); // 有邮箱的租户：租户邮件 + 运维
+  });
+
+  it('没有邮箱联系人时跳过租户邮件，仍通知运维', async () => {
+    const sent: string[] = [];
+    const targets: string[] = [];
+    const reminder = new SubscriptionReminder({
+      send: async (target, subject) => { targets.push(target); sent.push(subject); },
+    });
+    const now = new Date('2026-10-27T00:00:00Z');
+    const count = await reminder.dispatch(
+      [{ id: 'a', name: 'A', expiresAt: new Date(now.getTime() + 30 * 86_400_000), contact: '' }],
+      now,
+    );
+    expect(count).toBe(1);
+    expect(sent).toEqual(['[运营] 租户到期提醒 T-30']);
+    expect(targets).toEqual(['ops']);
+  });
+
+  it('SMTP_HOST 配置后把邮件交给本地 SMTP', async () => {
+    const messages: string[] = [];
+    const server = net.createServer((socket) => {
+      socket.write('220 localhost ESMTP\r\n');
+      let buf = '';
+      let dataMode = false;
+      let body = '';
+      socket.on('data', (chunk) => {
+        buf += chunk.toString();
+        if (!dataMode) {
+          const lines = buf.split('\r\n');
+          buf = lines.pop() ?? '';
+          for (const line of lines) {
+            const upper = line.toUpperCase();
+            if (upper === 'DATA') {
+              dataMode = true;
+              socket.write('354 go\r\n');
+            } else if (upper === 'QUIT') {
+              socket.write('221 bye\r\n');
+              socket.end();
+            } else {
+              socket.write('250 ok\r\n');
+            }
+          }
+        } else {
+          body += buf;
+          buf = '';
+          if (body.includes('\r\n.\r\n')) {
+            messages.push(body);
+            body = '';
+            dataMode = false;
+            socket.write('250 queued\r\n');
+          }
+        }
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const addr = server.address();
+    const port = typeof addr === 'object' && addr ? addr.port : 0;
+    try {
+      await new SmtpNotifier({
+        host: '127.0.0.1',
+        port,
+        from: 'bot@example.com',
+        timeoutMs: 3000,
+      }).send('tenant@example.com', 'T-30', '请续费');
+      expect(messages.some((m) => m.includes('tenant@example.com') && m.includes('请续费'))).toBe(true);
+      await new SmtpNotifier({ host: '127.0.0.1', port, from: 'bot@example.com' }).send('not-an-email', 'x', 'y');
+      expect(messages).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
