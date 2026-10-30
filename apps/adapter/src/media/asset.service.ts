@@ -152,8 +152,8 @@ export class AssetService {
     const asset = await this.findById(id);
     if (!asset) return false;
 
-    // Delete file if it's a file type
-    if (asset.type === 'file' && asset.url) {
+    // 删除落盘文件：file 与 video 均存于 data/assets/（link 无文件）
+    if ((asset.type === 'file' || asset.type === 'video') && asset.url) {
       const fileName = asset.url.split('/').pop();
       if (fileName) {
         try {

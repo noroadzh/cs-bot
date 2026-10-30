@@ -129,6 +129,7 @@ COPY --from=builder /app/apps/adapter/src/import/014-import-dedup-counters.sql /
 COPY --from=builder /app/apps/adapter/src/platform/015-tenant-offboarding.sql /app/migrate/016-tenant-offboarding.sql
 COPY --from=builder /app/apps/adapter/src/platform/016-runtime-gaps.sql /app/migrate/017-runtime-gaps.sql
 COPY --from=builder /app/apps/adapter/src/platform/017-tenant-contact.sql /app/migrate/018-tenant-contact.sql
+COPY --from=builder /app/apps/adapter/src/platform/018-tenant-trialing.sql /app/migrate/019-tenant-trialing.sql
 COPY --from=builder /app/apps/adapter/src/platform/008-control-plane.sql /app/migrate/009-control-plane.sql
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/scripts /app/scripts

@@ -34,6 +34,7 @@ export const MOCK_CONFIG = {
   SLOW_REPLY_TEXT: '系统繁忙，请稍后再试',
   REFUSAL_TEXT: '抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。',
   QUESTION_GUIDANCE_TEXT: '请用一句完整的话描述您想咨询的问题～',
+  ASSET_FAIL_TEXT: '有关联附件没能发送成功，需要的话请回复人工客服～',
   REDIS_HOST: '127.0.0.1',
   REDIS_PORT: 6379,
   REDIS_PASSWORD: '',

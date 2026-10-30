@@ -245,6 +245,16 @@ describe('AssetService', () => {
       expect(poolQuery.mock.calls[1][0]).toContain('DELETE FROM asset');
     });
 
+    it('video 类型：unlink 落盘文件 + DELETE 返回 true', async () => {
+      poolQuery
+        .mockResolvedValueOnce({ rows: [{ ...ROW, type: 'video', url: `/assets/${ROW.id}.mp4` }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      expect(await svc.delete(ROW.id)).toBe(true);
+      expect(fsUnlink).toHaveBeenCalledWith(expect.stringContaining(`${ROW.id}.mp4`));
+      expect(poolQuery.mock.calls[1][0]).toContain('DELETE FROM asset');
+    });
+
     it('link 类型：不触发 unlink', async () => {
       poolQuery
         .mockResolvedValueOnce({ rows: [{ ...ROW, type: 'link', url: 'https://x/y.pdf' }] })

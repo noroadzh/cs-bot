@@ -5,11 +5,11 @@
 | 项目 | 内容 |
 |---|---|
 | 文档名称 | 微信群智能客服机器人 MVP 概要设计说明书 |
-| 版本 | V1.27（V1.26 + 全量核对修正：选型版本/被动回复/置信度） |
+| 版本 | V1.28（V1.27 + 素材外发/删除语义、订阅状态机、触发词样例按实现对齐） |
 | 日期 | 2026-10-30 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码）、项目经理（**内部文档，不对外交付**——成品系统交付模式，客户仅接触部署包与操作手册） |
-| 关联文档 | 《PRD V1.5》《详细设计 V1.17（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.14》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
+| 关联文档 | 《PRD V1.5》《详细设计 V1.18（docs/详细设计-微信群智能客服机器人MVP.md）》《部署手册 V1.14》《项目报价单（私有化基线 ¥27,500 / 25 人天；增项 A/B 各 +3 人天 ¥3,300；增项 C SaaS 平台建设 +12 人天 ¥13,200；增项 D 本地模型 +4 人天 ¥4,400）》 |
 
 ## 2. 设计目标与约束
 
@@ -299,7 +299,7 @@
 - **关键流程**：POST /wecom/callback → 验签失败直接 401（不响应业务）→ 解密 → 产出标准化 InboundMessage → 交 M2；**群聊回复一律走主动发消息 API**，单聊/应用消息优先被动回包、超时降级主动发送。
 - **接口定义**：
   - `POST /wecom/callback?msg_signature=&timestamp=&nonce=` → 企微回调入口。
-  - 内部：`WecomCrypto.verify()/decrypt()/encrypt()`；`WecomClient.sendText(chatid, content)`；增项扩展：`downloadMedia(mediaId): Buffer`（企微素材下载，3 天有效）、`uploadMedia(type, buffer): mediaId` 与 `sendFile(chatid, mediaId, title)` / `sendVideo(chatid, mediaId, title, desc)`（M8 素材外发使用）。
+  - 内部：`WecomCrypto.verify()/decrypt()/encrypt()`；`WecomClient.sendText(chatid, content)`；增项扩展：`downloadMedia(mediaId): Buffer`（企微素材下载，3 天有效）、`uploadMedia(type, filePath): mediaId`（file/image/video，读宿主机落盘文件）与 `sendFile(chatid, mediaId)` / `sendVideo(chatid, mediaId, title?)`（M8 素材外发使用）；`sendAsset(chatid, target, type, title?)` 统一分发（link → 文本「标题 + URL」，file/video → 上传后发送）。
 
 ### M2 消息路由与触发模块
 - **职责**：触发判定（@机器人 或 命中关键词表）、非触发静默（直接返回 success，无后续）、限流、去重幂等。
@@ -307,10 +307,21 @@
 - **接口定义**：`Router.dispatch(InboundMessage): RouteResult{triggered, reason}`。
 - **出厂默认触发配置**（config/keywords.yml 样例，UAT 前由客户确认最终清单，写入客户配合事项）：
 ```yaml
-triggers:
-  at_robot: true            # @机器人 必配
-  prefixes: ["客服：", "客服,", "请问：", "咨询："]   # 前缀词触发
+# 出厂随包 config/keywords.yml（Trie 前缀匹配：命中词必须出现在消息开头）
+keywords:
+  - 请问
+  - 咨询
+  - 问
+  - 怎么
+  - 如何
+  - 多少
+  - 哪里
+  - 为什么
+  - ？
+  - ?
 ```
+
+> `triggers.prefixes` 为兼容写法（与 `keywords` 合并加载），出厂文件使用 `keywords` 列表。@机器人 始终触发，不受词表影响。
 - 关键词热加载：`POST /admin/keywords/reload`。
 
 ### M3 会话上下文模块
@@ -346,8 +357,8 @@ triggers:
 - **职责**：入站多媒体处理（图片识别转文本提问、语音/视频/文件引导兜底）与出站素材外发（链接/文件/视频消息）。
 - **入站图片流程**：M2 判定 @机器人 且 MsgType=image → M1 `downloadMedia` → 调通义 qwen-vl（复用通义 fallback 账号，硬超时 10s；提示词固定："提取图片中与咨询/操作相关的文字，归纳为一句中文问题；无有效内容时仅返回 [NO_TEXT]"）→ 识别结果替换问题文本，交 M3/M4 走正常问答链路（上下文/置信度/拒答/过滤全复用）→ 返回 [NO_TEXT] 或调用失败时回复引导话术。图片识别路径全程异步（走主动发消息通道，不占用同步回复窗口与文本 8s 性能预算）。
 - **语音/视频/文件入站**：不下载不解析，直接回复引导话术 + miss_record 落库（media_type 标记 voice/video/file）。
-- **素材外发流程**：M4 收到答案后正则提取 `[[素材:<uuid>]]`（`\[\[素材:([a-f0-9-]+)\]\]`） → 查 asset 表（enabled=true）→ 剥离标记先发文本答案（@提问人）→ 逐个发送素材：link → `sendText`（标题 + URL）；file/video → `uploadMedia` 后 `sendFile`/`sendVideo` → 任一素材发送失败即补发降级提示话术并记 WARN。单条答案素材上限 2 个；文件 ≤20MB、视频 ≤10MB，超限直接走降级路径。
-- **素材管理**：管理接口（Basic Auth，与 miss-records 一致）：`POST /admin/assets`（multipart 上传文件/视频，或 JSON 提交链接）、`GET /admin/assets`（清单）、`DELETE /admin/assets/:id`（逻辑停用）。素材文件存宿主机 `data/assets/`，纳入每日备份。
+- **素材外发流程**：M4 收到答案后正则提取 `[[素材:<uuid>]]`（`\[\[素材:([a-f0-9-]+)\]\]`） → 查 asset 表（存在即可，无启用位）→ 剥离标记先发文本答案（@提问人）→ 逐个发送素材：link → `sendText`（标题 + URL）；file/video → 以落盘路径 `uploadMedia` 后 `sendFile`/`sendVideo` → 任一素材发送失败即补发**一次**降级提示话术（`ASSET_FAIL_TEXT`）并记 WARN。单条答案素材上限 2 个；文件 ≤20MB、视频 ≤10MB，超限直接走降级路径。
+- **素材管理**：管理接口（Basic Auth，与 miss-records 一致）：`POST /admin/assets`（multipart 上传文件/视频，或 JSON 提交链接）、`GET /admin/assets`（清单）、`DELETE /admin/assets/:id`（物理删除记录；file/video 同时删除落盘文件，link 不动文件系统）。素材文件存宿主机 `data/assets/<id>.<ext>`，纳入每日备份。
 - **接口定义**：`Media.recognize(mediaId): {question}`；`AssetStore.resolve(ids): Asset[]`；`AssetSender.send(chatid, asset): SendResult`。
 
 ### M9 授权许可模块【交付方权益保护，不单独计价】
@@ -433,8 +444,8 @@ triggers:
   - 采集：适配层每日汇总上报（只上报计数与资源摘要，**不上报正文**）→ 控制面写 `tenant_usage_daily`；实时拦截在适配层本地（本地计数器 + 配额下发）。
   - 行为：80% 预警（通知租户与运营）；群数达上限拒绝新群；日消息量达上限停止受理新消息并回配额提示（已有会话保留但不进入问答，与 `Daily message quota enforcement` 规格一致）；配额变更即时下发（接口或每日拉取）。
 - **订阅与授权管控**：
-  - 订阅状态机：trialing → active → grace(7天只读) → suspended(受限模式) → terminated。
-  - 到期流程：T-30/15/7 天提醒（邮件 + 运维群）→ 到期进宽限期（只读：问答可用、不可改知识库/加群）→ 宽限期满签发失效证书或直接将 license 置过期 → 群内仅回续期话术（复用 M9 受限模式，零 LLM 消耗）。
+  - 订阅状态机：trialing → active → grace（7 天宽限，实例照常服务，仅注册表标记与提醒）→ suspended（与历史 `paused` 互为别名，实现为 `docker compose stop`，实例停机）→ terminated。
+  - 到期流程：T-30/15/7 天提醒（邮件 + 运维群）→ 到期进宽限期（不限制实例行为）→ 宽限期满自动置 `suspended`（`docker compose stop`，每小时扫描执行）→ 实例停机期间不再受理群消息；续费 `renew` 后恢复 `active` 并 `docker compose start`。超过 30 天的 `suspended` 租户只标记、不自动销毁，由运营确认后注销。
   - 续费：控制面签发新订阅期证书 → 实例热加载，无需重建、数据不变。
 - **批量升级与灰度（Upgrade Orchestrator）**：
   - 镜像版本矩阵管理；升级批次化（每批 ≤ 10% 实例或按租户档位分组），先金丝雀（1 个内部租户）→ 观察 24h（错误率/延迟）→ 全量。
@@ -491,7 +502,7 @@ triggers:
 ```
 
 ### 6.2 低置信拒答流程
-FastGPT 返回最高分 < 0.75 → M4 采用拒答话术（不经 LLM 二次改写）→ 同时写入 M5（本地 PG，毫秒级）→ M6 过滤 → 回包。端到端不额外增加 LLM 调用，延迟不受影响。
+FastGPT 返回最高分 < 0.75 → M4 采用拒答话术（不经 LLM 二次改写）→ 异步写入 M5（`setImmediate` 落本地 PG，失败进内存 FIFO 重投）→ M6 过滤 → 回包。端到端不额外增加 LLM 调用，延迟不受影响。
 
 ### 6.3 消息去重流程
 ```
@@ -502,7 +513,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 
 ### 6.4 异常降级流程
 - **群聊无被动回复**：本产品面向群聊，回答一律走**主动发消息**（`appchat/send`）；仅单聊/应用消息场景存在 3.5s 被动窗口，超时则先回空 success、答案就绪后补发。
-- **DeepSeek 超时/5xx**：由适配层 fallback 通道（`LLM_FALLBACK_BASE_URL`，通义兼容端点）重试 1 次；双通道均失败 → 回复"系统繁忙，请稍后再试"并告警（`LlmAlertService`，冷却期去重）。
+- **DeepSeek 超时/5xx**：由适配层 fallback 通道（`LLM_FALLBACK_BASE_URL`，通义兼容端点）重试 1 次；双通道均失败 → 回复"系统繁忙，请稍后再试或联系人工客服"并告警（`LlmAlertService`，冷却期去重）。
 - **Redis 不可用**：降级为无上下文单轮问答（M3 fail-open），去重降级为内存 LRU 短期去重。
 - **FastGPT 不可用**：直接回复固定降级话术，不阻塞回调线程。
 
@@ -536,7 +547,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | id | uuid PK | 素材编号，知识库答案以 `[[素材:<uuid>]]` 引用 |
 | type | varchar(20) | file / link / video（CHECK） |
 | name | text not null | 展示名/链接标题（外发前按 R-3 口径处理） |
-| url | text | link 类型的外链地址 |
+| url | text | link 类型为外链地址；file/video 为落盘相对路径 `/assets/<id>.<ext>` |
 | size | integer | 字节数（上传时校验：文件 ≤20MB、视频 ≤10MB） |
 | md5 | varchar(32) | 重复上传去重（010） |
 | created_at | timestamptz | |
@@ -597,14 +608,14 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 
 ### 7.4 平台侧表（SaaS 形态，存于控制面独立数据库，仅元数据）
 
-> 以追加式迁移为准（`apps/adapter/src/platform/007,008,011,012,015,016,017-*.sql`），下表为字段摘要。
+> 以追加式迁移为准（`apps/adapter/src/platform/007,008,011,012,015,016,017,018-*.sql`），下表为字段摘要。
 
 **tenant（租户注册表）**
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | id | uuid PK | 租户 ID（gen_random_uuid） |
 | name | varchar(255) | 租户名称 |
-| status | varchar(30) | created / provisioning / active / grace / suspended / paused / terminated / provisioning_failed |
+| status | varchar(30) | created / trialing / provisioning / active / grace / suspended / paused / offboarding / terminated / provisioning_failed（CHECK 以 018 迁移为准） |
 | host / port | varchar(255) / integer | 实例地址与端口（`tenant_port_seq` 从 30000 步长 10） |
 | database_url | text | 租户独立 DB 连接串（provisioned 后填充） |
 | contact | varchar(255) | 联系人（升级/到期通知，017 增补） |
@@ -618,7 +629,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 |---|---|---|
 | id | uuid PK | |
 | tenant_id | uuid UNIQUE → tenant | |
-| max_chats / max_storage_mb / max_api_calls / max_users | integer | 群数 / 存储 MB / API 调用 / 用户数上限（0=不限） |
+| max_chats / max_storage_mb / max_api_calls / max_users | integer | 群数 / 存储 MB / 日消息量 / 并发问答上限（0=不限）；列名沿用旧命名，对应规格 `max_msgs_per_day` / `max_concurrent_qa` |
 | max_llm_tokens_per_month | integer | 月度 token 上限（0=不限） |
 | max_docs / max_qa / max_asset_mb | integer | 文档数 / QA 对数 / 素材容量（016 增补，0=不限） |
 | created_at / updated_at | timestamptz | 变更即下发实例 |
@@ -652,7 +663,7 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 ### 8.1 企微回调接口（入站）
 `POST /wecom/callback?msg_signature=xx&timestamp=xx&nonce=xx`
 - 请求体：企微加密 XML（Encrypt 字段）。
-- 响应：HTTP 200 纯文本 `success`（群聊无被动回包；静默/去重/异步发送场景均如此）。
+- 响应：HTTP 200 空体（规格口径 empty success body；群聊无被动回包，静默/去重/异步发送场景均如此）。
 - GET 同 URL：企微 URL 有效性验证（echostr 解密回显）。
 
 ### 8.2 FastGPT 调用契约（出站）
@@ -905,4 +916,5 @@ M1 → M2: SETNX dedup:{msgid} EX 172800
 | V1.24 | 2026-10-30 | §6.1 改主动发消息；§6.2 M5 写入改同步毫秒级；§6.4 被动窗口标注单聊专用、fallback 改为适配层 `LLM_FALLBACK_*` |
 | V1.25 | 2026-10-30 | M11/§9/§12 明确跳板由交付方运维侧提供（产品只记 shell-access 审计）；详设 §6.5 鉴权链重写（无 mTLS） |
 | V1.26 | 2026-10-30 | M11 租户列表/详情描述改为实际（列表不含配额/用量；详情含 quota+当日摘要），补 `/tenants/:id/usage` 与 `/quota/consume` |
+| V1.28 | 2026-10-30 | 按实现对齐：M1 `uploadMedia(type,filePath)`/`sendFile` 签名、M2 出厂触发词样例（`keywords` 列表 + 前缀匹配）、M8 素材删除为物理删除且 file/video 均清文件、失败补发一次降级话术、asset.url 与落盘命名、M11 订阅状态机与宽限期行为（grace 不设只读，期满 `suspended`=`docker compose stop`）、§7.4 status 枚举补 trialing 与 offboarding、配额列名映射、§8.1 回调空体、§6.2 M5 异步写入、§6.4 繁忙话术 |
 | V1.27 | 2026-10-30 | 全量核对修正：§1 引用/日期、§3.3 8443 备注、§4 选型版本（PG16/Mongo7/Nginx1.27）、§4.3 hybrid 超时与 CPU 表述、§10.1 adapter CPU/watchtower、§8.1/§11.1/§11.4 群聊主动发送、§12 watchtower 预案 |

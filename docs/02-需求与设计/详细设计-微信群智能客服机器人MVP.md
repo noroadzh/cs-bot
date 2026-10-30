@@ -3,12 +3,12 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.17（V1.16 + 全量核对：置信度归零与各节表述） |
-| 日期 | 2026-10-29 |
+| 版本 | V1.18（V1.17 + 素材外发/删除、订阅状态机、定时任务与触发词按实现对齐） |
+| 日期 | 2026-10-30 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.26》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.14》 |
-| 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
+| 上游文档 | 《概要设计 V1.28》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.14》 |
+| 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG16+pgvector（pgvector 0.7）；Redis7；Mongo7；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
 
@@ -247,7 +247,7 @@ mentioned || keywordHit → 进入管道；否则静默（`NOT_TRIGGERED`）
 
 Lua 脚本（`LUA_TOKEN_BUCKET` 常量，语义为固定窗口计数）：`INCR` + 首次 `EXPIRE 60` 原子化，避免竞态；先查用户维度再查群维度。
 
-**关键词配置** `config/keywords.yml`：`keywords: [/客服, 请问：, 咨询：]`；`POST /admin/keywords/reload` → 重建内存 Trie（原子引用切换，读写锁）。
+**关键词配置** `config/keywords.yml`：出厂为 `keywords:` 列表（请问/咨询/问/怎么/如何/多少/哪里/为什么/？/?），与兼容写法 `triggers.prefixes:` 合并加载；匹配为**前缀匹配**（命中词须出现在消息开头）；`POST /admin/keywords/reload` → 重建内存 Trie（原子引用切换，读写锁）。
 
 ### 3.3 M3 会话上下文（context/）
 
@@ -258,7 +258,7 @@ Lua 脚本（`LUA_TOKEN_BUCKET` 常量，语义为固定窗口计数）：`INCR`
 ### 3.4 M4 问答编排（qa/）
 
 ```
-answer = await FastGPTClient.ask({ question, history: ctx.history })
+answer = await engine.ask({ question, chatId, history: ctx.history })   // engine = FastGPT 引擎（内部经 FastGPTClient.chat）
 score = answer.quotes.length ? max(quote.score) : 0
 if (score < CONFIDENCE_THRESHOLD /*0.75*/) {
     miss.record({ question, chatId, userId, score, mediaType })
@@ -357,7 +357,7 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 | 地址 | `(省|市|区|路|号|栋|室)` 组合模式 | `[地址]` |
 | 姓名 | 标签（姓名/联系人/收货人）+ 词典匹配（最长优先） | `[姓名]`/`<NAME:n>` |
 
-**入库/回滚**：`confirm` → 通过条目按 50 条/批 `FastGPTClient.upsertQa('历史语料-{jobId}')`，失败退避重试 3 次；`rollback` → `deleteDataset`。
+**入库/回滚**：`confirm` → `FastGPTClient.ensureDataset('历史语料-{jobId}')` 后按 50 条/批 `writeBatch(datasetId, pairs)`，失败退避重试 3 次；`rollback` → `deleteDatasetById(datasetId)`。
 
 **资源保护（R-8）**：进程内 `ImportTaskQueue`（FIFO + 单消费者）；每批（≤2000 条）后检查「RSS 增量 >200MB 或 RSS >80% `IMPORT_MEMORY_LIMIT_MB`」，超阈值时每 5 秒轮询内存、降回后立即继续；管理接口轮询进度。
 
@@ -369,7 +369,7 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 
 **用量上报（D10）**：adapter 每日 02:30 `POST {CONTROL_PLANE_URL}/report`，body 仅计数：`{tenantId, date, msgsIn, triggered, hit, miss, tokens, activeChats, docCount, qaCount, assetMb}`；失败本地缓存 7 天后丢弃（不影响问答）。
 
-**订阅状态机迁移**：每日 09:00 扫描 `expired_at`：T-30/15/7 通知；到期→grace；grace+7d→suspended（向实例签发过期证书或置 license 失效）；续费→`renew`（签新证书 + 实例 reload）。
+**订阅状态机迁移**：每小时扫描一次（`@Interval`）：`active` 且 `expired_at` 已过 → `grace`；`grace` 超期 7 天 → `suspended`（与历史 `paused` 互为别名，实例执行 `docker compose stop`）；`suspended` 超期 30 天仅标记不自动销毁。每日 09:00 另发 T-30/15/7 提醒（租户 + 运维群）。续费 → `renew`（标 `active`，实例 `docker compose start`，并签发新证书热加载）。
 
 ---
 
@@ -397,7 +397,7 @@ interface SessionParser {           // 实现：csvParser / jsonlParser / txtPar
 | `rate:hint:{chatId}` | string "1" | 300s | 限流提示去重（同群每 5 分钟最多一次） |
 | `wecom:at` / `wecom:at:lock` | string | 7000s / 短锁 | access_token 缓存与刷新锁（M1） |
 
-> 授权状态为进程内缓存（每日 03:00 复核并写 `license.lic.antireplay.json`）；导入任务队列为进程内 `ImportTaskQueue`；用量上报失败缓冲落盘 `data/report-buffer.json`（保留 7 天）。三者均不使用 Redis。
+> 授权状态为进程内缓存（`LicenseRuntimeScheduler` 每日 03:00 复核并写 `license.lic.antireplay.json`）；导入任务队列为进程内 `ImportTaskQueue`；用量上报失败缓冲落盘 `data/report-buffer.json`（保留 7 天）。三者均不使用 Redis。
 
 ## 6. API 契约（管理面，Basic Auth + IP 白名单）
 
@@ -456,10 +456,10 @@ currentUsage = { messagesReceived, assetsSent }
 
 | 任务 | Cron（容器 TZ=Asia/Shanghai） | 内容 |
 |---|---|---|
-| license 复核 | `0 3 * * *` | 验签+指纹+回拨复核，写 license.lic.antireplay.json，失效→受限模式 |
+| license 复核 | 每日 03:00（`LicenseRuntimeScheduler` 自调度 setTimeout 链，非 `@nestjs/schedule`） | 验签+指纹+回拨复核，写 license.lic.antireplay.json，失效→受限模式；剩余 ≤15 天或已失效时经 `OPS_WEBHOOK_URL` 每日提醒一次 |
 | miss 清理 | `30 3 * * *` | 删 90 天前记录 |
 | 导入临时区清理 | `40 3 * * *` | 删 `data/import/*`、>30d review.xlsx、>180d import_item |
-| 到期提醒 | `0 9 * * *` | 距 expires ≤15 天 → 运维群 webhook 告警 |
+| 订阅到期提醒 | `0 9 * * *` | 订阅 T-30/15/7 天 → 租户与运维群提醒（`SubscriptionReminder`） |
 | 用量上报（SaaS） | `30 2 * * *` | POST /report（失败缓存 7 天） |
 | 审计清理 | `50 3 * * *` | 导出 180 天前审计 JSONL 到 `PLATFORM_AUDIT_ARCHIVE_DIR`，成功后删除本地行 |
 | 备份脚本 | 宿主 cron `0 2 * * *` | pg_dump + mongodump + assets（deploy/backup.sh） |
@@ -518,4 +518,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）V1.15（2026-10-30）§6.5 平台鉴权按实际重写（Basic+IP+reason+双签/令牌，无 mTLS；跳板归属说明）。V1.16（2026-10-30）§3.9 R-8 改为 `ImportTaskQueue`/增量 200MB 或 80% 限额/每 5s 轮询。V1.17（2026-10-30）§2.3 空引用 score=0；§3.1 主动发送/错误码；§3.4 拒答文案/素材 UUID；§3.7 上传参数与 ASSET_*；§3.8 群数上限运行期；§3.9 脱敏来源；§3.10 09:00/expired_at；§8 同镜像双入口。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一V1.14（2026-10-30）§4 删除重复 DDL，改为迁移文件索引（结构与字段以迁移与概设 §7.1/§7.4 为准）V1.15（2026-10-30）§6.5 平台鉴权按实际重写（Basic+IP+reason+双签/令牌，无 mTLS；跳板归属说明）。V1.16（2026-10-30）§3.9 R-8 改为 `ImportTaskQueue`/增量 200MB 或 80% 限额/每 5s 轮询。V1.17（2026-10-30）§2.3 空引用 score=0；§3.1 主动发送/错误码；§3.4 拒答文案/素材 UUID；§3.7 上传参数与 ASSET_*；§3.8 群数上限运行期；§3.9 脱敏来源；§3.10 09:00/expired_at；§8 同镜像双入口。V1.18（2026-10-30）§1 基线与上游版本；§3.2 关键词样例与前缀匹配；§3.4 `engine.ask`；§3.9 `ensureDataset`+`writeBatch`；§3.10 订阅扫描按小时与 suspended=`compose stop`；§7 license 复核为自调度、09:00 归订阅提醒。*

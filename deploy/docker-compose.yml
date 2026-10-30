@@ -102,6 +102,7 @@ services:
       - ../apps/adapter/src/platform/015-tenant-offboarding.sql:/docker-entrypoint-initdb.d/16-tenant-offboarding.sql:ro
       - ../apps/adapter/src/platform/016-runtime-gaps.sql:/docker-entrypoint-initdb.d/17-runtime-gaps.sql:ro
       - ../apps/adapter/src/platform/017-tenant-contact.sql:/docker-entrypoint-initdb.d/18-tenant-contact.sql:ro
+      - ../apps/adapter/src/platform/018-tenant-trialing.sql:/docker-entrypoint-initdb.d/19-tenant-trialing.sql:ro
       - ./init-control-db.sh:/docker-entrypoint-initdb.d/00-control-db.sh:ro
       - ../apps/adapter/src/platform/007-tenant.sql:/control-migrations/01-tenant.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/control-migrations/02-control-plane.sql:ro
@@ -110,6 +111,7 @@ services:
       - ../apps/adapter/src/platform/015-tenant-offboarding.sql:/control-migrations/05-tenant-offboarding.sql:ro
       - ../apps/adapter/src/platform/016-runtime-gaps.sql:/control-migrations/06-runtime-gaps.sql:ro
       - ../apps/adapter/src/platform/017-tenant-contact.sql:/control-migrations/07-tenant-contact.sql:ro
+      - ../apps/adapter/src/platform/018-tenant-trialing.sql:/control-migrations/08-tenant-trialing.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/docker-entrypoint-initdb.d/09-control-plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]

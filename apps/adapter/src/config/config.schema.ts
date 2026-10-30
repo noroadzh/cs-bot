@@ -47,6 +47,8 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   // 拒绝话术
   REFUSAL_TEXT: EnvString.default('抱歉，这个问题超出了我的知识范围，已为您记录，稍后由人工补充解答。'),
   QUESTION_GUIDANCE_TEXT: EnvString.default('请用一句完整的话描述您想咨询的问题～'),
+  /** 素材外发失败时的降级提示（概设 M8：任一素材失败补发一次） */
+  ASSET_FAIL_TEXT: EnvString.default('有关联附件没能发送成功，需要的话请回复人工客服～'),
 
   // Redis
   REDIS_HOST: EnvString.default('127.0.0.1'),

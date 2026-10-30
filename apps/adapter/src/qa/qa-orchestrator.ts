@@ -128,17 +128,29 @@ export class QaOrchestrator {
       } else if (score < this.cfg.CONFIDENCE_THRESHOLD) {
         this.usageService.increment('messagesRefused');
       }
+      let assetFailed = false;
       for (const assetId of assetIds) {
         const asset = await this.assetResolver.resolveReference(assetId);
         if (!asset) {
           this.logger.warn({ traceId, assetId, detail: 'unresolved-asset-reference' });
           continue;
         }
-        await this.assetSender
-          .send(chatId, { id: asset.id, type: asset.type })
-          .then(() => this.usageService.increment('assetsSent'))
+        // 传递完整素材信息（name/url）：发送器据此区分 link 与落盘文件
+        const ok = await this.assetSender.send(chatId, {
+          id: asset.id,
+          type: asset.type,
+          name: asset.name,
+          url: asset.url ?? undefined,
+        });
+        if (ok) this.usageService.increment('assetsSent');
+        else assetFailed = true;
+      }
+      if (assetFailed) {
+        // 概设 M8：任一素材失败补发一次降级提示（固定话术，不经 M6）
+        await this.sender
+          .sendText(chatId, this.cfg.ASSET_FAIL_TEXT)
           .catch((err) => {
-            this.logger.warn({ traceId, assetId, err: (err as Error).message });
+            this.logger.warn({ traceId, detail: 'asset-fail-notice-fail', err: (err as Error).message });
           });
       }
       if (score >= this.cfg.CONFIDENCE_THRESHOLD) {

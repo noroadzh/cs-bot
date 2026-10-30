@@ -3,13 +3,13 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | adapter 单元测试报告（Jest） |
-| 版本 | V1.10 |
+| 版本 | V1.11（素材外发/删除与迁移 018 用例） |
 | 日期 | 2026-10-29 |
 | 适用对象 | 交付工程师、内部开发 |
-| 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计 V1.27》《详细设计 V1.17》） |
+| 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计 V1.28》《详细设计 V1.18》） |
 | 测试范围 | `apps/adapter`（NestJS 适配层）单元测试 |
 | 运行方式 | 本地 `cd apps/adapter && pnpm test:cov`；CI `pnpm -F @cs-bot/adapter test:cov` |
-| 关联文档 | 《部署手册 V1.14》《详细设计 V1.17》 |
+| 关联文档 | 《部署手册 V1.15》《详细设计 V1.18》 |
 
 > 本报告记录 2026-10-29 一次全量单测执行结果，用于交付存档。覆盖率为 Jest `--coverage`（v8）采集，仅统计 `apps/adapter/src` 下被测源码；`packages/*` 与 `apps/web` 不在范围。集成/验收套件需真实 PG，按环境条件跳过，单独执行（见 §1.1）。
 
@@ -19,22 +19,22 @@
 
 | 指标 | 值 | 阈值 | 状态 |
 |---|---|---|---|
-| Test Suites | 107 passed / 120 total（13 个集成/验收套件按条件跳过） | — | ✅ |
-| Tests | 996 passed / 1047 total（51 skipped） | — | ✅ |
+| Test Suites | 107 passed / 121 total（14 个集成/验收套件按条件跳过） | — | ✅ |
+| Tests | 1005 passed / 1059 total（54 skipped） | — | ✅ |
 | Snapshots | 0 | — | — |
-| 耗时 | 106.5 s（首次含 ts-jest 编译） | — | — |
-| Statements 覆盖率 | 94.44 % | ≥ 75 % | ✅ |
-| Branches 覆盖率 | 81.66 % | ≥ 75 % | ✅ |
-| Functions 覆盖率 | 90.84 % | — | ✅ |
-| Lines 覆盖率 | 95.47 % | ≥ 75 % | ✅ |
+| 耗时 | 103.6 s（首次含 ts-jest 编译） | — | — |
+| Statements 覆盖率 | 93.03 % | ≥ 75 % | ✅ |
+| Branches 覆盖率 | 79.14 % | ≥ 75 % | ✅ |
+| Functions 覆盖率 | 88.33 % | — | ✅ |
+| Lines 覆盖率 | 94.41 % | ≥ 75 % | ✅ |
 
-**结论**：单测全绿，四项覆盖率均达标（branches 81.66 % ≥ 75 %）。
+**结论**：单测全绿，四项覆盖率均达标（branches 79.14 % ≥ 75 %）。
 
 ### 1.1 集成 / 验收（独立执行）
 
 | 类型 | 命令 | 结果 |
 |---|---|---|
-| 集成（真实 PG） | `TEST_PG_URL=postgresql://cs:cs@127.0.0.1:55432/csbot_test npx jest test/integration --runInBand` | 7 suites / 28 tests 通过 |
+| 集成（真实 PG） | `TEST_PG_URL=postgresql://cs:cs@127.0.0.1:55432/csbot_test npx jest test/integration --runInBand` | 8 suites / 31 tests 通过 |
 | 验收 | `TEST_PG_URL=… npx jest test/acceptance --runInBand --forceExit` | 6 suites / 23 tests 通过 |
 
 ## 2. 按模块分组的通过用例

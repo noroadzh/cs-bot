@@ -192,17 +192,27 @@ export class WecomClient implements IMessageSender {
     this.logger.log({ traceId, chatId, action: 'active-send' });
   }
 
-  async sendAsset(chatId: string, assetId: string, type: 'link' | 'file' | 'video'): Promise<void> {
+  /**
+   * 素材外发（M8）：link 发标题 + URL 文本；file/video 上传临时素材后按类型发送。
+   * @param target link 为外链 URL；file/video 为落盘文件绝对路径
+   * @param title  展示名（link 拼在文本首行；file/video 作为企微素材标题）
+   */
+  async sendAsset(
+    chatId: string,
+    target: string,
+    type: 'link' | 'file' | 'video',
+    title?: string,
+  ): Promise<void> {
     switch (type) {
-      case 'link': await this.sendText(chatId, assetId); break;
+      case 'link': await this.sendText(chatId, title ? `${title}\n${target}` : target); break;
       case 'file': {
-        const mediaId = await this.uploadMedia('file', assetId);
+        const mediaId = await this.uploadMedia('file', target);
         await this.sendFile(chatId, mediaId);
         break;
       }
       case 'video': {
-        const mediaId = await this.uploadMedia('video', assetId);
-        await this.sendVideo(chatId, mediaId);
+        const mediaId = await this.uploadMedia('video', target);
+        await this.sendVideo(chatId, mediaId, title);
         break;
       }
     }

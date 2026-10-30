@@ -284,4 +284,78 @@ describe('QaOrchestrator', () => {
     await orch.handle(makeMsg(), 'trace-d3', 'keyword');
     expect(sender.sendText).toHaveBeenCalledWith('chat-1', '系统繁忙，请稍后再试', undefined, 'trace-d3:0');
   });
+  it('M8.a 素材外发携带 url/name，成功则计数 assetsSent 且不发降级提示', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine({
+      ask: jest.fn(async () => ({
+        ok: true,
+        value: {
+          answer: '见附件 [[素材:aaaaaaaa-1111-2222-3333-444444444444]]',
+          quotes: [],
+          score: 0.9,
+        },
+      })),
+    });
+    const assetSender = { send: jest.fn(async (..._a: any[]) => true) };
+    const resolver = {
+      resolveReference: jest.fn(async (id: string) => ({
+        id, type: 'file', name: '报价单', url: `/assets/${id}.pdf`,
+      })),
+    };
+    const usage = stubUsage();
+    const sender = makeSender();
+    const orch = new QaOrchestrator(
+      engine, stubContext(), stubFilter(), stubMiss(), assetSender as any, resolver as any,
+      usage, sender as any,
+    );
+
+    await orch.handle(makeMsg(), 'trace-m8a', 'mention');
+
+    expect(assetSender.send).toHaveBeenCalledWith('chat-1', {
+      id: 'aaaaaaaa-1111-2222-3333-444444444444',
+      type: 'file',
+      name: '报价单',
+      url: '/assets/aaaaaaaa-1111-2222-3333-444444444444.pdf',
+    });
+    expect(usage.increment).toHaveBeenCalledWith('assetsSent');
+    const notices = sender.sendText.mock.calls.filter(
+      (c: any[]) => c[1] === '有关联附件没能发送成功，需要的话请回复人工客服～',
+    );
+    expect(notices).toHaveLength(0);
+  });
+
+  it('M8.b 任一素材失败 → 整条答复只补发一次降级提示，其余素材仍尝试', async () => {
+    const { QaOrchestrator } = await import('../src/qa/qa-orchestrator.js');
+    const engine = stubEngine({
+      ask: jest.fn(async () => ({
+        ok: true,
+        value: {
+          answer: '见附件 [[素材:aaaaaaaa-1111-2222-3333-444444444444]] [[素材:bbbbbbbb-1111-2222-3333-444444444444]]',
+          quotes: [],
+          score: 0.9,
+        },
+      })),
+    });
+    const assetSender = { send: jest.fn(async (..._a: any[]) => false) };
+    const resolver = {
+      resolveReference: jest.fn(async (id: string) => ({
+        id, type: 'file', name: 'n', url: `/assets/${id}.pdf`,
+      })),
+    };
+    const usage = stubUsage();
+    const sender = makeSender();
+    const orch = new QaOrchestrator(
+      engine, stubContext(), stubFilter(), stubMiss(), assetSender as any, resolver as any,
+      usage, sender as any,
+    );
+
+    await orch.handle(makeMsg(), 'trace-m8b', 'mention');
+
+    expect(assetSender.send).toHaveBeenCalledTimes(2);
+    const notices = sender.sendText.mock.calls.filter(
+      (c: any[]) => c[1] === '有关联附件没能发送成功，需要的话请回复人工客服～',
+    );
+    expect(notices).toHaveLength(1);
+    expect(usage.increment).not.toHaveBeenCalledWith('assetsSent');
+  });
 });

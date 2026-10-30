@@ -304,6 +304,19 @@ describe('WecomClient', () => {
       expect(apiMock.post).toHaveBeenCalledWith('/appchat/send', expect.objectContaining({ msgtype: 'text' }), expect.anything());
     });
 
+    it('3.4.n2 sendAsset link 带标题：文本首行为素材名', async () => {
+      const client = withToken(await newClient());
+      await client.sendAsset('chat-004', 'https://example.com/doc', 'link', '使用手册');
+      expect(apiMock.post).toHaveBeenCalledWith(
+        '/appchat/send',
+        expect.objectContaining({
+          msgtype: 'text',
+          text: expect.objectContaining({ content: '使用手册\nhttps://example.com/doc' }),
+        }),
+        expect.anything(),
+      );
+    });
+
     it('3.4.o sendAsset file：先 uploadMedia 再 sendFile', async () => {
       apiMock.post.mockResolvedValueOnce({ data: { errcode: 0, media_id: 'uploaded-1' } });
       const client = withToken(await newClient());
