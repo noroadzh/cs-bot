@@ -3,11 +3,11 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 详细设计说明书（内部工程文档，不对外交付） |
-| 版本 | V1.12（V1.11 + token 提前刷新说明） |
+| 版本 | V1.13（V1.12 + 限流/上下文/状态文件表述对齐） |
 | 日期 | 2026-10-29 |
 | 状态 | 待评审 |
 | 适用读者 | 全栈工程师（直接据此编码） |
-| 上游文档 | 《概要设计 V1.21》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.14》 |
+| 上游文档 | 《概要设计 V1.22》（模块 M1–M11、数据流 D1–D10、规则 R-1~R-8、ADR A1–A14）、《PRD V1.5》、《部署手册 V1.14》 |
 | 设计基线 | NestJS 10 / Node 20 / TS 5.x；FastGPT v4.8.x；PG15+pgvector；Redis7；Mongo6；Rust(napi-rs) 授权核心 |
 
 > 约定：本文所有接口/类型以 TypeScript 表达；`adapter` 指自研适配层服务；所有时间戳为 `timestamptz`；所有 ID 字符串不含敏感信息。与概设冲突时以概设为准并回报修订。
@@ -224,7 +224,7 @@ selfcheck(): SelfcheckResult
 
 **被动回复与主动补发（3.5s 竞速）**：`pipeline.process` 内部 `Promise.race([answerPromise, sleep(3500)])`；超时者回空被动包（`success`），答案就绪后 `WecomClient.sendText` 主动补发（带 `client_msg_id = traceId` 幂等）。
 
-**去重（D2 前置）**：`SETNX dedup:{msgid} EX 172800`，返回 0 → 直接终止（1002）。
+**去重（D2 前置）**：`SETNX dedup:{msgid} EX 172800`，返回 0 → 直接终止（`DEDUP_DUP`）。
 
 ### 3.2 M2 路由触发（routing/）
 
@@ -235,24 +235,24 @@ isSelfOrBot(msg)            → 静默（机器人自身/其他应用消息）
 msgType != text && !mentioned → 静默（未@多媒体，R 与 FR-9 一致）
 mentioned = parseMention(Content)   // 企微 @ 列表含应用 userid/@昵称
 keywordHit = KeywordService.match(text)  // keywords.yml 词表，Trie 前缀匹配
-mentioned || keywordHit → 进入管道；否则静默(1004)
+mentioned || keywordHit → 进入管道；否则静默（`NOT_TRIGGERED`）
 ```
 
-**限流（令牌桶，Redis Lua 原子）**
+**限流（按分钟固定窗口，Redis Lua 原子）**
 
 | 键 | 速率 | 超限行为 |
 |---|---|---|
-| `rl:group:{chatId}` | 20/min | 静默；同群每 5min 最多一次提示 |
-| `rl:user:{chatId}:{userId}` | 5/min | 回"提问太频繁"话术 |
+| `rate:group:{chatId}:{minute}` | 20/min | 静默；同群每 5min 最多一次提示（`rate:hint:{chatId}`，300s NX） |
+| `rate:user:{chatId}:{userId}:{minute}` | 5/min | 回"提问太频繁"话术 |
 
-Lua 脚本 `tokenbucket.lua`：INCR + EXPIRE 原子化，避免竞态。
+Lua 脚本（`LUA_TOKEN_BUCKET` 常量，语义为固定窗口计数）：`INCR` + 首次 `EXPIRE 60` 原子化，避免竞态；先查用户维度再查群维度。
 
 **关键词配置** `config/keywords.yml`：`keywords: [/客服, 请问：, 咨询：]`；`POST /admin/keywords/reload` → 重建内存 Trie（原子引用切换，读写锁）。
 
 ### 3.3 M3 会话上下文（context/）
 
 - Redis 结构：`ctx:{chatId}:{userId}` = JSON 数组（近 5 轮 `[{"q","a"}...]`），TTL 600s，每轮写入后 `EXPIRE` 续期。
-- 超过 5 轮：`LPUSH` 语义截断（数组 shift 最旧）。
+- 超过 5 轮：截断保留最近 5 轮（数组 shift 最旧），整体写回并续期。
 - 读失败（REDIS_FAIL）→ fail-open 返回空历史（A5 决策），WARN。
 
 ### 3.4 M4 问答编排（qa/）
@@ -319,7 +319,7 @@ ConfigService.initialize()
 → Swagger / app.listen
 ```
 
-**运行期**：Guard 在管道 D3 位读缓存（<1ms）；每日 03:00 复核 + 写 `license.state {lastTs}`（0600）。失效→受限模式：`/healthz` unhealthy、回调只回授权话术（1005），FastGPT 后台不受限。
+**运行期**：Guard 在管道 D3 位读缓存（<1ms）；每日 03:00 复核 + 写 `license.lic.antireplay.json {lastTs}`（0600）。失效→受限模式：`/healthz` unhealthy、回调只回授权话术（`LICENSE_RESTRICTED`），FastGPT 后台不受限。
 **群数上限**：接入配置加载时校验 `chats.length > maxChats` → 拒新群 + 告警（老群不动）。
 **续期**：`POST /admin/license/reload` 重跑校验并刷新缓存。
 
@@ -486,7 +486,7 @@ CREATE TABLE platform_audit_log (
 | `rate:hint:{chatId}` | string "1" | 300s | 限流提示去重（同群每 5 分钟最多一次） |
 | `wecom:at` / `wecom:at:lock` | string | 7000s / 短锁 | access_token 缓存与刷新锁（M1） |
 
-> 授权状态为进程内缓存（每日 03:00 复核并写 `license.state`）；导入任务队列为进程内 `ImportTaskQueue`；用量上报失败缓冲落盘 `data/report-buffer.json`（保留 7 天）。三者均不使用 Redis。
+> 授权状态为进程内缓存（每日 03:00 复核并写 `license.lic.antireplay.json`）；导入任务队列为进程内 `ImportTaskQueue`；用量上报失败缓冲落盘 `data/report-buffer.json`（保留 7 天）。三者均不使用 Redis。
 
 ## 6. API 契约（管理面，Basic Auth + IP 白名单）
 
@@ -536,7 +536,7 @@ currentUsage = { messagesReceived, assetsSent }
 
 | 任务 | Cron（容器 TZ=Asia/Shanghai） | 内容 |
 |---|---|---|
-| license 复核 | `0 3 * * *` | 验签+指纹+回拨复核，写 license.state，失效→受限模式 |
+| license 复核 | `0 3 * * *` | 验签+指纹+回拨复核，写 license.lic.antireplay.json，失效→受限模式 |
 | miss 清理 | `30 3 * * *` | 删 90 天前记录 |
 | 导入临时区清理 | `40 3 * * *` | 删 `data/import/*`、>30d review.xlsx、>180d import_item |
 | 到期提醒 | `0 9 * * *` | 距 expires ≤15 天 → 运维群 webhook 告警 |
@@ -598,4 +598,4 @@ Dockerfile（多阶段 distroless 产物）：
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。*
+*版本记录：V1.0（2026-10-12）初版，依据概设 V1.8 编制；含工程结构、公共组件、M1–M11 详细设计、DDL、Redis 键、API 契约、定时任务、构建管线与测试设计。V1.1（2026-10-12）§6 补注管理面交付形态（本期纯 API，无自研前端；接口契约冻结，二期独立运营后台原样复用，不得破坏性变更），上游对齐概设 V1.9 与 PRD V1.5。V1.2（2026-10-29）按实现与主规格对齐：§6.2/§6.3 接口路径与入参、§5 Redis 键、§4 DDL 基线与关键词表、§3.10 容量字段。V1.3（2026-10-29）§3.10 编排渲染改为内联生成、§3.9 解析器改为四种格式；与概设 V1.11 同步。V1.4（2026-10-29）§2.1 改为出站客户端实际形态（axios + 公共 Semaphore），§6.1 补 JSON 导出结构与掩码口径。V1.5（2026-10-29）§2.1/§2.3 明确 `FastGPTClient` 为唯一 FastGPT 出口（问答/数据集/检索/计数），补 LLM 双通道失败告警。V1.6（2026-10-29）§9.1 改为固定窗口边界、标注 3.5s 群聊不适用；补验签失败告警。V1.7（2026-10-30）§1.4/§1.5/§1.6 按实现重写（五位错误码+字符串业务码、Ok/Err、chatHash/userHash、config-check 结构）；补私有化 FastGPT 后台入口（见部署手册 §7.7）。V1.8（2026-10-30）§2.4 按 `.d.ts` 重写 license-native 接口；§3.8 启动校验位置改为 `AppModule.onModuleInit`。V1.9（2026-10-30）§6.4 授权接口响应按 `LicenseState` + `currentUsage` 重写。V1.10（2026-10-30）§7 补审计清理 03:50；§2.1 补 `/healthz resources` 说明。V1.11（2026-10-30）§1.1/§1.2 按实际仓库与模块重写（同镜像双入口、qa/usage/health 等）；§9.2 拆分为集成测试与可选真实栈冒烟。V1.12（2026-10-30）§2.2 补 access_token 剩余 <300s 提前刷新。V1.13（2026-10-30）§3.2 限流改为按分钟固定窗口与 `rate:*` 键；§3.3 上下文写入表述；§3.2/§3.8 错误码改符号名；`license.lic.antireplay.json` 名称统一。*
