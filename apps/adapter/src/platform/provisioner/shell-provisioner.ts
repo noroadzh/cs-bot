@@ -167,7 +167,7 @@ export class ShellProvisioner implements TenantProvisioner {
       `      - ${net}`,
       '  fastgpt:',
       `    mem_limit: ${mem.fastgpt}`,
-      '    image: labring/fastgpt:v4.8.17',
+      '    image: ${FASTGPT_IMAGE:-registry.cn-hangzhou.aliyuncs.com/fastgpt/fastgpt:v4.8.17}',
       '    restart: unless-stopped',
       '    env_file:',
       `      - ${env}`,

@@ -6,8 +6,9 @@
 #   VERSION=1.0.0 IMAGE_TAR=/path/adapter.tar ./scripts/package-delivery.sh
 #
 # 产物：$OUT_DIR/cs-bot-deploy-<version>.tar.gz
-# 内容：deploy/（基线编排、nginx 配置、运维脚本）、config/ 出厂文件、
-#       apps/adapter/src/**/*.sql 迁移、.env.template、images/（可选）、SHA256SUMS.txt
+# 内容：适配层镜像 tar（传入 IMAGE_TAR 时）、一键安装与镜像构建脚本、
+#       docker-compose.yml、Dockerfile.adapter、nginx 与出厂配置、迁移 SQL、
+#       .env.template、SHA256SUMS.txt
 # 禁止：源码、tools/、签发密钥、SaaS 叠加文件、本地证书、license/license.lic、data/、logs/
 set -euo pipefail
 
@@ -31,10 +32,13 @@ copy_file() {
 
 # --- 白名单 ---
 copy_file deploy/docker-compose.yml
+copy_file deploy/Dockerfile.adapter
+copy_file deploy/build-images.sh
 copy_file deploy/nginx/nginx.conf
 copy_file deploy/nginx/fastgpt-admin-allow.conf
 copy_file deploy/init-perms.sh
 copy_file deploy/install.sh
+copy_file deploy/render-admin-allow.sh
 copy_file deploy/collect-logs.sh
 copy_file deploy/init-control-db.sh
 copy_file deploy/backup.sh
@@ -90,7 +94,12 @@ if command -v sha256sum >/dev/null 2>&1; then HASH="sha256sum"; else HASH="shasu
 ) > "$DEST/SHA256SUMS.txt"
 
 mkdir -p "$OUT_DIR"
-tar -czf "$OUT_DIR/$PACKAGE.tar.gz" -C "$STAGE" "$PACKAGE"
+# macOS 会把 com.apple.provenance 写进 pax 头，Linux tar 解压时告警。
+tar_opts=()
+if tar --no-xattrs --version >/dev/null 2>&1; then
+  tar_opts+=(--no-xattrs)
+fi
+COPYFILE_DISABLE=1 tar "${tar_opts[@]}" -czf "$OUT_DIR/$PACKAGE.tar.gz" -C "$STAGE" "$PACKAGE"
 
 echo "[package-delivery] $OUT_DIR/$PACKAGE.tar.gz"
 tar -tzf "$OUT_DIR/$PACKAGE.tar.gz" | sed 's|^|  |'

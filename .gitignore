@@ -9,6 +9,7 @@ package-lock.json
 # Node
 node_modules/
 dist/
+dist-delivery/
 dist-tenant/
 dist-platform/
 *.log

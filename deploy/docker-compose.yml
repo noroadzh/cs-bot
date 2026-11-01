@@ -57,7 +57,9 @@ services:
 
   fastgpt:
     mem_limit: 2560m
-    image: labring/fastgpt:v4.8.17
+    # Docker Hub 上没有 labring/fastgpt。国内默认阿里云；海外可在 .env 设
+    # FASTGPT_IMAGE=ghcr.io/labring/fastgpt:v4.8.17
+    image: ${FASTGPT_IMAGE:-registry.cn-hangzhou.aliyuncs.com/fastgpt/fastgpt:v4.8.17}
     restart: unless-stopped
     depends_on:
       mongo:

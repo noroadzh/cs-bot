@@ -35,9 +35,12 @@ describe('package-delivery', () => {
     const list = execFileSync('tar', ['-tzf', tar], { encoding: 'utf8' });
 
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/docker-compose.yml');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/Dockerfile.adapter');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/build-images.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/nginx.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/fastgpt-admin-allow.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/install.sh');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/render-admin-allow.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/collect-logs.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/.env.template');
     expect(list).toContain('cs-bot-deploy-9.9.9/config/keywords.yml');
@@ -73,10 +76,13 @@ describe('package-delivery', () => {
       }
       for (const rel of [
         'deploy/docker-compose.yml',
+        'deploy/Dockerfile.adapter',
+        'deploy/build-images.sh',
         'deploy/nginx/nginx.conf',
         'deploy/nginx/fastgpt-admin-allow.conf',
         'deploy/init-perms.sh',
         'deploy/install.sh',
+        'deploy/render-admin-allow.sh',
         'deploy/collect-logs.sh',
         'deploy/init-control-db.sh',
         'deploy/backup.sh',

@@ -3,15 +3,203 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 部署手册（私有化部署形态 A 为主，附 SaaS 形态租户开通） |
-| 版本 | V1.15（V1.14 + 迁移 018 与设计文档版本同步） |
-| 日期 | 2026-10-12 |
+| 版本 | V1.18（部署包同时包含适配层镜像与安装脚本、Compose、配置） |
+| 日期 | 2026-10-31 |
 | 适用对象 | 客户方 IT / 运维人员、交付工程师 |
 | 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.28 / 《详细设计》V1.18） |
 | 关联文档 | 《PRD V1.5》《概要设计 V1.28》《详细设计 V1.18》《测试报告 V1.5》《用户使用手册-SaaS版 V1.1》《用户使用手册-私有化版 V1.1》《项目报价单》 |
 
-> 本手册覆盖从环境准备到上线验证、日常运维与故障排查的完整流程。按顺序执行即可完成部署；**第 5 章准备清单全部就绪后再开始安装**，可避免中途卡壳。
+> 拿到 `cs-bot-deploy-<version>.tar.gz` 后，按《部署包使用说明》解压、拉镜像并启动。本手册第 0 章是同一条安装顺序，第 3 章起是环境、运维和排障。SaaS 客户不在自己的机器上装系统，见第 0.2 节。
 
 ---
+
+## 0. 照着做
+
+下面的命令与 `deploy/install.sh`、`deploy/docker-compose.yml`、根目录 `.env.template` 一致。工作目录始终是 `/opt/cs-bot`。
+
+### 0.1 私有化（形态 A）
+
+```mermaid
+flowchart TD
+  start[开始：客户自己的 Linux 服务器] --> prep[备齐：Docker、域名解析、PEM 证书、企微四件套、license.lic、部署包]
+  prep --> unpack[解压到 /opt/cs-bot 并 sha256sum -c]
+  unpack --> env[复制 .env.template 为 .env：关掉 mock，填企微和强口令]
+  env --> files[证书放到 deploy/nginx/certs/，授权放到 license/license.lic]
+  files --> check{./deploy/install.sh --check}
+  check -->|列出缺项| env
+  check -->|预检通过| up[sudo ./deploy/install.sh]
+  up --> health{curl -k https://127.0.0.1/healthz 为 200}
+  health -->|超时| logs[看 adapter 日志，补缺后重跑 install.sh]
+  logs --> check
+  health -->|200| wecom[企微后台保存回调 URL]
+  wecom --> allow[填写运维网段并重跑 install.sh，打开 8443]
+  allow --> kb[用 root 登录 FastGPT，建知识库和应用，拿到 API Key]
+  kb --> key[写回 FASTGPT_API_KEY 后 compose up -d adapter]
+  key --> smoke[测试群 @机器人 提问]
+  smoke --> done[部署完成]
+```
+
+先放在手边，没有就不要开始解压：
+
+| 材料 | 放到哪里 / 填到哪 |
+|---|---|
+| `cs-bot-deploy-<version>.tar.gz` | 解压成 `/opt/cs-bot` |
+| TLS：`fullchain.pem`、`privkey.pem` | `deploy/nginx/certs/` |
+| `license.lic` | `license/license.lic` |
+| 企微 CorpID、AgentId、Secret、Token、EncodingAESKey（正好 43 位） | `.env` 的 `WECHAT_*` |
+| DeepSeek Key、通义 Key | `.env` 的 `LLM_PRIMARY_API_KEY`、`LLM_FALLBACK_API_KEY` |
+| 运维出口公网 IP 或网段 | `ALLOWED_ADMIN_IPS`、`FASTGPT_ADMIN_ALLOW_CIDRS` |
+
+**1. 装 Docker（Ubuntu 22.04，已安装可跳过）**
+
+```bash
+docker compose version || {
+  sudo apt-get update
+  sudo apt-get install -y ca-certificates curl
+  sudo install -m 0755 -d /etc/apt/keyrings
+  sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  sudo chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list
+  sudo apt-get update
+  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+}
+sudo timedatectl set-timezone Asia/Shanghai
+docker compose version
+```
+
+服务器要能拉取 `nginx:1.27-alpine`、`registry.cn-hangzhou.aliyuncs.com/fastgpt/fastgpt:v4.8.17`、`pgvector/pgvector:pg16`、`mongo:7`、`redis:7-alpine`。海外机器在 `.env` 设置 `FASTGPT_IMAGE=ghcr.io/labring/fastgpt:v4.8.17`。适配层镜像在部署包的 `images/*.tar` 里，由安装脚本加载。
+
+**2. 解压并校验**
+
+包内顶层目录名是 `cs-bot-deploy-<version>`，不是 `cs-bot-<version>`。
+
+```bash
+sudo mkdir -p /opt
+sudo tar -C /opt -xzf cs-bot-deploy-<version>.tar.gz
+sudo mv /opt/cs-bot-deploy-<version> /opt/cs-bot
+cd /opt/cs-bot
+sha256sum -c SHA256SUMS.txt
+```
+
+每一行都要是 `OK`。有 `FAILED` 就停，重新要包。
+
+**3. 写 `.env`**
+
+安装脚本读的是 `/opt/cs-bot/.env`。模板里的 `USE_MOCK_LLM` 和 `USE_MOCK_LICENSE` 默认是 `true`，生产必须改成 `false`。口令用十六进制，避免 `/`、`+` 写进数据库连接串后登录失败。`REDIS_PASSWORD` 保持空，不要填值：健康检查是不带口令的 `redis-cli ping`，填了之后 Redis 会一直不健康。若 redis 容器因空的 `--requirepass` 反复退出，删掉 `deploy/docker-compose.yml` 里 redis 命令末尾的 `--requirepass ${REDIS_PASSWORD:-}`，再执行 `sudo ./deploy/install.sh`。
+
+```bash
+cd /opt/cs-bot
+cp .env.template .env
+chmod 600 .env
+openssl rand -hex 24   # 运行 4 次，分别填下面 4 个口令
+```
+
+只改这些项（名字必须一致，多一个字母启动会失败）：
+
+```dotenv
+USE_MOCK_LLM=false
+USE_MOCK_LICENSE=false
+
+WECHAT_CORP_ID=ww开头的企业ID
+WECHAT_AGENT_ID=1000002
+WECHAT_AGENT_SECRET=自建应用Secret
+WECHAT_TOKEN=企微接收消息Token
+WECHAT_ENCODING_AES_KEY=正好43位的EncodingAESKey
+
+FASTGPT_BASE_URL=http://fastgpt:3000
+FASTGPT_API_KEY=fastgpt-pending-key
+FASTGPT_ROOT_PASSWORD=第1个openssl结果
+FASTGPT_FILE_TOKEN=第2个openssl结果
+
+LLM_PRIMARY_BASE_URL=https://api.deepseek.com/v1
+LLM_PRIMARY_API_KEY=sk-你的DeepSeekKey
+LLM_FALLBACK_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_FALLBACK_API_KEY=sk-你的通义Key
+
+POSTGRES_PASSWORD=第3个openssl结果
+ADMIN_USER=admin
+ADMIN_PASSWORD=第4个openssl结果
+ALLOWED_ADMIN_IPS=你的运维公网IP/32
+
+FASTGPT_ADMIN_PORT=8443
+FASTGPT_ADMIN_ALLOW_CIDRS=
+REDIS_PASSWORD=
+```
+
+`FASTGPT_API_KEY` 先填占位符（至少 8 位）。真实 Key 要等 FastGPT 起来之后才能创建，见步骤 7。`FASTGPT_ADMIN_ALLOW_CIDRS` 先留空，步骤 6 再填。回调地址 `https://<域名>/wecom/callback` 只配在企微后台，不写进 `.env`。
+
+**4. 放证书和授权**
+
+```bash
+cd /opt/cs-bot
+sudo mkdir -p deploy/nginx/certs license
+sudo cp /path/to/fullchain.pem deploy/nginx/certs/fullchain.pem
+sudo cp /path/to/privkey.pem deploy/nginx/certs/privkey.pem
+sudo cp /path/to/license.lic license/license.lic
+sudo chmod 600 deploy/nginx/certs/privkey.pem license/license.lic
+```
+
+不用改 `deploy/nginx/nginx.conf`。`server_name` 已是 `_`，域名由 DNS 指到这台机器即可。
+
+**5. 预检，通过后再启动**
+
+```bash
+cd /opt/cs-bot
+./deploy/install.sh --check
+sudo ./deploy/install.sh
+curl -kfsS https://127.0.0.1/healthz
+```
+
+`--check` 通过时打印 `预检通过`，此时还没有启动容器。`install.sh` 成功时本机 `/healthz` 返回 200，并列出 6 个容器：`nginx`、`adapter`、`fastgpt`、`pg`、`mongo`、`redis`。超时就看：
+
+```bash
+docker compose -f deploy/docker-compose.yml logs --tail=80 adapter
+```
+
+改完 `.env` 后必须 `docker compose -f deploy/docker-compose.yml up -d`，`restart` 不会重新读取环境变量。
+
+**6. 打开知识库后台**
+
+把运维网段写进 `.env` 的 `FASTGPT_ADMIN_ALLOW_CIDRS`（例如 `203.0.113.20/32`），安全组只给这个网段放行 8443，然后：
+
+```bash
+cd /opt/cs-bot
+sudo ./deploy/install.sh
+```
+
+浏览器打开 `https://<域名>:8443`，用户名 `root`，口令是 `FASTGPT_ROOT_PASSWORD`。建一个知识库和应用，复制应用的 API Key。
+
+**7. 写回真实 Key 并做回调**
+
+```bash
+cd /opt/cs-bot
+# 编辑 .env，把 FASTGPT_API_KEY 换成上一步复制的 Key
+docker compose -f deploy/docker-compose.yml up -d adapter
+```
+
+企微管理后台 → 该自建应用 → 接收消息 → URL 填 `https://<域名>/wecom/callback`，Token 和 EncodingAESKey 与 `.env` 相同 → 保存。保存成功后再把应用拉进测试群，`@机器人` 问一个知识库里有的问题。
+
+到这里私有化部署结束。备份、升级、排障用第 8 章以后，不要从第 7 章倒着做。
+
+### 0.2 SaaS（形态 B）
+
+```mermaid
+flowchart TD
+  cust[客户提交企业名称、CorpID、企微密钥、订阅档] --> plat[交付方内部：基线 compose 叠加 saas compose]
+  plat --> open[开通租户：独立库、域名、证书、license]
+  open --> sec[PUT 租户密钥并重启该实例]
+  sec --> cb[客户在企微后台保存 https://租户域名/wecom/callback]
+  cb --> kb[客户登录该租户的 FastGPT 后台维护知识库]
+```
+
+客户侧没有安装脚本。交付方在持有仓库和签发私钥的机器上启动控制面（这两份叠加文件不在客户包里）：
+
+```bash
+cd /opt/cs-bot
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.saas.yml up -d
+```
+
+需要从管理网段访问控制面时再加 `-f deploy/docker-compose.control-plane-expose.yml`。签发私钥放在 `tools/license-issuer/issuer-private.pem`。租户开通、写密钥、续期的具体接口在附录 A 和附录 F。
 
 ## 1. 部署形态说明
 
@@ -146,13 +334,12 @@
 
 ### 7.0 一键部署（推荐）
 
-> 适用形态 A（私有化单机）。脚本只启动基线 6 个服务，不包含 SaaS 控制面与授权签发工具。
+> 适用形态 A（私有化单机）。可执行顺序、要改的变量和证书路径在 **第 0 章**。脚本只启动基线 6 个服务，不包含 SaaS 控制面与授权签发工具。
 
 ```bash
 cd /opt/cs-bot
-cp .env.template .env && chmod 600 .env && vim .env   # 填写 6 个必填项
-# 放置客户 TLS 证书：deploy/nginx/certs/fullchain.pem 与 privkey.pem
-# 放置交付方签发的授权：license/license.lic
+# .env、deploy/nginx/certs/*.pem、license/license.lic 已按第 0 章放好
+./deploy/install.sh --check
 sudo ./deploy/install.sh
 ```
 
@@ -194,14 +381,29 @@ sudo ./deploy/install.sh
 ### 7.1 获取并校验部署包
 
 ```bash
-# 上传部署包 cs-bot-deploy-<version>.tar.gz 至 /opt，然后：
-cd /opt && tar xzf cs-bot-deploy-<version>.tar.gz && mv cs-bot-<version> cs-bot && cd cs-bot
-sha256sum -c SHA256SUMS.txt     # 校验镜像 tar 与配置文件完整性，必须全部 OK
+# 上传部署包后。包内目录名是 cs-bot-deploy-<version>
+sudo mkdir -p /opt
+sudo tar -C /opt -xzf cs-bot-deploy-<version>.tar.gz
+sudo mv /opt/cs-bot-deploy-<version> /opt/cs-bot
+cd /opt/cs-bot
+sha256sum -c SHA256SUMS.txt     # 必须全部 OK
 ```
 
-> 部署包含：镜像 tar 包（或内网 registry 地址）、`deploy/docker-compose.yml`、`deploy/nginx/nginx.conf`、`deploy/` 运维脚本、`config/` 出厂文件、迁移 SQL、`.env` 模板、`SHA256SUMS.txt`。
+> 部署包是 `cs-bot-deploy-<version>.tar.gz`，由 `scripts/package-delivery.sh` 生成。同一包内包含：
 >
-> **不含**：源码、`tools/`（授权签发工具）、任何私钥、SaaS 叠加文件（`docker-compose.saas.yml`）、本地测试证书与 `license/license.lic`。交付方内部使用 `scripts/package-delivery.sh` 生成该包，命中内部制品会直接失败。
+> - 适配层镜像 `images/adapter-<version>.tar`
+> - 一键安装 `deploy/install.sh`
+> - 镜像准备 `deploy/build-images.sh`、`deploy/docker-compose.yml`、`deploy/Dockerfile.adapter`
+> - Nginx 配置、`.env.template`、`config/` 出厂文件、迁移 SQL、`SHA256SUMS.txt`
+>
+> 不含源码、`tools/`、私钥、SaaS 叠加文件、本地证书与 `license/license.lic`。五个公共镜像不在包内，由 `build-images.sh` 拉取。
+
+```bash
+cd /opt/cs-bot
+./deploy/build-images.sh    # 加载包内适配层镜像，并拉取 nginx/fastgpt/pg/mongo/redis
+# 按第 0 章写 .env、放入证书和 license.lic
+sudo ./deploy/install.sh
+```
 
 ### 7.2 导入镜像
 
@@ -225,16 +427,22 @@ vim .env
 
 | 变量 | 必填 | 示例 | 说明 |
 |---|---|---|---|
+| USE_MOCK_LLM / USE_MOCK_LICENSE | ★ | false / false | 模板默认 true；生产必须改为 false |
 | WECHAT_CORP_ID | ★ | ww12ab34cd56ef78 | 企业 ID |
-| WECHAT_APP_SECRET | ★ | xxx | 自建应用 Secret |
+| WECHAT_AGENT_SECRET | ★ | xxx | 自建应用 Secret |
 | WECHAT_AGENT_ID | ★ | 1000002 | 应用 AgentId |
 | WECHAT_TOKEN | ★ | xxx | 回调 Token |
-| WECHAT_AES_KEY | ★ | xxx（43 位） | 回调 EncodingAESKey |
-| WECHAT_CALLBACK_URL | ★ | https://bot.example.com/wecom/callback | 回调地址 |
-| FASTGPT_BASE_URL | ★ | http://fastgpt:3001 | 内网地址（默认） |
-| FASTGPT_API_KEY | ★ | fastgpt-xxx | FastGPT 应用 Key |
-| DEEPSEEK_API_KEY | ★ | sk-xxx | 主 LLM（在 FastGPT 模型配置中同步填） |
-| DASHSCOPE_API_KEY | ★ | sk-xxx | 通义 fallback / qwen-vl（增项 A） |
+| WECHAT_ENCODING_AES_KEY | ★ | 正好 43 位 | 回调 EncodingAESKey |
+| FASTGPT_BASE_URL | ★ | http://fastgpt:3000 | 容器内网地址 |
+| FASTGPT_API_KEY | ★ | fastgpt-xxx | 首次可用占位符；FastGPT 建应用后写回真实 Key |
+| FASTGPT_ROOT_PASSWORD | ★ | openssl rand -hex 24 | FastGPT 后台 root 口令，≥12 位 |
+| FASTGPT_FILE_TOKEN | ★ | openssl rand -hex 24 | FastGPT 文件令牌，≥12 位 |
+| POSTGRES_PASSWORD | ★ | openssl rand -hex 24 | 数据库口令，≥12 位；用 hex，避免连接串被 `/` `+` 截断 |
+| LLM_PRIMARY_BASE_URL | ★ | https://api.deepseek.com/v1 | 主 LLM 地址 |
+| LLM_PRIMARY_API_KEY | ★ | sk-xxx | 主 LLM Key（在 FastGPT 模型配置中同步填） |
+| LLM_FALLBACK_BASE_URL | ★ | https://dashscope.aliyuncs.com/compatible-mode/v1 | 通义地址 |
+| LLM_FALLBACK_API_KEY | ★ | sk-xxx | 通义 Key / qwen-vl（增项 A） |
+| REDIS_PASSWORD | | 留空 | 当前 Redis 健康检查不带口令；填写后容器会起不来 |
 | CONFIDENCE_THRESHOLD | | 0.75 | 置信度阈值（默认 0.75） |
 | CONTEXT_ROUNDS / CONTEXT_TTL_SEC | | 5 / 600 | 上下文轮数 / TTL |
 | LLM_TIMEOUT_MS | | 15000 | LLM 硬超时 |
@@ -282,11 +490,12 @@ vim .env
 ### 7.4 放置证书与授权文件
 
 ```bash
-# TLS 证书
-cp /path/to/fullchain.pem nginx/certs/ && cp /path/to/privkey.pem nginx/certs/
-chmod 600 nginx/certs/privkey.pem
-# 授权证书（交付方签发的 license.lic）
-cp /path/license.lic license/ && chmod 600 license/license.lic
+cd /opt/cs-bot
+sudo mkdir -p deploy/nginx/certs license
+sudo cp /path/to/fullchain.pem deploy/nginx/certs/fullchain.pem
+sudo cp /path/to/privkey.pem deploy/nginx/certs/privkey.pem
+sudo cp /path/to/license.lic license/license.lic
+sudo chmod 600 deploy/nginx/certs/privkey.pem license/license.lic
 ```
 
 ### 7.5 启动
@@ -406,14 +615,16 @@ docker exec adapter logrotate -f /etc/logrotate.conf   # 手动切割（自动�
 备份包含 adapter/FastGPT/控制面三个数据库的 pg_dump、Mongo、assets 与租户实例；控制面库文件名为 `pg_control_<date>.sql`。
 
 内容：两个 database 的 pg_dump + mongodump + `data/assets` 打包 → `/opt/cs-bot/backup/`。
-验证备份可执行：`docker exec adapter /app/scripts/backup.sh`（手动触发一次，确认产物生成）。
+验证备份可执行：在 `/opt/cs-bot` 执行 `./deploy/backup.sh`（产物在 `backup/<时间戳>/`，是未压缩的 `.sql`）。
 
 **恢复步骤**（以 PG 为例）：
 
 ```bash
 docker compose -f deploy/docker-compose.yml stop adapter fastgpt
-gunzip -c backup/pg_adapter_2026xxxx.gz | docker exec -i pg psql -U postgres adapter_db
-# FastGPT 库同理；素材目录：tar xzf backup/assets_xxxx.tar.gz -C data/
+docker compose -f deploy/docker-compose.yml exec -T pg \
+  psql -U cs -d csbot < backup/<时间戳>/pg_adapter_<时间戳>.sql
+# FastGPT 库把库名换成 fastgpt，文件换成 pg_fastgpt_*.sql
+# 素材目录：tar xzf backup/<时间戳>/assets_*.tar.gz -C data/
 docker compose -f deploy/docker-compose.yml start fastgpt adapter
 ```
 
@@ -634,18 +845,26 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.saas.yml up
 ## 附录 B：.env 最小可用模板
 
 ```dotenv
+# 生产安装以第 0 章为准。下面这些名字与启动校验一致。
+USE_MOCK_LLM=false
+USE_MOCK_LICENSE=false
 # ---- 企微（必填）----
 WECHAT_CORP_ID=
-WECHAT_APP_SECRET=
+WECHAT_AGENT_SECRET=
 WECHAT_AGENT_ID=
 WECHAT_TOKEN=
-WECHAT_AES_KEY=
-WECHAT_CALLBACK_URL=https://bot.example.com/wecom/callback
+WECHAT_ENCODING_AES_KEY=
+# 回调 URL 只配在企微后台：https://<域名>/wecom/callback
 # ---- FastGPT / LLM（必填）----
-FASTGPT_BASE_URL=http://fastgpt:3001
+FASTGPT_BASE_URL=http://fastgpt:3000
 FASTGPT_API_KEY=
-DEEPSEEK_API_KEY=
-DASHSCOPE_API_KEY=
+FASTGPT_ROOT_PASSWORD=
+FASTGPT_FILE_TOKEN=
+POSTGRES_PASSWORD=
+LLM_PRIMARY_BASE_URL=https://api.deepseek.com/v1
+LLM_PRIMARY_API_KEY=
+LLM_FALLBACK_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_FALLBACK_API_KEY=
 # ---- 管理接口（必填）----
 ADMIN_USER=admin
 ADMIN_PASSWORD=
@@ -734,12 +953,12 @@ sed -i 's/MODEL_MODE=cloud/MODEL_MODE=hybrid/' .env && docker compose -f deploy/
 | 用量快照 | `curl -s -u admin:*** https://<域名>/admin/usage` |
 | 素材列表（增项 A） | `curl -s -u admin:*** https://<域名>/admin/assets` |
 | 素材上传（增项 A） | `curl -s -u admin:*** -F "file=@xxx.jpg" https://<域名>/admin/assets` |
-| 手动备份 | `docker exec adapter /app/scripts/backup.sh` |
-| 进数据库 | `docker exec -it pg psql -U postgres -d adapter_db` |
+| 手动备份 | `cd /opt/cs-bot && ./deploy/backup.sh` |
+| 进数据库 | `docker exec -it pg psql -U cs -d csbot` |
 
 ---
 
-*版本记录：V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。V1.7（2026-10-29）未命中导出示例补 JSON 格式与掩码说明。V1.8（2026-10-29）补 LLM 双通道失败告警配置与容器自愈说明。V1.9（2026-10-29）补容器内存限额表与企微验签失败告警说明。V1.10（2026-10-30）新增 §7.7 FastGPT 管理后台入口（8443 + 白名单）。V1.11（2026-10-30）附录 A 开通步骤改为 API 写入密钥，删除不存在的租户管理页。V1.12（2026-10-30）§3/§5/§11 端口基线与安全自查补充 8443 管理口（仅运维网段）。V1.13（2026-10-30）§7.0/§7.3 补 SHA256SUMS 完整性校验与强口令要求。V1.14（2026-10-30）§9.2.1 新增 SaaS 租户备份 cron 与按需恢复步骤。V1.15（2026-10-30）§7.5 补迁移 018（trialing），关联文档版本行同步为概设 V1.28 / 详设 V1.18。*
+*版本记录：V1.18（2026-10-31）§7.1 部署包同时包含适配层镜像、一键安装、镜像准备脚本和各服务配置。V1.17（2026-10-31）§7.1 增加不含镜像的安装包 `cs-bot-install`，用 `deploy/build-images.sh` 拉取五个公共镜像并构建适配层。V1.16（2026-10-31）新增第 0 章流程图和按命令执行的安装顺序；修正解压目录名、证书路径、`.env` 变量名、备份命令和数据库账号，与 `install.sh` / compose 一致。V1.0（2026-10-12）初版，随《概要设计》V1.7 一并发布；V1.1（2026-10-12）随概设 V1.8 新增本地模型附录 D 与 MODEL_MODE 配置。覆盖形态 A 全流程、形态 B 租户开通、本地模型档部署。V1.2（2026-10-29）导入接口路径统一为 `/admin/import-jobs`，部署包内容与客户/SaaS 编排拆分口径对齐。V1.3（2026-10-29）新增 §7.0 一键部署与调用关系图，`deploy/install.sh` 覆盖预检/目录/权限/启动/健康等待。V1.4（2026-10-29）新增附录 F SaaS 控制面说明（定位、能力、边界、部署方式）。V1.5（2026-10-29）用户手册按 SaaS/私有化拆分并补界面示意图，关联文档同步。V1.6（2026-10-29）新增 `deploy/collect-logs.sh`，§10.1 重写为日志定位/查看/下载（含无 SSH 场景）。V1.7（2026-10-29）未命中导出示例补 JSON 格式与掩码说明。V1.8（2026-10-29）补 LLM 双通道失败告警配置与容器自愈说明。V1.9（2026-10-29）补容器内存限额表与企微验签失败告警说明。V1.10（2026-10-30）新增 §7.7 FastGPT 管理后台入口（8443 + 白名单）。V1.11（2026-10-30）附录 A 开通步骤改为 API 写入密钥，删除不存在的租户管理页。V1.12（2026-10-30）§3/§5/§11 端口基线与安全自查补充 8443 管理口（仅运维网段）。V1.13（2026-10-30）§7.0/§7.3 补 SHA256SUMS 完整性校验与强口令要求。V1.14（2026-10-30）§9.2.1 新增 SaaS 租户备份 cron 与按需恢复步骤。V1.15（2026-10-30）§7.5 补迁移 018（trialing），关联文档版本行同步为概设 V1.28 / 详设 V1.18。*
 
 ### 附录 A.1 租户 FastGPT 初始化与密钥更新（运营步骤）
 
