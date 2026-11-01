@@ -13,9 +13,8 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "useDefineForClassFields": false,
-    "baseUrl": ".",
     "paths": {
-      "@cs-bot/shared": ["packages/shared/src"]
+      "@cs-bot/shared": ["./packages/shared/src"]
     }
   },
   "exclude": ["node_modules", "dist"]
