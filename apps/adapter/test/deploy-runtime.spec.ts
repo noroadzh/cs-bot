@@ -46,7 +46,7 @@ describe('adapter runtime mounts', () => {
 
   it('提供一键部署脚本（预检/启动/健康等待）', () => {
     const install = readFileSync(join(ROOT, 'deploy', 'install.sh'), 'utf8');
-    expect(install).toContain('docker compose -f "$COMPOSE"');
+    expect(install).toContain('docker compose --env-file "$ROOT/.env" -f "$COMPOSE"');
     expect(install).toContain('up -d');
     expect(install).toContain('--check');
     expect(install).toContain('--dry-run');

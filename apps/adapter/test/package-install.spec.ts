@@ -26,6 +26,7 @@ describe('package-install', () => {
     const list = execFileSync('tar', ['-tzf', tar], { encoding: 'utf8' });
 
     expect(list).toContain('cs-bot-install-9.9.9/deploy/install.sh');
+    expect(list).toContain('cs-bot-install-9.9.9/deploy/setup.sh');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/build-images.sh');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/docker-compose.yml');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/Dockerfile.adapter');

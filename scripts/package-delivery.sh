@@ -6,9 +6,9 @@
 #   VERSION=1.0.0 IMAGE_TAR=/path/adapter.tar ./scripts/package-delivery.sh
 #
 # 产物：$OUT_DIR/cs-bot-deploy-<version>.tar.gz
-# 内容：适配层镜像 tar（传入 IMAGE_TAR 时）、一键安装与镜像构建脚本、
+# 内容：适配层镜像 tar（传入 IMAGE_TAR 时）、分步向导与一键安装、镜像构建脚本、
 #       docker-compose.yml、Dockerfile.adapter、nginx 与出厂配置、迁移 SQL、
-#       .env.template、SHA256SUMS.txt
+#       .env.template、使用说明、部署手册、私有化用户手册、SHA256SUMS.txt
 # 禁止：源码、tools/、签发密钥、SaaS 叠加文件、本地证书、license/license.lic、data/、logs/
 set -euo pipefail
 
@@ -38,12 +38,17 @@ copy_file deploy/nginx/nginx.conf
 copy_file deploy/nginx/fastgpt-admin-allow.conf
 copy_file deploy/init-perms.sh
 copy_file deploy/install.sh
+copy_file deploy/setup.sh
 copy_file deploy/render-admin-allow.sh
 copy_file deploy/collect-logs.sh
 copy_file deploy/init-control-db.sh
 copy_file deploy/backup.sh
 copy_file deploy/logrotate.conf
 copy_file .env.template
+copy_file "docs/03-交付实施/部署包使用说明.md"
+copy_file "docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md"
+copy_file "docs/03-交付实施/用户使用手册-私有化版.md"
+cp "$DEST/docs/03-交付实施/部署包使用说明.md" "$DEST/使用说明.md"
 
 [[ -d "$ROOT/config" ]] || fail "missing required directory: config/"
 cp -R "$ROOT/config" "$DEST/config"

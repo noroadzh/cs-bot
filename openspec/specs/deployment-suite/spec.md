@@ -31,7 +31,7 @@ The baseline `docker-compose.yml` MUST define exactly the six single-tenant serv
 
 ### Requirement: Customer delivery package contents
 
-The customer delivery package MUST be assembled from an allowlist — compose files for the baseline stack, nginx configuration, `config/` factory files, `.env` template, image archive or registry reference, and a SHA-256 checksum manifest — and MUST NOT contain source code, `tools/`, signing keys, the SaaS compose overlay, local TLS private keys, `license/license.lic`, `data/`, or `logs/`. Packaging MUST fail when any internal-only artifact would enter the package.
+The customer delivery package MUST be assembled from an allowlist — compose files for the baseline stack, the guided setup script, nginx configuration, `config/` factory files, `.env` template, the private-deployment usage guide, deployment handbook, and private user manual, image archive or registry reference, and a SHA-256 checksum manifest — and MUST NOT contain source code, `tools/`, signing keys, the SaaS compose overlay, local TLS private keys, `license/license.lic`, `data/`, or `logs/`. Packaging MUST fail when any internal-only artifact would enter the package.
 
 #### Scenario: Allowlisted package produced
 
@@ -229,6 +229,20 @@ The delivery package MUST ship an executable `deploy/install.sh` that installs t
 
 - **WHEN** the installer starts the stack
 - **THEN** it starts the six baseline services and never the control-plane or license issuer tooling
+
+### Requirement: Guided setup
+
+The delivery package MUST ship an executable `deploy/setup.sh` that walks an operator through ordered steps. Each step MUST state what the parameter does and what fails or changes if the value is wrong or edited later. The guide writes operator input into `.env` and MUST NOT start containers before the required values, certificates, and license are present. `deploy/install.sh` MUST remain non-interactive. After deployment, the guide MUST show the Enterprise WeChat console fields that correspond to the saved values, including the callback URL, and the command that applies a later change.
+
+#### Scenario: Step list explains parameters without writing files
+
+- **WHEN** an operator runs `./deploy/setup.sh --steps`
+- **THEN** the output lists the ordered steps, states the purpose and later effect of the WeCom and secret parameters, names the callback path `/wecom/callback`, and creates no `.env`
+
+#### Scenario: Install stays non-interactive
+
+- **WHEN** an operator runs `./deploy/install.sh` with a completed `.env`
+- **THEN** the installer does not prompt and follows the one-click installation behavior
 
 ### Requirement: Per-service memory limits
 

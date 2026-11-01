@@ -59,7 +59,8 @@ describe('deploy/install.sh', () => {
       encoding: 'utf8',
       stdio: 'pipe',
     });
-    expect(out).toContain('docker compose -f deploy/docker-compose.yml up -d');
+    expect(out).toContain('--env-file');
+    expect(out).toContain('-f deploy/docker-compose.yml up -d');
     expect(out).toContain('/healthz');
     expect(out).toContain('fastgpt-admin-allow.conf');
     expect(existsSync(join(root, 'data'))).toBe(false);
@@ -123,7 +124,8 @@ describe('deploy/install.sh', () => {
       encoding: 'utf8',
       stdio: 'pipe',
     });
-    expect(out).toContain('docker compose -f deploy/docker-compose.yml up -d');
+    expect(out).toContain('--env-file');
+    expect(out).toContain('-f deploy/docker-compose.yml up -d');
     expect(out).not.toContain('openssl rand');
   });
 

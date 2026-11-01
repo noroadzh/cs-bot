@@ -32,7 +32,10 @@ describe('package-delivery', () => {
   it('produces an allowlisted package with verifiable checksums', () => {
     runPackage({ VERSION: '9.9.9', OUT_DIR: outDir });
     const tar = join(outDir, 'cs-bot-deploy-9.9.9.tar.gz');
-    const list = execFileSync('tar', ['-tzf', tar], { encoding: 'utf8' });
+    const list = execFileSync('tar', ['-tzf', tar], {
+      encoding: 'utf8',
+      env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' },
+    });
 
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/docker-compose.yml');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/Dockerfile.adapter');
@@ -40,9 +43,14 @@ describe('package-delivery', () => {
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/nginx.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/fastgpt-admin-allow.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/install.sh');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/setup.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/render-admin-allow.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/collect-logs.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/.env.template');
+    expect(list).toContain('cs-bot-deploy-9.9.9/使用说明.md');
+    expect(list).toContain('cs-bot-deploy-9.9.9/docs/03-交付实施/部署包使用说明.md');
+    expect(list).toContain('cs-bot-deploy-9.9.9/docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md');
+    expect(list).toContain('cs-bot-deploy-9.9.9/docs/03-交付实施/用户使用手册-私有化版.md');
     expect(list).toContain('cs-bot-deploy-9.9.9/config/keywords.yml');
     expect(list).toContain('cs-bot-deploy-9.9.9/apps/adapter/src/platform/007-tenant.sql');
     expect(list).toContain('cs-bot-deploy-9.9.9/SHA256SUMS.txt');
@@ -71,7 +79,7 @@ describe('package-delivery', () => {
   it('rejects internal artifacts inside the package', () => {
     const fakeRoot = mkdtempSync(join(tmpdir(), 'csbot-root-'));
     try {
-      for (const dir of ['deploy/nginx', 'config', 'apps/adapter/src']) {
+      for (const dir of ['deploy/nginx', 'config', 'apps/adapter/src', 'docs/03-交付实施']) {
         mkdirSync(join(fakeRoot, dir), { recursive: true });
       }
       for (const rel of [
@@ -82,12 +90,16 @@ describe('package-delivery', () => {
         'deploy/nginx/fastgpt-admin-allow.conf',
         'deploy/init-perms.sh',
         'deploy/install.sh',
+        'deploy/setup.sh',
         'deploy/render-admin-allow.sh',
         'deploy/collect-logs.sh',
         'deploy/init-control-db.sh',
         'deploy/backup.sh',
         'deploy/logrotate.conf',
         '.env.template',
+        'docs/03-交付实施/部署包使用说明.md',
+        'docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md',
+        'docs/03-交付实施/用户使用手册-私有化版.md',
         'config/keywords.yml',
       ]) {
         writeFileSync(join(fakeRoot, rel), 'x\n');

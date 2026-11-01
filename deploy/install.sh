@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# 一键部署（私有化形态 A）
+# 一键部署（私有化形态 A，非交互）
+#
+# 按步骤填写参数并部署：sudo ./deploy/setup.sh
+# 部署后改企微或口令的对照：./deploy/setup.sh --after
 #
 # 用法：
 #   sudo ./deploy/install.sh              # 预检 + 建目录 + 权限 + 启动 + 健康等待
@@ -23,7 +26,7 @@ for arg in "$@"; do
     --check) MODE="check" ;;
     --dry-run) MODE="dry" ;;
     --skip-perms) SKIP_PERMS=1 ;;
-    -h|--help) sed -n '2,15p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "[install] ERROR: unknown option: $arg" >&2; exit 2 ;;
   esac
 done
@@ -94,7 +97,7 @@ preflight() {
     docker compose version >/dev/null 2>&1 || missing+=("docker compose v2")
   fi
   [ -f "$ROOT/$COMPOSE" ] || missing+=("$COMPOSE")
-  [ -f "$ROOT/.env" ] || missing+=(".env（先复制 .env.template 并填写必填项）")
+  [ -f "$ROOT/.env" ] || missing+=(".env（先执行 sudo ./deploy/setup.sh，或复制 .env.template 后填写）")
   if [ -f "$ROOT/.env" ]; then
     for k in "${REQUIRED_ENV[@]}"; do
       [ -n "$(env_value "$k")" ] || missing+=(".env:$k")
@@ -145,7 +148,7 @@ if [ "${#missing[@]}" -gt 0 ]; then
 fi
 [ "$MODE" = "check" ] && { info "预检通过"; exit 0; }
 
-COMPOSE_CMD=(docker compose -f "$COMPOSE")
+COMPOSE_CMD=(docker compose --env-file "$ROOT/.env" -f "$COMPOSE")
 
 if [ "$MODE" = "dry" ]; then
   info "将执行："
@@ -157,7 +160,7 @@ if [ "$MODE" = "dry" ]; then
   fi
   echo "  docker load -i images/*.tar（仅当本地无 adapter 镜像）"
   echo "  生成 deploy/nginx/fastgpt-admin-allow.conf（按 FASTGPT_ADMIN_ALLOW_CIDRS，默认 deny all）"
-  echo "  docker compose -f $COMPOSE up -d"
+  echo "  docker compose --env-file $ROOT/.env -f $COMPOSE up -d"
   echo "  curl -k ${HEALTH_URL}（最多 ${HEALTH_TIMEOUT}s）"
   echo "  docker compose -f $COMPOSE ps"
   exit 0

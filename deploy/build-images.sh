@@ -7,12 +7,15 @@
 # 2. 拉取 nginx / fastgpt / pg / mongo / redis
 # 3. 仍然没有适配层镜像、且当前目录是源码树时，才 docker compose build adapter
 #
-# 完成后按部署手册第 0 章填写 .env、放入证书和 license.lic，再执行 sudo ./deploy/install.sh。
+# 分步填写请执行 sudo ./deploy/setup.sh。本脚本只准备镜像。
 set -euo pipefail
 
 ROOT="${ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT"
 COMPOSE=(docker compose -f deploy/docker-compose.yml)
+if [[ -f .env ]]; then
+  COMPOSE=(docker compose --env-file .env -f deploy/docker-compose.yml)
+fi
 
 info() { echo "[build-images] $*"; }
 die() { echo "[build-images] ERROR: $*" >&2; exit 1; }
@@ -50,4 +53,4 @@ else
 fi
 have_adapter || die "适配层镜像仍不可用"
 
-info "镜像已就绪。下一步：配置 .env、证书、license.lic 后执行 sudo ./deploy/install.sh"
+info "镜像已就绪。下一步：sudo ./deploy/setup.sh（已有 .env 和证书时可 sudo ./deploy/install.sh）"
