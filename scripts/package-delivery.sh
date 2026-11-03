@@ -39,6 +39,7 @@ copy_file deploy/nginx/fastgpt-admin-allow.conf
 copy_file deploy/init-perms.sh
 copy_file deploy/install.sh
 copy_file deploy/setup.sh
+copy_file deploy/issue-letsencrypt.sh
 copy_file deploy/render-admin-allow.sh
 copy_file deploy/collect-logs.sh
 copy_file deploy/init-control-db.sh
@@ -49,6 +50,9 @@ copy_file "docs/03-交付实施/部署包使用说明.md"
 copy_file "docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md"
 copy_file "docs/03-交付实施/用户使用手册-私有化版.md"
 cp "$DEST/docs/03-交付实施/部署包使用说明.md" "$DEST/使用说明.md"
+chmod +x "$DEST/deploy/setup.sh" "$DEST/deploy/install.sh" "$DEST/deploy/build-images.sh" \
+  "$DEST/deploy/issue-letsencrypt.sh" "$DEST/deploy/collect-logs.sh" "$DEST/deploy/backup.sh" \
+  "$DEST/deploy/init-perms.sh" "$DEST/deploy/render-admin-allow.sh"
 
 [[ -d "$ROOT/config" ]] || fail "missing required directory: config/"
 cp -R "$ROOT/config" "$DEST/config"

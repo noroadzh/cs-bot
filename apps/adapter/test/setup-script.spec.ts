@@ -31,6 +31,8 @@ describe('deploy/setup.sh', () => {
     expect(out).toContain('/wecom/callback');
     expect(out).toContain('POSTGRES_PASSWORD');
     expect(out).toContain('up -d adapter');
+    expect(out).toContain("Let's Encrypt");
+    expect(out).toContain('issue-letsencrypt.sh');
     expect(existsSync(join(root, '.env'))).toBe(false);
   });
 

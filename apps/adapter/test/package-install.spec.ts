@@ -27,6 +27,7 @@ describe('package-install', () => {
 
     expect(list).toContain('cs-bot-install-9.9.9/deploy/install.sh');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/setup.sh');
+    expect(list).toContain('cs-bot-install-9.9.9/deploy/issue-letsencrypt.sh');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/build-images.sh');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/docker-compose.yml');
     expect(list).toContain('cs-bot-install-9.9.9/deploy/Dockerfile.adapter');

@@ -54,6 +54,7 @@ for rel in \
   deploy/build-images.sh \
   deploy/install.sh \
   deploy/setup.sh \
+  deploy/issue-letsencrypt.sh \
   deploy/render-admin-allow.sh \
   deploy/init-perms.sh \
   deploy/init-control-db.sh \
@@ -67,7 +68,8 @@ do
   mkdir -p "$DEST/$(dirname "$rel")"
   cp "$ROOT/$rel" "$DEST/$rel"
 done
-chmod +x "$DEST/deploy/build-images.sh" "$DEST/deploy/install.sh" "$DEST/deploy/setup.sh" "$DEST/scripts/package-install.sh"
+chmod +x "$DEST/deploy/build-images.sh" "$DEST/deploy/install.sh" "$DEST/deploy/setup.sh" \
+  "$DEST/deploy/issue-letsencrypt.sh" "$DEST/scripts/package-install.sh"
 
 violations=0
 while IFS= read -r hit; do

@@ -142,6 +142,8 @@ explain_files() {
   deploy/nginx/certs/fullchain.pem  站点证书。企微保存回调时会访问 https://域名/wecom/callback，证书不受信任则保存失败。
   deploy/nginx/certs/privkey.pem    私钥。权限收成 600。
   license/license.lic               交付方按这台机器签发的授权。文件名必须小写。缺失或验签失败时进入受限模式，不回答问题。
+TLS 推荐：域名已解析到本机时选 Let's Encrypt（公网 CA，约 90 天自动续期），不要用 openssl 自签（企微校验会失败）。
+也可粘贴已有 fullchain.pem / privkey.pem 路径。向导会调用 deploy/issue-letsencrypt.sh 申请并安装续期 hook。
 不用改 nginx.conf。域名靠 DNS，不靠 server_name。
 EOF
 }
@@ -197,6 +199,8 @@ FastGPT 知识库（8443 默认拒绝所有人）：
   换文件令牌             改 FASTGPT_FILE_TOKEN 会使已有文件链接失效，再 up -d fastgpt。
   放开或收紧 8443        改 FASTGPT_ADMIN_ALLOW_CIDRS，再 sudo ./deploy/install.sh。
   换 HTTPS 证书          替换 deploy/nginx/certs 下两个 pem，再 up -d nginx。企微回调依赖这张证书。
+  Let's Encrypt 续期     系统定时 certbot renew；成功后 hook 自动覆盖 pem 并 up -d nginx。手动：sudo certbot renew
+  重新申请 LE 证书       sudo ./deploy/issue-letsencrypt.sh issue <域名> [邮箱]
   换授权                 替换 license/license.lic 后，在管理接口执行授权重载，或 up -d adapter。
 
 重新查看这份对照：./deploy/setup.sh --after
@@ -377,11 +381,44 @@ place_one() {
   [ -f "$dest" ] || die "仍缺少 $dest"
 }
 
+step_tls_certs() {
+  local mode domain email
+  domain=""
+  if [ -f "$DOMAIN_FILE" ]; then
+    domain="$(tr -d '[:space:]' < "$DOMAIN_FILE")"
+  fi
+  cat <<'EOF' >&2
+站点 TLS（企微要求公网可信任证书，勿用 openssl 自签）：
+  1  Let's Encrypt 申请（域名须已解析到本机，建议在启动 nginx 前做；约 90 天自动续期）
+  2  已有 fullchain.pem / privkey.pem，按路径拷入
+EOF
+  mode="$(ask "选证书方式" "1")"
+  case "$mode" in
+    1)
+      [ -n "$domain" ] || domain="$(ask "申请证书的域名，例如 bot.example.com")"
+      email="$(ask "联系邮箱（可留空，Let's Encrypt 到期提醒）" "" 1)"
+      if [ "$(id -u)" != "0" ]; then
+        die "Let's Encrypt 需要 root。请执行: sudo ./deploy/setup.sh 或 sudo ./deploy/issue-letsencrypt.sh issue $domain ${email}"
+      fi
+      if [ -n "$email" ]; then
+        "$ROOT/deploy/issue-letsencrypt.sh" issue "$domain" "$email"
+      else
+        "$ROOT/deploy/issue-letsencrypt.sh" issue "$domain"
+      fi
+      ;;
+    *)
+      place_one "fullchain.pem" "$ROOT/deploy/nginx/certs/fullchain.pem" 644
+      place_one "privkey.pem" "$ROOT/deploy/nginx/certs/privkey.pem" 600
+      ;;
+  esac
+  [ -f "$ROOT/deploy/nginx/certs/fullchain.pem" ] || die "仍缺少 fullchain.pem"
+  [ -f "$ROOT/deploy/nginx/certs/privkey.pem" ] || die "仍缺少 privkey.pem"
+}
+
 step_files() {
   explain_files
   pause
-  place_one "fullchain.pem" "$ROOT/deploy/nginx/certs/fullchain.pem" 644
-  place_one "privkey.pem" "$ROOT/deploy/nginx/certs/privkey.pem" 600
+  step_tls_certs
   place_one "license.lic" "$ROOT/license/license.lic" 600
 }
 

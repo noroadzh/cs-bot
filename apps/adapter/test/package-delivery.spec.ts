@@ -44,6 +44,7 @@ describe('package-delivery', () => {
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/nginx/fastgpt-admin-allow.conf');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/install.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/setup.sh');
+    expect(list).toContain('cs-bot-deploy-9.9.9/deploy/issue-letsencrypt.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/render-admin-allow.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/collect-logs.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/.env.template');
@@ -91,6 +92,7 @@ describe('package-delivery', () => {
         'deploy/init-perms.sh',
         'deploy/install.sh',
         'deploy/setup.sh',
+        'deploy/issue-letsencrypt.sh',
         'deploy/render-admin-allow.sh',
         'deploy/collect-logs.sh',
         'deploy/init-control-db.sh',
