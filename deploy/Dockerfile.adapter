@@ -80,7 +80,10 @@ RUN mkdir -p /app/data /app/logs /app/license
 # ---- 交付加固（安全基线：JS 全量混淆 + 剔除 sourcemap）----
 # 版本固定，构建期通过 npx 获取，避免把混淆器打进运行时镜像。
 # 交付镜像的指纹（docker images --no-trunc）随交付文档一并提供用户核对。
-RUN npx --yes javascript-obfuscator@4.1.1 apps/adapter/dist \
+# 可传 --build-arg NPM_REGISTRY=https://registry.npmmirror.com 规避 npmjs 网络抖动
+ARG NPM_REGISTRY=https://registry.npmjs.org
+RUN npm config set registry "$NPM_REGISTRY" \
+ && npx --yes javascript-obfuscator@4.1.1 apps/adapter/dist \
       --output apps/adapter/dist \
       --compact true \
       --control-flow-flattening true \
