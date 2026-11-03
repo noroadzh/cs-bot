@@ -105,6 +105,8 @@ services:
       - ../apps/adapter/src/platform/016-runtime-gaps.sql:/docker-entrypoint-initdb.d/17-runtime-gaps.sql:ro
       - ../apps/adapter/src/platform/017-tenant-contact.sql:/docker-entrypoint-initdb.d/18-tenant-contact.sql:ro
       - ../apps/adapter/src/platform/018-tenant-trialing.sql:/docker-entrypoint-initdb.d/19-tenant-trialing.sql:ro
+      - ../apps/adapter/src/platform/019-tenant-plan.sql:/docker-entrypoint-initdb.d/20-tenant-plan.sql:ro
+      - ../apps/adapter/src/platform/020-tenant-fingerprint-tenancy.sql:/docker-entrypoint-initdb.d/21-tenant-fingerprint-tenancy.sql:ro
       - ./init-control-db.sh:/docker-entrypoint-initdb.d/00-control-db.sh:ro
       - ../apps/adapter/src/platform/007-tenant.sql:/control-migrations/01-tenant.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/control-migrations/02-control-plane.sql:ro
@@ -114,6 +116,8 @@ services:
       - ../apps/adapter/src/platform/016-runtime-gaps.sql:/control-migrations/06-runtime-gaps.sql:ro
       - ../apps/adapter/src/platform/017-tenant-contact.sql:/control-migrations/07-tenant-contact.sql:ro
       - ../apps/adapter/src/platform/018-tenant-trialing.sql:/control-migrations/08-tenant-trialing.sql:ro
+      - ../apps/adapter/src/platform/019-tenant-plan.sql:/control-migrations/09-tenant-plan.sql:ro
+      - ../apps/adapter/src/platform/020-tenant-fingerprint-tenancy.sql:/control-migrations/10-tenant-fingerprint-tenancy.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/docker-entrypoint-initdb.d/09-control-plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]
@@ -136,12 +140,29 @@ services:
     mem_limit: 512m
     image: redis:7-alpine
     restart: unless-stopped
-    # maxmemory 低于容器限额，为 fork/碎片留余量；上下文/去重允许淘汰
-    command: redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy allkeys-lru --requirepass ${REDIS_PASSWORD:-}
+    # 空口令不写 --requirepass；有口令时 healthcheck 带 -a
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - /bin/sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy allkeys-lru --requirepass "$$REDIS_PASSWORD"
+        else
+          exec redis-server --appendonly yes --maxmemory 384mb --maxmemory-policy allkeys-lru
+        fi
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test:
+        - CMD-SHELL
+        - |
+          if [ -n "$$REDIS_PASSWORD" ]; then
+            redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG
+          else
+            redis-cli ping | grep -q PONG
+          fi
       interval: 10s
       timeout: 3s
       retries: 5

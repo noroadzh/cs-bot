@@ -2,6 +2,8 @@
 import { Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard.js';
+import { Roles } from './roles.decorator.js';
+import { RolesGuard } from './roles.guard.js';
 import { LicenseService } from '../license/license.service.js';
 import { UsageService } from '../usage/usage.service.js';
 import { LicenseStatusDto, LicenseReloadDto, AdminUsageDto } from './dto/admin-responses.dto.js';
@@ -9,7 +11,7 @@ import { LicenseStatusDto, LicenseReloadDto, AdminUsageDto } from './dto/admin-r
 @Controller('admin')
 @ApiBearerAuth()
 @ApiTags('admin')
-@UseGuards(AdminGuard)
+@UseGuards(AdminGuard, RolesGuard)
 export class LicenseController {
   constructor(
     private readonly license: LicenseService,
@@ -32,7 +34,8 @@ export class LicenseController {
   }
 
   @Post('license/reload')
-  @ApiOperation({ summary: '重载 License 文件' })
+  @Roles('admin')
+  @ApiOperation({ summary: '重载 License 文件（仅 admin）' })
   @ApiResponse({ status: 201, type: LicenseReloadDto, description: '重载结果' })
   reload() { return this.license.reload(); }
 

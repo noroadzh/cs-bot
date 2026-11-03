@@ -13,10 +13,15 @@ import { join } from 'node:path';
 import { AdminGuard } from '../admin/admin.guard.js';
 import { ConfigService } from '../config/config.service.js';
 import { PlatformController } from './platform.controller.js';
+import { SelfServeController } from './self-serve.controller.js';
+import { GpuCatalogController } from './gpu-catalog.controller.js';
+import { BillingService } from './billing.service.js';
 import { TenantService } from './tenant.service.js';
 import { TenantQuotaService } from './tenant-quota.service.js';
 import { TenantUsageService } from './tenant-usage.service.js';
 import { PlatformAuditService } from './platform-audit.service.js';
+import { ModelRouterService } from '../qa/model-router.service.js';
+import { RolesGuard } from '../admin/roles.guard.js';
 import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantSecretStore } from './tenant-secret-store.js';
 import { TenantSecretsService } from './tenant-secrets.service.js';
@@ -41,9 +46,12 @@ export class PlatformModule {
     return {
       module: PlatformModule,
       imports: [],
-      controllers: [PlatformController],
+      controllers: [PlatformController, SelfServeController, GpuCatalogController],
       providers: [
         AdminGuard,
+        RolesGuard,
+        BillingService,
+        ModelRouterService,
         TenantService,
         TenantSyncService,
         {

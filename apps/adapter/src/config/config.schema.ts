@@ -27,11 +27,33 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LLM_RETRY_DELAY_MS: EnvInt(1000),
   LLM_PRIMARY_MODEL: EnvString.default('deepseek-chat'),
 
-  // Admin
+  // Admin（ADMIN_* = admin 角色；OPERATOR_* 可选，登录后为 operator）
   ADMIN_USER: EnvString.default('admin'),
   ADMIN_PASSWORD: EnvString.min(6),
+  ADMIN_OPERATOR_USER: EnvString.optional().default(''),
+  ADMIN_OPERATOR_PASSWORD: EnvString.optional().default(''),
   ALLOWED_ADMIN_IPS: EnvString.default('127.0.0.1/32'),
   TRUSTED_PROXY_CIDRS: EnvString.default('127.0.0.1/32,::1/128'),
+
+  // 多模态 / 学习闭环
+  ASR_BASE_URL: EnvString.optional().default(''),
+  ASR_API_KEY: EnvString.optional().default(''),
+  ASR_MODEL: EnvString.default('whisper-1'),
+  ASR_TIMEOUT_MS: EnvInt(60_000),
+  MAX_VOICE_BYTES: EnvInt(20 * 1024 * 1024),
+  MAX_VIDEO_BYTES: EnvInt(100 * 1024 * 1024),
+  IMAGE_CHAT_MODE: z.enum(['question', 'describe']).default('question'),
+  AUTO_LEARNING_ENABLED: EnvBool(false),
+
+  // 支付（自助 SaaS；空 = 关闭）
+  PAYMENT_WECHAT_MCH_ID: EnvString.optional().default(''),
+  PAYMENT_WECHAT_API_KEY: EnvString.optional().default(''),
+  PAYMENT_ALIPAY_APP_ID: EnvString.optional().default(''),
+  PAYMENT_ALIPAY_PRIVATE_KEY: EnvString.optional().default(''),
+  SELF_SERVE_ENABLED: EnvBool(false),
+
+  // 多模型路由目录（JSON 数组字符串，可空）
+  MODEL_CATALOG_JSON: EnvString.optional().default('[]'),
 
   // Mode
   USE_MOCK_LLM: EnvBool(true),

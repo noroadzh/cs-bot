@@ -30,8 +30,9 @@ function buildWhere(days: number, range?: MissRange): { sql: string; params: unk
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-/** JSON 导出条目：仅规格列出的字段，userId 掩码；不含 trace_id/engine */
+/** JSON 导出条目：规格字段 + id（供 PATCH）；userId 掩码；不含 trace_id/engine */
 export interface MissExportItem {
+  id?: number;
   question: string;
   chatId: string;
   score: number;
@@ -43,10 +44,11 @@ export interface MissExportItem {
 
 export function toExportItems(rows: readonly Record<string, unknown>[]): MissExportItem[] {
   return rows.map((r) => ({
+    id: r.id == null ? undefined : Number(r.id),
     question: String(r.question ?? ''),
     chatId: String(r.chat_id ?? ''),
     score: Number(r.score ?? 0),
-    mediaType: (r.mediaType as string | null) ?? null,
+    mediaType: (r.mediaType as string | null) ?? (r.media_type as string | null) ?? null,
     status: Number(r.status ?? 0),
     createdAt: new Date(r.created_at as string).toISOString(),
     userId: maskPII(String(r.user_id ?? ''), 'userid'),
@@ -66,7 +68,7 @@ export class MissExportService {
     try {
       const where = buildWhere(days, range);
       const result = await pool.query(
-        `SELECT trace_id, chat_id, user_id, question, score, engine,
+        `SELECT id, trace_id, chat_id, user_id, question, score, engine,
                 media_type AS "mediaType", status, created_at
          FROM miss_record
          WHERE ${where.sql}

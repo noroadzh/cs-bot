@@ -24,6 +24,8 @@ import { HealthModule } from './health/health.module.js';
 import { ImportModule } from './import/import.module.js';
 import { PlatformModule } from './platform/platform.module.js';
 import { InternalModule } from './internal/internal.module.js';
+import { LearningModule } from './learning/learning.module.js';
+import { ArchiveModule } from './archive/archive.module.js';
 
 @Module({
   imports: [
@@ -42,6 +44,8 @@ import { InternalModule } from './internal/internal.module.js';
     AdminModule,
     HealthModule,
     ImportModule,
+    LearningModule,
+    ArchiveModule,
     PlatformModule.forRoot(),
     InternalModule,
   ],

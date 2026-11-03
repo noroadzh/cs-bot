@@ -163,11 +163,13 @@ export class TenantService implements OnModuleDestroy {
       : new Date(now.getTime() + 365 * 86_400_000).toISOString();
 
     const plan = input.plan === 'enhanced' ? 'enhanced' : 'standard';
+    const tenancyMode = input.tenancyMode === 'shared' ? 'shared' : 'dedicated';
+    const fingerprint = input.fingerprint?.trim() || null;
     const res = await this.pool.query(
-      `INSERT INTO tenant (id, name, contact, plan, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at)
-       VALUES ($1, $2, $3, $4, 'created', $5, nextval('tenant_port_seq'), NULL, $6, $6, $7, NULL, NULL)
-       RETURNING id, name, contact, plan, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at`,
-      [randomUUID(), trimmedName, input.contact ?? null, plan, input.domain ?? null, now.toISOString(), expiredAt],
+      `INSERT INTO tenant (id, name, contact, plan, tenancy_mode, fingerprint, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'created', $7, nextval('tenant_port_seq'), NULL, $8, $8, $9, NULL, NULL)
+       RETURNING id, name, contact, plan, tenancy_mode, fingerprint, status, host, port, database_url, created_at, updated_at, expired_at, last_provision_log, deleted_at`,
+      [randomUUID(), trimmedName, input.contact ?? null, plan, tenancyMode, fingerprint, input.domain ?? null, now.toISOString(), expiredAt],
     );
 
     const tenant = mapTenantRow(res.rows[0]);
@@ -210,11 +212,15 @@ export class TenantService implements OnModuleDestroy {
     );
 
     try {
-      if (ConfigService.instance.LICENSE_ISSUER === 'shell' && !ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT) {
+      const issueFingerprint = this.resolveLicenseFingerprint(tenant);
+      if (ConfigService.instance.LICENSE_ISSUER === 'shell' && !issueFingerprint) {
         throw new BadRequestException({
           errCode: 'LICENSE_FINGERPRINT_MISSING',
-          detail: 'PLATFORM_LICENSE_FINGERPRINT is required for shell license issuance',
+          detail: 'tenant.fingerprint or PLATFORM_LICENSE_FINGERPRINT is required for shell license issuance',
         });
+      }
+      if (tenant.tenancyMode === 'shared') {
+        return this.provisionShared(tenant, actor, provisionStart, issueFingerprint);
       }
       if (!tenant.port) {
         const portRes = await this.pool.query(`SELECT nextval('tenant_port_seq') AS port`);
@@ -243,7 +249,7 @@ export class TenantService implements OnModuleDestroy {
       await this.licenseIssuer.issue({
         id: tenant.id,
         host: tenant.host,
-        fingerprint: ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT || undefined,
+        fingerprint: issueFingerprint || undefined,
         expiresAtMs: tenant.expiredAt ? Date.parse(tenant.expiredAt) : Date.now() + 365 * 86_400_000,
         maxChats: quota?.maxChats,
       });
@@ -365,10 +371,17 @@ export class TenantService implements OnModuleDestroy {
 
     // 先签发新 license，再落订阅；签发失败不更新到期时间
     const quota = await this.quota.getQuota(tenantId);
+    const issueFingerprint = this.resolveLicenseFingerprint(tenant);
+    if (ConfigService.instance.LICENSE_ISSUER === 'shell' && !issueFingerprint) {
+      throw new BadRequestException({
+        errCode: 'LICENSE_FINGERPRINT_MISSING',
+        detail: 'tenant.fingerprint or PLATFORM_LICENSE_FINGERPRINT is required for shell license issuance',
+      });
+    }
     await this.licenseIssuer.issue({
       id: tenant.id,
       host: tenant.host,
-      fingerprint: ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT || undefined,
+      fingerprint: issueFingerprint || undefined,
       expiresAtMs: Date.parse(afterExpiresAt),
       maxChats: quota?.maxChats,
     });
@@ -576,8 +589,8 @@ export class TenantService implements OnModuleDestroy {
     const total = Number(countRes.rows[0].cnt);
 
     const dataRes = await this.pool.query(
-      `SELECT id, name, contact, plan, status, host, port, database_url, created_at, updated_at,
-              expired_at, last_provision_log, deleted_at
+      `SELECT id, name, contact, plan, tenancy_mode, fingerprint, status, host, port, database_url,
+              created_at, updated_at, expired_at, last_provision_log, deleted_at
        FROM tenant WHERE ${whereStr}
        ORDER BY created_at DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
@@ -609,8 +622,8 @@ export class TenantService implements OnModuleDestroy {
 
   async requireTenant(id: string, includeDeleted = false): Promise<Tenant> {
     const res = await this.pool.query(
-      `SELECT id, name, contact, plan, status, host, port, database_url, created_at, updated_at,
-              expired_at, last_provision_log, deleted_at
+      `SELECT id, name, contact, plan, tenancy_mode, fingerprint, status, host, port, database_url,
+              created_at, updated_at, expired_at, last_provision_log, deleted_at
        FROM tenant WHERE id = $1${includeDeleted ? '' : ' AND deleted_at IS NULL'}`,
       [id],
     );
@@ -770,6 +783,64 @@ export class TenantService implements OnModuleDestroy {
     await this.pool.end().catch(() => undefined);
   }
 
+  /** 优先租户指纹，其次全局 PLATFORM_LICENSE_FINGERPRINT */
+  resolveLicenseFingerprint(tenant: Tenant): string {
+    const fromTenant = tenant.fingerprint?.trim() ?? '';
+    if (fromTenant) return fromTenant;
+    return ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT?.trim() ?? '';
+  }
+
+  /** 开通/采集后回写实例指纹 */
+  async setFingerprint(tenantId: string, fingerprint: string): Promise<Tenant> {
+    const fp = fingerprint.trim();
+    if (!/^[a-fA-F0-9]{64}$/.test(fp)) {
+      throw new BadRequestException({
+        errCode: 'LICENSE_FINGERPRINT_INVALID',
+        detail: 'fingerprint must be 64 hex chars',
+      });
+    }
+    await this.pool.query(
+      `UPDATE tenant SET fingerprint = $2, updated_at = NOW() WHERE id = $1`,
+      [tenantId, fp],
+    );
+    return this.requireTenant(tenantId);
+  }
+
+  /**
+   * shared 模式：不启独立 compose，只登记租户并签发绑定指纹的 license 元数据。
+   * 数据面靠 TENANT_ID / redis key 前缀做逻辑隔离。
+   */
+  private async provisionShared(
+    tenant: Tenant,
+    actor: string,
+    provisionStart: number,
+    issueFingerprint: string,
+  ): Promise<Tenant> {
+    const tenantId = tenant.id;
+    const quota = await this.quota.getQuota(tenantId);
+    if (issueFingerprint) {
+      await this.licenseIssuer.issue({
+        id: tenant.id,
+        host: tenant.host,
+        fingerprint: issueFingerprint,
+        expiresAtMs: tenant.expiredAt ? Date.parse(tenant.expiredAt) : Date.now() + 365 * 86_400_000,
+        maxChats: quota?.maxChats,
+      });
+    }
+    await this.pool.query(
+      `UPDATE tenant SET status = 'active', last_provision_log = $2, updated_at = NOW() WHERE id = $1`,
+      [tenantId, 'shared-tenancy:logical-isolation'],
+    );
+    this.logger.timing({ detail: 'tenant-provision-shared', tenantId, status: 'active' }, Date.now() - provisionStart);
+    await this.audit.append({
+      action: 'tenant.provision',
+      actor,
+      tenantId,
+      payload: { tenantId, tenancyMode: 'shared' },
+    });
+    return this.requireTenant(tenantId);
+  }
+
 }
 
 function mapTenantRow(row: Record<string, unknown>): Tenant {
@@ -778,6 +849,8 @@ function mapTenantRow(row: Record<string, unknown>): Tenant {
     name: String(row.name),
     contact: row.contact == null ? null : String(row.contact),
     plan: row.plan === 'enhanced' ? 'enhanced' : 'standard',
+    tenancyMode: row.tenancy_mode === 'shared' ? 'shared' : 'dedicated',
+    fingerprint: row.fingerprint == null ? null : String(row.fingerprint),
     status: String(row.status) as Tenant['status'],
     host: row.host === null || row.host === undefined ? null : String(row.host),
     port: row.port === null || row.port === undefined ? null : Number(row.port),

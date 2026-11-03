@@ -9,6 +9,7 @@ import { WecomCrypto } from './wecom-crypto.js';
 import { WecomClient } from './wecom-client.js';
 import { RoutingService } from '../routing/routing.service.js';
 import { MediaRecognizeService } from '../media/media-recognize.service.js';
+import { AsrService } from '../media/asr.service.js';
 import { UsageService } from '../usage/usage.service.js';
 import { MissService } from '../miss/miss.service.js';
 import { OpsAlertService } from '../common/ops-alert.service.js';
@@ -57,6 +58,7 @@ export class WecomController {
     private readonly wecomClient: WecomClient,
     private readonly licenseGate: LicenseGateService,
     private readonly miss: MissService,
+    private readonly asr: AsrService,
     @Optional() private readonly opsAlert: OpsAlertService = new OpsAlertService(),
   ) {
     this.installSendHold();
@@ -157,10 +159,22 @@ export class WecomController {
       return;
     }
 
-    // FR-9 规则 3：@机器人的语音/视频/文件不解析，回引导话术 + 未命中落库（media_type）
+    // 语音/视频：配置了 ASR 则转写后进 QA；否则（或文件）回引导话术 + miss
     const mediaMsg = msg as any;
     if (mediaMsg.mentioned && ['voice', 'video', 'file'].includes(mediaMsg.MsgType)) {
       const mediaChatId = mediaMsg.ChatId || mediaMsg.FromUserName;
+      if (
+        mediaChatId &&
+        (mediaMsg.MsgType === 'voice' || mediaMsg.MsgType === 'video') &&
+        mediaMsg.MediaId &&
+        this.asr.enabled()
+      ) {
+        res.status(HttpStatus.OK).send('');
+        this.processVoiceOrVideo(mediaMsg, traceId).catch((err) => {
+          this.logger.warn({ traceId, detail: 'media-asr-async-fail', err: (err as Error).message });
+        });
+        return;
+      }
       if (mediaChatId) {
         await this.miss.record({
           traceId,
@@ -182,7 +196,7 @@ export class WecomController {
       return;
     }
 
-    // 图片：先 ack，再异步下载/识别/发送；识别结果非 [NO_TEXT] 才进入问答链路。
+    // 图片：先 ack，再异步下载/识别；describe 模式可直接当闲聊描述
     const GUIDANCE_TEXT = '抱歉，暂时没看懂这张图片，麻烦用文字简述一下您的问题～';
     const parsedMsg = msg as any;
     if (!parsedMsg.Content && parsedMsg.MediaId && parsedMsg.MsgType === 'image') {
@@ -297,6 +311,49 @@ export class WecomController {
     };
   }
 
+  /** 语音/视频：下载 → ASR → QA；失败引导 + miss */
+  private async processVoiceOrVideo(
+    msg: {
+      MediaId?: string;
+      MsgType?: string;
+      ChatId?: string;
+      FromUserName?: string;
+      Content?: string;
+    },
+    traceId: string,
+  ): Promise<void> {
+    const chatId = msg.ChatId || msg.FromUserName;
+    const mediaType = String(msg.MsgType ?? 'voice');
+    try {
+      const buf = await this.wecomClient.downloadMedia(String(msg.MediaId));
+      const maxBytes =
+        mediaType === 'video'
+          ? ConfigService.instance.MAX_VIDEO_BYTES ?? 100 * 1024 * 1024
+          : ConfigService.instance.MAX_VOICE_BYTES ?? 20 * 1024 * 1024;
+      if (buf.length > maxBytes) throw new Error(`media too large: ${buf.length} > ${maxBytes}`);
+      const transcript = await this.asr.transcribe(buf, mediaType === 'video' ? 'video.mp4' : 'audio.amr');
+      const inbound = msg as any;
+      inbound.Content = transcript;
+      inbound.Recognition = transcript;
+      await this.routingService.dispatch(inbound, traceId);
+    } catch (err) {
+      this.logger.warn({ traceId, detail: 'media-asr-failed', err: (err as Error).message });
+      if (chatId) {
+        await this.miss.record({
+          traceId,
+          chatId,
+          userId: String(msg.FromUserName ?? ''),
+          question: msg.Content ?? `[${mediaType}]`,
+          score: 0,
+          engine: 'asr',
+          mediaType,
+          ts: new Date().toISOString(),
+        });
+        await this.wecomClient.sendText(chatId, MEDIA_GUIDANCE_TEXT).catch(() => undefined);
+      }
+    }
+  }
+
   /** 图片异步处理：下载 → 识别 → 进入问答或引导话术 */
   private async processImage(
     msg: { MediaId?: string; MsgId?: string; ChatId?: string; FromUserName?: string },
@@ -315,7 +372,10 @@ export class WecomController {
       }
       this.usageService.increment('imagesRecognized');
       const inbound = msg as any;
-      inbound.Content = description;
+      // describe 模式：把视觉描述当最终回答路径（仍走 routing，由 QA 复述/闲聊）
+      const mode = ConfigService.instance.IMAGE_CHAT_MODE ?? 'question';
+      inbound.Content =
+        mode === 'describe' ? `请用口语描述这张图片：${description}` : description;
       inbound.Recognition = description;
       await this.routingService.dispatch(inbound, traceId);
     } catch (err) {

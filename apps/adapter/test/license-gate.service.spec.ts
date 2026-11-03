@@ -31,6 +31,7 @@ function makeDeps(over: { valid?: boolean; count?: number; maxChats?: number; en
   const { valid = true, count = 0, maxChats = 100, ensureThrow, tenantReason } = over;
   const licenseService = {
     getState: () => makeLicenseState(valid),
+    verifyAndCache: () => makeLicenseState(valid),
   };
   const licensedChats = {
     getCount: () => count,

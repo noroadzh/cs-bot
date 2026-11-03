@@ -1,9 +1,10 @@
-/** AdminGuard */
+/** AdminGuard — Basic Auth + IP 白名单；支持 admin / operator 双账号 */
 import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
 import { createHash } from 'crypto';
 import { ConfigService } from '../config/config.service.js';
 import { resolveClientIp } from '../common/client-ip.js';
+import { ADMIN_ROLE_KEY, resolveAdminRole, type AdminRole } from './admin-roles.js';
 
 function ipToLong(ip: string): number {
   return ip.split('.').reduce((acc, oct) => (acc << 8) + parseInt(oct, 10), 0) >>> 0;
@@ -17,12 +18,18 @@ function inCidr(ip: string, cidr: string): boolean {
   return (ipToLong(ip) & mask) === (ipToLong(range) & mask);
 }
 
+function hashEq(a: string, b: string): boolean {
+  const ah = createHash('sha256').update(a).digest('hex');
+  const bh = createHash('sha256').update(b).digest('hex');
+  return ah === bh;
+}
+
 @Injectable()
 export class AdminGuard implements CanActivate {
   private readonly cfg = ConfigService.instance;
 
   canActivate(ctx: ExecutionContext): boolean {
-    const req = ctx.switchToHttp().getRequest<Request>();
+    const req = ctx.switchToHttp().getRequest<Request & { [ADMIN_ROLE_KEY]?: AdminRole }>();
     const authHeader = req.headers.authorization ?? '';
     // 数据面用量上报：/platform/report 允许 CONTROL_PLANE_TOKEN Bearer 认证
     if (
@@ -42,13 +49,18 @@ export class AdminGuard implements CanActivate {
       throw new HttpException({ errCode: 'AUTH_UNAUTHORIZED' }, HttpStatus.UNAUTHORIZED);
     }
     const [user, pass] = Buffer.from(auth.slice(6), 'base64').toString('utf8').split(':');
-    const userHash = createHash('sha256').update(user).digest('hex');
-    const passHash = createHash('sha256').update(pass).digest('hex');
-    const expUserHash = createHash('sha256').update(this.cfg.ADMIN_USER).digest('hex');
-    const expPassHash = createHash('sha256').update(this.cfg.ADMIN_PASSWORD).digest('hex');
-    if (userHash !== expUserHash || passHash !== expPassHash) {
+    const adminOk = hashEq(user ?? '', this.cfg.ADMIN_USER) && hashEq(pass ?? '', this.cfg.ADMIN_PASSWORD);
+    const opUser = this.cfg.ADMIN_OPERATOR_USER ?? '';
+    const opPass = this.cfg.ADMIN_OPERATOR_PASSWORD ?? '';
+    const operatorOk =
+      opUser !== '' && opPass !== '' && hashEq(user ?? '', opUser) && hashEq(pass ?? '', opPass);
+    if (!adminOk && !operatorOk) {
       throw new HttpException({ errCode: 'AUTH_UNAUTHORIZED' }, HttpStatus.UNAUTHORIZED);
     }
+    req[ADMIN_ROLE_KEY] = resolveAdminRole(user ?? '', {
+      ADMIN_USER: this.cfg.ADMIN_USER ?? 'admin',
+      ADMIN_OPERATOR_USER: this.cfg.ADMIN_OPERATOR_USER,
+    });
     return true;
   }
 }

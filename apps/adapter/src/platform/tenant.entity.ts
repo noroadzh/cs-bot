@@ -21,6 +21,10 @@ export interface Tenant {
   contact?: string | null;
   /** standard = 4C8G 内存模板；enhanced = 8C16G 内存模板 */
   plan?: 'standard' | 'enhanced';
+  /** dedicated=独立 compose；shared=同进程逻辑隔离 */
+  tenancyMode?: 'dedicated' | 'shared';
+  /** 租户实例机器指纹；签发优先用此值 */
+  fingerprint?: string | null;
   status: TenantStatus;
   host: string | null;
   port: number | null;
@@ -38,6 +42,10 @@ export interface TenantCreateInput {
   /** 租户访问域名（回调/TLS），提供后写入 host */
   domain?: string;
   plan?: string;
+  /** dedicated（默认）| shared */
+  tenancyMode?: 'dedicated' | 'shared';
+  /** 开通前已知的实例指纹；开通后也可采集回写 */
+  fingerprint?: string;
   subscriptionExpiresAt?: string;
 }
 

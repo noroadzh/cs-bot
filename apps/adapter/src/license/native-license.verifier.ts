@@ -117,11 +117,21 @@ export class NativeLicenseVerifier {
       return { ...fallback, reason: 'native-error' };
     }
 
+    let payloadFingerprint = raw.fingerprint ?? '';
+    if (!payloadFingerprint) {
+      try {
+        const parsed = JSON.parse(payloadJson) as { fingerprint?: string };
+        payloadFingerprint = parsed.fingerprint ?? '';
+      } catch {
+        payloadFingerprint = '';
+      }
+    }
+
     const baseState: LicenseState = {
       valid: raw.valid,
       reason: raw.reason,
       mock: false,
-      fingerprint: raw.fingerprint ?? this.expectedFingerprint ?? '',
+      fingerprint: payloadFingerprint || this.expectedFingerprint || '',
       expiresAtMs: raw.expiresAtMs ?? 0,
       daysLeft: raw.daysLeft ?? 0,
       maxChats: raw.maxChats ?? 0,
@@ -131,11 +141,11 @@ export class NativeLicenseVerifier {
       return baseState;
     }
 
-    // 2. fingerprint 绑定
+    // 2. fingerprint 绑定（优先用 payload 内指纹）
     if (
       this.expectedFingerprint !== null &&
-      raw.fingerprint !== '' &&
-      raw.fingerprint !== this.expectedFingerprint
+      payloadFingerprint !== '' &&
+      payloadFingerprint !== this.expectedFingerprint
     ) {
       return { ...baseState, valid: false, reason: 'fingerprint-mismatch' };
     }

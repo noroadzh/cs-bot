@@ -2,7 +2,7 @@
  * LicenseGateService：消息入口授权闸门（M9）
  *
  * wecom 每条有效消息在进入 routing 前过闸：
- *   1. USE_MOCK_LICENSE=true → 放行（mock 即开发模式，不拦业务）
+ *   1. USE_MOCK_LICENSE 只跳过签名/反回放；格式、过期、指纹仍由 LicenseService 校验
  *   2. license.valid=false   → 受限模式：回授权提示话术，消息不进 QA
  *   3. 群数上限              → 未注册群超过 maxChats：回超限话术 + 运维告警
  *
@@ -77,10 +77,7 @@ export class LicenseGateService implements OnModuleDestroy {
    * @returns allowed=true 放行进 routing；allowed=false 已拦截（调用方按 reason 代发话术）
    */
   async check(chatId: string, chatName: string): Promise<GateDecision> {
-    // mock 模式放行：开发/演示场景不因缺 license 文件阻断消息
-    if (ConfigService.instance.USE_MOCK_LICENSE) return { allowed: true };
-
-    const state = this.licenseService.getState();
+    const state = this.licenseService.verifyAndCache();
     if (!state.valid) {
       this.logger.warn(`gate blocked (license ${state.reason}): chat=${chatId}`);
       return { allowed: false, reason: 'license-invalid' };

@@ -64,7 +64,7 @@ The system MUST register `MissCleanupService` as a provider in `MissModule` and 
 
 ### Requirement: Media type and processing status metadata
 
-Miss records MUST store the triggering media type (`voice`/`video`/`file`, empty for text) and a processing status (`0` unhandled, `1` learned, `2` ignored). Existing export paths MUST include both fields, and existing rows MUST remain valid after the schema extension.
+Miss records MUST store the triggering media type (`voice`/`video`/`file`/`image`, empty for text) and a processing status (`0` unhandled, `1` learned, `2` ignored). Existing export paths MUST include both fields, and existing rows MUST remain valid after the schema extension. The admin API MUST allow updating status via `PATCH /admin/miss/:id` with body `{ status: 0|1|2 }`. Unauthorized callers MUST receive 401.
 
 #### Scenario: Media miss persisted
 
@@ -75,3 +75,8 @@ Miss records MUST store the triggering media type (`voice`/`video`/`file`, empty
 
 - **WHEN** an operator exports miss records as JSON or xlsx
 - **THEN** each row includes `mediaType` and `status`
+
+#### Scenario: Operator marks miss as learned
+
+- **WHEN** an authenticated admin calls `PATCH /admin/miss/:id` with `{ "status": 1 }`
+- **THEN** the row's status becomes `1` and subsequent list/export reflects the new status

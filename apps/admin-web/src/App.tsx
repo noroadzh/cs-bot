@@ -12,10 +12,14 @@ import { ImportDetailPage } from './pages/tenant/ImportDetailPage.js';
 import { ImportListPage } from './pages/tenant/ImportListPage.js';
 import { LicensePage } from './pages/tenant/LicensePage.js';
 import { MissPage } from './pages/tenant/MissPage.js';
+import { DashboardPage } from './pages/tenant/DashboardPage.js';
+import { KnowledgePage } from './pages/tenant/KnowledgePage.js';
 import { currentSurface } from './surface.js';
 
 const TENANT_ITEMS = [
+  { key: '/dashboard', label: <Link to="/dashboard">看板</Link> },
   { key: '/', label: <Link to="/">未命中</Link> },
+  { key: '/knowledge', label: <Link to="/knowledge">知识库</Link> },
   { key: '/assets', label: <Link to="/assets">素材</Link> },
   { key: '/import', label: <Link to="/import">导入</Link> },
   { key: '/license', label: <Link to="/license">授权</Link> },
@@ -70,7 +74,9 @@ export function App() {
             </>
           ) : (
             <>
+              <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/" element={<MissPage />} />
+              <Route path="/knowledge" element={<KnowledgePage />} />
               <Route path="/assets" element={<AssetsPage />} />
               <Route path="/import" element={<ImportListPage />} />
               <Route path="/import/:id" element={<ImportDetailPage />} />

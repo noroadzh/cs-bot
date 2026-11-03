@@ -2,6 +2,8 @@
 import { Controller, Get, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard.js';
+import { Roles } from './roles.decorator.js';
+import { RolesGuard } from './roles.guard.js';
 import { ConfigService } from '../config/config.service.js';
 import { TriggerService } from '../routing/trigger.service.js';
 import { maskPII } from '@cs-bot/shared';
@@ -23,7 +25,7 @@ const ALL_KEYS = [
 @Controller('admin')
 @ApiBearerAuth()
 @ApiTags('admin')
-@UseGuards(AdminGuard)
+@UseGuards(AdminGuard, RolesGuard)
 export class ConfigController {
   private readonly cfg = ConfigService.instance;
 
@@ -49,7 +51,8 @@ export class ConfigController {
   }
 
   @Post('config/reload')
-  @ApiOperation({ summary: '重载配置' })
+  @Roles('admin')
+  @ApiOperation({ summary: '重载配置（仅 admin）' })
   @ApiResponse({ status: 201, type: ConfigReloadDto, description: '重载成功，返回关键词数量' })
   reload() {
     const count = this.trigger.reload();
@@ -57,7 +60,8 @@ export class ConfigController {
   }
 
   @Post('keywords/reload')
-  @ApiOperation({ summary: '热重载关键词词典' })
+  @Roles('admin')
+  @ApiOperation({ summary: '热重载关键词词典（仅 admin）' })
   @ApiResponse({ status: 201, type: KeywordsReloadDto, description: '重载成功' })
   reloadKeywords() {
     const count = this.trigger.reload();

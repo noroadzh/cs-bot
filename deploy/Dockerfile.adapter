@@ -7,8 +7,15 @@
 # ----- Stage 0: native -----
 # 必须与 runtime 同为 Debian 12 (glibc 2.36)，否则 .node 无法加载。
 # 这里不做 cross-compile：stage 本身就是 linux/amd64，产物即目标平台。
+#
+# 公钥注入（签发机流程）：
+#   1. 在签发机用 issuer 公钥生成 32 字节 raw：packages/license-native/src/pubkey.bin
+#   2. 构建时传入：docker build --build-arg LICENSE_PUBKEY_FILE=packages/license-native/src/pubkey.bin
+#   3. 仓库不提交生产 pubkey.bin（仅保留开发占位）；客户镜像内嵌签发机公钥
+#   ARG 未提供时回退到源码树里的 pubkey.bin（开发/CI 用测试钥）
 FROM rust:1-bookworm AS native
 WORKDIR /native
+ARG LICENSE_PUBKEY_FILE=packages/license-native/src/pubkey.bin
 
 # Rust crate 依赖 napi-derive（纯 Rust），无需 node/openssl；
 # 只需链接器与 pkg-config。
@@ -20,6 +27,8 @@ RUN apt-get update \
 COPY packages/license-native/Cargo.toml packages/license-native/Cargo.lock ./
 COPY packages/license-native/build.rs ./
 COPY packages/license-native/src/ ./src/
+# 显式覆盖嵌入公钥（生产签发机公钥；勿把生产钥提交进 git）
+COPY ${LICENSE_PUBKEY_FILE} ./src/pubkey.bin
 
 # 依赖层单独缓存：只改 src/ 时不会重编全部依赖
 RUN mkdir -p src \
@@ -30,6 +39,7 @@ RUN mkdir -p src \
 # 恢复真实源码并重编（产物覆盖上一层的缓存占位）
 COPY packages/license-native/build.rs ./
 COPY packages/license-native/src/ ./src/
+COPY ${LICENSE_PUBKEY_FILE} ./src/pubkey.bin
 RUN cargo build --release --target x86_64-unknown-linux-gnu
 
 # cdylib（crate-type=cdylib）→ napi 约定的 index.node
@@ -130,6 +140,8 @@ COPY --from=builder /app/apps/adapter/src/platform/015-tenant-offboarding.sql /a
 COPY --from=builder /app/apps/adapter/src/platform/016-runtime-gaps.sql /app/migrate/017-runtime-gaps.sql
 COPY --from=builder /app/apps/adapter/src/platform/017-tenant-contact.sql /app/migrate/018-tenant-contact.sql
 COPY --from=builder /app/apps/adapter/src/platform/018-tenant-trialing.sql /app/migrate/019-tenant-trialing.sql
+COPY --from=builder /app/apps/adapter/src/platform/019-tenant-plan.sql /app/migrate/020-tenant-plan.sql
+COPY --from=builder /app/apps/adapter/src/platform/020-tenant-fingerprint-tenancy.sql /app/migrate/021-tenant-fingerprint-tenancy.sql
 COPY --from=builder /app/apps/adapter/src/platform/008-control-plane.sql /app/migrate/009-control-plane.sql
 COPY --from=builder /app/config /app/config
 COPY --from=builder /app/scripts /app/scripts

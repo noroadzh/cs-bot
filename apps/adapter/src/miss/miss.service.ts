@@ -27,6 +27,15 @@ export class MissService implements OnModuleDestroy {
     setImmediate(() => this.flushOne(data));
   }
 
+  /** 更新未命中处理状态：0 未处理 / 1 已补录 / 2 忽略 */
+  async updateStatus(id: number, status: 0 | 1 | 2): Promise<boolean> {
+    const res = await this.pool.query(
+      `UPDATE miss_record SET status = $2 WHERE id = $1`,
+      [id, status],
+    );
+    return (res.rowCount ?? 0) > 0;
+  }
+
   private async flushOne(data: MissRecord): Promise<void> {
     try {
       await this.pool.query(

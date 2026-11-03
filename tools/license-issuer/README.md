@@ -73,7 +73,7 @@ curl -X POST -u admin:<口令> https://<域名>/admin/license/reload
 
 ## SaaS
 
-开通 `POST /platform/tenants/<id>/provision` 和续期 `POST /platform/tenants/<id>/renew` 会在控制面内部签发，响应里没有证书正文。指纹来自控制面环境变量 `PLATFORM_LICENSE_FINGERPRINT`，请求体不能另传指纹。未配置该变量时 shell 签发会失败。
+开通 `POST /platform/tenants/<id>/provision` 和续期 `POST /platform/tenants/<id>/renew` 会在控制面内部签发，响应里没有证书正文。指纹优先用租户表 `tenant.fingerprint`（创建时可传，或开通后采集回写）；没有时才回退控制面环境变量 `PLATFORM_LICENSE_FINGERPRINT`。两者皆空时 shell 签发会失败。
 
 续期示例：
 
