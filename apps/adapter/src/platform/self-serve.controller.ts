@@ -66,8 +66,8 @@ export class SelfServeController {
   }
 
   @Get('orders/:id')
-  getOrder(@Param('id') id: string) {
+  async getOrder(@Param('id') id: string) {
     this.assertEnabled();
-    return this.billing.getOrder(id) ?? { errCode: 'ORDER_NOT_FOUND' };
+    return (await this.billing.getOrder(id)) ?? { errCode: 'ORDER_NOT_FOUND' };
   }
 }

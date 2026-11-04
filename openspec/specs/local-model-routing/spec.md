@@ -65,3 +65,37 @@ The system MUST construct and inject the FastGPT QA engine at runtime for every 
 
 - **WHEN** `FASTGPT_BASE_URL` or `FASTGPT_API_KEY` is empty
 - **THEN** startup fails with a configuration error naming the missing variable
+
+### Requirement: Multi-model routing
+
+The adapter MUST support selecting among registered models by name, cost, or latency policy alongside existing `MODEL_MODE` (cloud/hybrid/local). When the model catalog is non-empty, the FastGPT QA engine hot path MUST pick a primary endpoint and, on primary error (and per cloud low-score policy when applicable), retry a secondary via `pickFallback` without changing the inbound WeCom message path. An empty catalog MUST preserve the pre-existing FastGPT / `LLM_FALLBACK_*` behavior.
+
+#### Scenario: Policy picks fallback model
+
+- **WHEN** the primary routed model errors and a secondary model is registered in the catalog
+- **THEN** the router retries on the secondary without changing the inbound message path
+
+#### Scenario: Empty catalog keeps default channel
+
+- **WHEN** the model catalog is empty
+- **THEN** ask still uses the default FastGPT client and existing `MODEL_MODE` fallback chain
+
+
+### Requirement: GPU cluster and fine-tune registry
+
+The platform MUST expose APIs to register vLLM/GPU cluster endpoints and LoRA fine-tune job outputs into a model catalog consumable by the router. Registered GPU/vLLM endpoints MUST be health-probed on a schedule; unhealthy endpoints MUST NOT be selected by the router until they recover. The platform MUST support fine-tune job records (create/list/status) and a completion callback that registers the artifact into the catalog. Training job execution and GPU provisioning MUST NOT run on the WeCom message hot path.
+
+#### Scenario: Fine-tune artifact registered
+
+- **WHEN** a completed LoRA job posts its artifact URI
+- **THEN** the model catalog lists it and routing MAY target that model id
+
+#### Scenario: Unhealthy endpoint skipped
+
+- **WHEN** a registered vLLM endpoint fails health probes beyond the failure threshold
+- **THEN** model routing does not pick that endpoint until probes succeed again
+
+#### Scenario: Fine-tune job tracked off hot path
+
+- **WHEN** an operator creates a fine-tune job via the platform API
+- **THEN** the job is recorded with a non-hot-path status lifecycle and message handling does not block on training

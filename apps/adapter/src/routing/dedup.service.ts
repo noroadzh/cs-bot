@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
+import { tenantRedisKey } from '../common/tenant-scope.js';
 
 const DEDUP_TTL = 172800;
 
@@ -23,7 +24,7 @@ export class DedupService {
   async isDuplicate(msgId: string): Promise<boolean> {
     if (!msgId) return false;
     try {
-      const res = await this.redis.set(`dedup:${msgId}`, '1', 'EX', DEDUP_TTL, 'NX');
+      const res = await this.redis.set(tenantRedisKey(`dedup:${msgId}`), '1', 'EX', DEDUP_TTL, 'NX');
       return res !== 'OK';
     } catch {
       return this.isDuplicateLocal(msgId);

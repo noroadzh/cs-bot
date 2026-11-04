@@ -11,6 +11,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
+import { tenantRedisKey } from '../common/tenant-scope.js';
 import { LicenseService } from './license.service.js';
 import { LicensedChatService } from './licensed-chat.service.js';
 import { LicenseAlertService } from './license-alert.service.js';
@@ -117,7 +118,7 @@ export class LicenseGateService implements OnModuleDestroy {
 
     try {
       const res = await this.redis.set(
-        `license:alert:${chatId}:${today}`,
+        tenantRedisKey(`license:alert:${chatId}:${today}`),
         '1',
         'EX',
         ALERT_DEDUP_TTL,

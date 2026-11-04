@@ -6,6 +6,7 @@ import { Err, Ok, ErrCode, type IQAEngine, type AskReq, type AskResult } from '@
 import { ApprovedQaService } from './approved-qa.service.js';
 import { llmSemaphore } from '../common/semaphore.js';
 import { FastGPTClient, parseChatResponse, type FastGptChatResult } from './fastgpt.client.js';
+import { ModelRouterService, type ModelEndpoint } from './model-router.service.js';
 
 export class FastGPTQaEngine implements IQAEngine {
   readonly mode: 'fastgpt' = 'fastgpt';
@@ -15,6 +16,7 @@ export class FastGPTQaEngine implements IQAEngine {
   private readonly logger = new AppLogger('FastGPTQaEngine');
   private readonly cfg = ConfigService.instance;
   private readonly approvedQa: ApprovedQaService;
+  private readonly router: ModelRouterService | null;
   /** cloud：允许低分/失败切云；hybrid：仅失败切云；local：禁止云回退 */
   private readonly allowCloudFallback: boolean;
   private readonly fallbackOnLowScore: boolean;
@@ -26,6 +28,7 @@ export class FastGPTQaEngine implements IQAEngine {
     _config: ConfigService,
     approvedQaService?: ApprovedQaService,
     fastgpt?: FastGPTClient,
+    router?: ModelRouterService | null,
   ) {
     const datasetIds = this.cfg.FASTGPT_DATASET_IDS
       ? this.cfg.FASTGPT_DATASET_IDS.split(',').map((x) => x.trim()).filter(Boolean)
@@ -60,6 +63,7 @@ export class FastGPTQaEngine implements IQAEngine {
     }
     // approved_qa fallback: FastGPT 检索无结果时查询本地已审核 QA
     this.approvedQa = approvedQaService ?? new ApprovedQaService();
+    this.router = router ?? null;
     if (this.cfg.MODEL_MODE === 'hybrid') {
       const timer = setInterval(() => void this.probeHealth(), 30_000);
       timer.unref?.();
@@ -100,6 +104,10 @@ export class FastGPTQaEngine implements IQAEngine {
       return new Ok({ answer: approved.answer, quotes: [], score: 1.0, source: 'approved' });
     }
 
+    // 多模型路由：目录非空时先走 pick，失败再 pickFallback（不改入站路径）
+    const routed = await this.askViaRouter(req);
+    if (routed) return routed;
+
     // hybrid 降级期间优先走 fallback；local 无 fallback
     if (this.cfg.MODEL_MODE === 'hybrid' && !this.isHealthy() && this.fallback) {
       if (Date.now() - this.lastProbeAt >= 30_000) void this.probeHealth();
@@ -130,6 +138,79 @@ export class FastGPTQaEngine implements IQAEngine {
       if (fallbackResp.ok) return fallbackResp;
     }
     return primaryResp;
+  }
+
+  /** 有路由目录时选路；无目录或全部失败返回 null，交还给默认 primary/fallback 链 */
+  private async askViaRouter(req: AskReq): Promise<AskResult | null> {
+    if (!this.router || this.router.list().length === 0) return null;
+    const policy = (this.cfg.MODEL_ROUTE_POLICY ?? 'latency') as 'latency' | 'cost' | 'name';
+    const name = this.cfg.MODEL_ROUTE_NAME || undefined;
+    const primaryEp = this.router.pick(policy, name);
+    if (!primaryEp) return null;
+
+    const primaryRes = await this.callEndpoint(primaryEp, req, 'primary');
+    if (primaryRes.ok) {
+      if (primaryRes.value.score >= this.cfg.CONFIDENCE_THRESHOLD) return primaryRes;
+      // 低分仍可按 cloud 策略试次选
+      if (!this.fallbackOnLowScore) return primaryRes;
+    }
+
+    const secondary = this.router.pickFallback(primaryEp.id);
+    if (!secondary) return primaryRes.ok ? primaryRes : null;
+
+    this.logger.warn({
+      detail: 'model-route-fallback',
+      failedId: primaryEp.id,
+      fallbackId: secondary.id,
+    });
+    const fb = await this.callEndpoint(secondary, req, 'fallback');
+    if (fb.ok) return fb;
+    return primaryRes.ok ? primaryRes : fb;
+  }
+
+  private async callEndpoint(
+    ep: ModelEndpoint,
+    req: AskReq,
+    source: 'primary' | 'fallback',
+  ): Promise<AskResult> {
+    const client = this.primary.forEndpoint(ep.baseUrl);
+    let lastErr: Error | null = null;
+    const retryDelay = this.cfg.LLM_RETRY_DELAY_MS ?? 1000;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const parsed: FastGptChatResult = await llmSemaphore().run(() =>
+          client.chat({
+            chatId: req.chatId,
+            question: req.question,
+            history: req.history,
+            datasetIds: req.datasetIds,
+            model: ep.id,
+          }),
+        );
+        if (source === 'primary') {
+          if (!this.healthy) {
+            if (this.healthySince === null) this.healthySince = Date.now();
+          } else {
+            this.healthySince = null;
+          }
+        }
+        return { ok: true, value: { ...parsed, source } };
+      } catch (err) {
+        lastErr = err as Error;
+        if (source === 'primary') {
+          this.healthy = false;
+          this.healthySince = null;
+        }
+        this.logger.warn({
+          source,
+          modelId: ep.id,
+          attempt: attempt + 1,
+          err: lastErr.message,
+        });
+        if (attempt === 0) await new Promise((r) => setTimeout(r, retryDelay));
+      }
+    }
+    return new Err({ code: ErrCode.LLM_TIMEOUT, message: lastErr?.message ?? 'unknown LLM error' });
   }
 
   private async call(client: AxiosInstance | null, req: AskReq, source: 'primary' | 'fallback'): Promise<AskResult> {

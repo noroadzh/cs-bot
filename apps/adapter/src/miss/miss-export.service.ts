@@ -10,6 +10,7 @@ import ExcelJS from 'exceljs';
 import type { Writable } from 'stream';
 import { ConfigService } from '../config/config.service.js';
 import { maskPII } from '@cs-bot/shared';
+import { currentTenantId } from '../common/tenant-scope.js';
 
 export interface MissRange {
   from?: string;
@@ -17,15 +18,22 @@ export interface MissRange {
 }
 
 function buildWhere(days: number, range?: MissRange): { sql: string; params: unknown[] } {
+  const params: unknown[] = [currentTenantId()];
+  const parts: string[] = ['tenant_id = $1'];
   if (range?.from || range?.to) {
-    const parts: string[] = [];
-    const params: unknown[] = [];
-    if (range.from) { params.push(range.from); parts.push(`created_at >= $${params.length}::timestamptz`); }
-    if (range.to) { params.push(range.to); parts.push(`created_at <= $${params.length}::timestamptz`); }
+    if (range.from) {
+      params.push(range.from);
+      parts.push(`created_at >= $${params.length}::timestamptz`);
+    }
+    if (range.to) {
+      params.push(range.to);
+      parts.push(`created_at <= $${params.length}::timestamptz`);
+    }
     return { sql: parts.join(' AND '), params };
   }
   const daysNum = Number.isFinite(days) && days > 0 ? Math.trunc(days) : 90;
-  return { sql: `created_at >= now() - interval '${daysNum} days'`, params: [] };
+  parts.push(`created_at >= now() - interval '${daysNum} days'`);
+  return { sql: parts.join(' AND '), params };
 }
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';

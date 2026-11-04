@@ -22,6 +22,8 @@ export interface FastGptChatBody {
   question: string;
   history?: readonly { role: string; content: string }[];
   datasetIds?: readonly string[];
+  /** 覆盖默认 model（多模型路由） */
+  model?: string;
 }
 
 export interface FastGptQuote {
@@ -72,7 +74,7 @@ export class FastGPTClient {
   /** 问答：POST /api/v1/chat/completions，解析 choices/data 与 quoteList */
   async chat(body: FastGptChatBody): Promise<FastGptChatResult> {
     const res = await this.http.post('/api/v1/chat/completions', {
-      model: 'fastgpt',
+      model: body.model ?? 'fastgpt',
       chatId: body.chatId,
       stream: false,
       detail: true,
@@ -81,6 +83,16 @@ export class FastGPTClient {
       datasetIds: body.datasetIds ?? this.datasetIds,
     });
     return parseChatResponse(res.data);
+  }
+
+  /** 按路由端点构造同鉴权客户端（R-2：仍经 FastGPTClient） */
+  forEndpoint(baseUrl: string, apiKey?: string): FastGPTClient {
+    return new FastGPTClient({
+      baseUrl,
+      apiKey: apiKey ?? this.cfg.apiKey,
+      timeoutMs: this.cfg.timeoutMs,
+      datasetIds: this.datasetIds,
+    });
   }
 
   /** 数据集：确保存在，返回 datasetId */

@@ -3,6 +3,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { AppLogger } from '../common/logger.js';
+import { ImportJobService } from '../import/import-job.service.js';
 
 export interface ArchiveMessage {
   msgId: string;
@@ -23,11 +24,38 @@ export class ArchiveService {
   private readonly jobs: Array<{ id: string; count: number; createdAt: string }> = [];
   private readonly alerts: QualityAlert[] = [];
 
-  enqueue(messages: readonly ArchiveMessage[]): { jobId: string; count: number } {
-    const jobId = `archive-${Date.now()}`;
+  constructor(private readonly imports: ImportJobService) {}
+
+  /**
+   * 将存档消息写成 wecom-archive JSON 并创建 import_job（无需手工上传）。
+   * 不在此同步 parse，避免抢问答热路径（R-8）。
+   */
+  async enqueue(
+    messages: readonly ArchiveMessage[],
+  ): Promise<{ jobId: string; count: number; reused: boolean }> {
+    const payload = messages.map((m) => ({
+      msgId: m.msgId,
+      chatId: m.chatId,
+      from: m.from,
+      content: m.content,
+      msgTime: m.msgTime,
+    }));
+    const stamp = Date.now();
+    const created = await this.imports.createFromFile({
+      filename: `archive-${stamp}.json`,
+      mimeType: 'application/json',
+      bytes: Buffer.from(JSON.stringify(payload), 'utf8'),
+      name: `archive-${new Date(stamp).toISOString()}`,
+    });
+    const jobId = created.job.id;
     this.jobs.push({ id: jobId, count: messages.length, createdAt: new Date().toISOString() });
-    this.logger.log({ detail: 'archive-enqueued', jobId, count: messages.length });
-    return { jobId, count: messages.length };
+    this.logger.log({
+      detail: 'archive-enqueued',
+      jobId,
+      count: messages.length,
+      reused: created.reused,
+    });
+    return { jobId, count: messages.length, reused: created.reused };
   }
 
   runQualityChecks(sample: {

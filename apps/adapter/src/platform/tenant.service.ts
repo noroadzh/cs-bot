@@ -36,6 +36,7 @@ import {
   CommandCertificateProvider,
   FakeCertificateProvider,
   FileCertificateProvider,
+  WildcardCertificateProvider,
   NoopLicenseIssuer,
   ShellLicenseIssuer,
 } from './certificate-provider.js';
@@ -51,6 +52,27 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
 function selectCertificateProvider(cfg: typeof ConfigService.instance): CertificateProvider {
+  if (cfg.PLATFORM_TLS_MODE === 'wildcard') {
+    const dir = cfg.PLATFORM_WILDCARD_CERT_DIR || cfg.PLATFORM_CERT_DIR;
+    const base = cfg.PLATFORM_WILDCARD_BASE_DOMAIN;
+    if (!base) {
+      throw new Error('PLATFORM_WILDCARD_BASE_DOMAIN is required when PLATFORM_TLS_MODE=wildcard');
+    }
+    // fake 便于单测：仍走 Wildcard 域名校验，材料由 Fake 包装不适用 → 直接 Fake 仅当 provider=fake
+    if (cfg.PLATFORM_TLS_PROVIDER === 'fake') {
+      return {
+        async issue(domain: string) {
+          const host = domain.toLowerCase();
+          const b = base.replace(/^\*\./, '').toLowerCase();
+          if (!(host === b || host.endsWith(`.${b}`))) {
+            throw new Error(`wildcard SNI domain mismatch: ${domain} not under ${b}`);
+          }
+          return new FakeCertificateProvider().issue(domain);
+        },
+      };
+    }
+    return new WildcardCertificateProvider(dir, base);
+  }
   switch (cfg.PLATFORM_TLS_PROVIDER) {
     case 'fake':
       return new FakeCertificateProvider();

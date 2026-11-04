@@ -9,6 +9,7 @@ import { promises as fs } from 'fs';
 import { dirname, join } from 'path';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
+import { currentTenantId } from '../common/tenant-scope.js';
 import type { Asset, AssetCreateInput, AssetListQuery, AssetListResult } from './asset.entity.js';
 import { CapacityGuard } from '../usage/capacity-guard.service.js';
 
@@ -68,11 +69,12 @@ export class AssetService {
       );
     }
 
+    const tenantId = currentTenantId();
     const md5 = createHash('md5').update(buffer).digest('hex');
     const existing = await this.pool.query(
       `SELECT id, type, name, url, size, created_at FROM asset
-       WHERE md5 = $1 AND type = $2 LIMIT 1`,
-      [md5, assetType],
+       WHERE md5 = $1 AND type = $2 AND tenant_id = $3 LIMIT 1`,
+      [md5, assetType, tenantId],
     );
     if (existing.rows.length > 0) return this.mapRowToAsset(existing.rows[0]);
     await this.capacityGuard?.checkAsset(buffer.length);
@@ -86,10 +88,10 @@ export class AssetService {
     await fs.writeFile(filePath, buffer, { mode: 0o600 });
 
     const result = await this.pool.query(
-      `INSERT INTO asset (id, type, name, url, size, md5, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, now())
+      `INSERT INTO asset (id, type, name, url, size, md5, tenant_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
        RETURNING id, type, name, url, size, created_at`,
-      [id, assetType, originalName, `/assets/${storedName}`, buffer.length, md5],
+      [id, assetType, originalName, `/assets/${storedName}`, buffer.length, md5, tenantId],
     );
 
     return this.mapRowToAsset(result.rows[0]);
@@ -100,12 +102,13 @@ export class AssetService {
    */
   async createFromLink(url: string, name: string): Promise<Asset> {
     const id = randomUUID();
+    const tenantId = currentTenantId();
 
     const result = await this.pool.query(
-      `INSERT INTO asset (id, type, name, url, size, created_at)
-       VALUES ($1, $2, $3, $4, $5, now())
+      `INSERT INTO asset (id, type, name, url, size, tenant_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, now())
        RETURNING id, type, name, url, size, created_at`,
-      [id, 'link', name, url, null],
+      [id, 'link', name, url, null, tenantId],
     );
 
     return this.mapRowToAsset(result.rows[0]);
@@ -116,8 +119,8 @@ export class AssetService {
    */
   async findById(id: string): Promise<Asset | null> {
     const result = await this.pool.query(
-      'SELECT id, type, name, url, size, created_at FROM asset WHERE id = $1',
-      [id],
+      'SELECT id, type, name, url, size, created_at FROM asset WHERE id = $1 AND tenant_id = $2',
+      [id, currentTenantId()],
     );
     return result.rows[0] ? this.mapRowToAsset(result.rows[0]) : null;
   }
@@ -128,13 +131,18 @@ export class AssetService {
   async findAll(query: AssetListQuery = {}): Promise<AssetListResult> {
     const limit = Math.min(query.limit ?? 50, 100);
     const offset = query.offset ?? 0;
+    const tenantId = currentTenantId();
 
-    const countResult = await this.pool.query('SELECT COUNT(*) as total FROM asset');
+    const countResult = await this.pool.query(
+      'SELECT COUNT(*) as total FROM asset WHERE tenant_id = $1',
+      [tenantId],
+    );
     const total = parseInt(countResult.rows[0].total, 10);
 
     const result = await this.pool.query(
-      'SELECT id, type, name, url, size, created_at FROM asset ORDER BY created_at DESC LIMIT $1 OFFSET $2',
-      [limit, offset],
+      `SELECT id, type, name, url, size, created_at FROM asset
+       WHERE tenant_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`,
+      [tenantId, limit, offset],
     );
 
     return {
@@ -164,7 +172,10 @@ export class AssetService {
       }
     }
 
-    await this.pool.query('DELETE FROM asset WHERE id = $1', [id]);
+    await this.pool.query('DELETE FROM asset WHERE id = $1 AND tenant_id = $2', [
+      id,
+      currentTenantId(),
+    ]);
     return true;
   }
 

@@ -4,6 +4,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import type { AppLogger } from '../common/logger.js';
+import { currentTenantId } from '../common/tenant-scope.js';
 import type { SensitiveRedactor } from './sensitive-redactor.js';
 import { affectedCount, aggregateStatus, mapItem } from './import-mappers.js';
 import { computeSourceHash } from './import-hash.js';
@@ -157,7 +158,10 @@ export async function approveAll(
   host: ReviewHost,
   jobId: string,
 ): Promise<{ approved: number; skippedSensitive: number; skippedNotPending: number }> {
-    const jobRes = await host.pool.query('SELECT * FROM import_job WHERE id = $1', [jobId]);
+    const jobRes = await host.pool.query(
+      'SELECT * FROM import_job WHERE id = $1 AND tenant_id = $2',
+      [jobId, currentTenantId()],
+    );
     if (jobRes.rows.length === 0) {
       throw new HttpException(
         { errCode: 'IMPORT_JOB_NOT_FOUND', detail: `import job ${jobId} not found` },

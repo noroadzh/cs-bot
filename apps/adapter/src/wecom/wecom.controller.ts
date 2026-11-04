@@ -326,12 +326,8 @@ export class WecomController {
     const mediaType = String(msg.MsgType ?? 'voice');
     try {
       const buf = await this.wecomClient.downloadMedia(String(msg.MediaId));
-      const maxBytes =
-        mediaType === 'video'
-          ? ConfigService.instance.MAX_VIDEO_BYTES ?? 100 * 1024 * 1024
-          : ConfigService.instance.MAX_VOICE_BYTES ?? 20 * 1024 * 1024;
-      if (buf.length > maxBytes) throw new Error(`media too large: ${buf.length} > ${maxBytes}`);
-      const transcript = await this.asr.transcribe(buf, mediaType === 'video' ? 'video.mp4' : 'audio.amr');
+      const kind = mediaType === 'video' ? 'video' : 'voice';
+      const transcript = await this.asr.transcribeMedia(buf, kind);
       const inbound = msg as any;
       inbound.Content = transcript;
       inbound.Recognition = transcript;

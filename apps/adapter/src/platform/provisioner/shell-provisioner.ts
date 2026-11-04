@@ -241,6 +241,10 @@ export class ShellProvisioner implements TenantProvisioner {
     return path;
   }
 
+  /**
+   * 每租户独立 server_name（SNI）。通配模式下 fullchain/privkey 为共享通配材料副本，
+   * 仍由 writeCertFiles 落到本目录并由 compose 挂载。
+   */
   private nginxConf(host: string, adminCidrs: readonly string[] = []): string {
     return `events {}
 http {

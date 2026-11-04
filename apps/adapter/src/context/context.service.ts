@@ -3,6 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
 import { AppLogger } from '../common/logger.js';
+import { tenantRedisKey } from '../common/tenant-scope.js';
 
 export interface ContextRound { role: 'user' | 'assistant'; content: string; }
 
@@ -23,7 +24,9 @@ export class ContextService {
     this.rounds = cfg.CONTEXT_ROUNDS ?? 5;
   }
 
-  private key(chatId: string, userId: string): string { return `ctx:${chatId}:${userId}`; }
+  private key(chatId: string, userId: string): string {
+    return tenantRedisKey(`ctx:${chatId}:${userId}`);
+  }
 
   async get(chatId: string, userId: string): Promise<ContextRound[]> {
     try {

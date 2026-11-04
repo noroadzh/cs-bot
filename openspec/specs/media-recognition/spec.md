@@ -100,3 +100,32 @@ The system MUST integrate recognition result BEFORE the question enters the rout
 #### Scenario: Enriched question is used for keyword matching
 - **WHEN** an image triggers recognition and the description contains "价格"
 - **THEN** the keyword "价格" is matched against the enriched question, and the trigger logic proceeds as if the user typed the recognized text
+
+### Requirement: Voice and video transcription
+
+When the bot is @-mentioned with a voice or video message, the system MUST download the media and obtain a transcript via a configured ASR endpoint (OpenAI-compatible). For video, the system MUST extract an audio track (or equivalent) before ASR when a track is present. The system MUST enforce configured size and timeout limits. On ASR/extract failure, size/timeout exceedance, or empty transcript, it MUST send the guidance reply and record a miss with the correct `media_type` (`voice` or `video`). Successful transcripts MUST enter the existing QA pipeline as text.
+
+#### Scenario: Voice @-mention becomes a question
+
+- **WHEN** a user @-mentions the bot with a voice clip and ASR succeeds
+- **THEN** the transcript is answered by the QA orchestrator as text
+
+#### Scenario: Video over size limit records miss
+
+- **WHEN** a user @-mentions the bot with a video exceeding the configured max bytes
+- **THEN** the system sends guidance, does not call QA, and records a miss with `media_type=video`
+
+#### Scenario: Video ASR failure records miss
+
+- **WHEN** video audio extraction or ASR fails
+- **THEN** the system sends guidance and records a miss with `media_type=video`
+
+
+### Requirement: Image chat mode
+
+When `IMAGE_CHAT_MODE=describe` (or equivalent config), @-mentioned images MAY be answered as visual description/chat without requiring a text question. Default mode remains "convert to question" for knowledge QA.
+
+#### Scenario: Describe mode returns a caption answer
+
+- **WHEN** image chat mode is describe and the user @-mentions an image
+- **THEN** the system returns a visual description answer without requiring separate text

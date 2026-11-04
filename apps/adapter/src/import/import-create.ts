@@ -7,6 +7,7 @@ import { extname, join } from 'path';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { ConfigService } from '../config/config.service.js';
 import type { AppLogger } from '../common/logger.js';
+import { currentTenantId } from '../common/tenant-scope.js';
 import type { Pool } from 'pg';
 import { filenameFromUrl, mapJob, mapJobRow, resolveMimeType } from './import-mappers.js';
 import { pickParser, UnsupportedFormatError } from './import-parser.js';
@@ -107,13 +108,23 @@ export async function createFromFile(
     host.logger.log({ detail: 'import-stored', jobId: id, bytes: input.bytes.length });
 
     const now = new Date().toISOString();
+    const tenantId = currentTenantId();
     const res = await host.pool.query(
       `INSERT INTO import_job
          (id, name, source_filename, source_hash, status, item_count, parse_error,
-          stored_path, mime_type, created_at, updated_at)
-       VALUES ($1,$2,$3,$4,'uploaded',0,NULL,$6,$7,$5,$5)
+          stored_path, mime_type, tenant_id, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,'uploaded',0,NULL,$6,$7,$8,$5,$5)
        RETURNING *`,
-      [id, input.name?.trim() || input.filename, input.filename, sourceHash, now, storedPath, mimeType],
+      [
+        id,
+        input.name?.trim() || input.filename,
+        input.filename,
+        sourceHash,
+        now,
+        storedPath,
+        mimeType,
+        tenantId,
+      ],
     );
     return { job: mapJobRow(res.rows[0]), reused: false, storedPath, mimeType };
   }
@@ -188,9 +199,9 @@ export async function createFromUrl(
 async function findReusableJob(host: CreateHost, sourceHash: string): Promise<ImportJob | null> {
     const res = await host.pool.query(
       `SELECT * FROM import_job
-        WHERE source_hash = $1 AND status = ANY($2::varchar[])
+        WHERE source_hash = $1 AND status = ANY($2::varchar[]) AND tenant_id = $3
         ORDER BY created_at DESC LIMIT 1`,
-      [sourceHash, REUSABLE_STATUSES],
+      [sourceHash, REUSABLE_STATUSES, currentTenantId()],
     );
     return res.rows.length === 0 ? null : mapJob(res.rows[0]);
   }

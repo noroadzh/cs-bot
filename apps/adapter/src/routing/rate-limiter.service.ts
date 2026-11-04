@@ -2,6 +2,7 @@
 import { Injectable } from '@nestjs/common';
 import { Redis } from 'ioredis';
 import { ConfigService } from '../config/config.service.js';
+import { tenantRedisKey } from '../common/tenant-scope.js';
 
 const LUA_TOKEN_BUCKET = `
 local key = KEYS[1]
@@ -38,7 +39,7 @@ export class RateLimiterService {
   /** 群超限提示去重：同一群 5 分钟内最多提示一次 */
   async shouldHint(chatId: string): Promise<boolean> {
     try {
-      const r = await this.redis.set(`rate:hint:${chatId}`, '1', 'EX', 300, 'NX');
+      const r = await this.redis.set(tenantRedisKey(`rate:hint:${chatId}`), '1', 'EX', 300, 'NX');
       return r === 'OK';
     } catch {
       return true;
@@ -48,8 +49,8 @@ export class RateLimiterService {
   async check(chatId: string, userId: string): Promise<{ allowed: boolean; scope?: 'group' | 'user' }> {
     const now = Math.floor(Date.now() / 1000);
     const minute = Math.floor(now / 60);
-    const groupKey = `rate:group:${chatId}:${minute}`;
-    const userKey = `rate:user:${chatId}:${userId}:${minute}`;
+    const groupKey = tenantRedisKey(`rate:group:${chatId}:${minute}`);
+    const userKey = tenantRedisKey(`rate:user:${chatId}:${userId}:${minute}`);
     try {
       if (!this.sha) {
         try { this.sha = (await this.redis.script('LOAD', LUA_TOKEN_BUCKET)) as string; } catch { this.sha = ''; }

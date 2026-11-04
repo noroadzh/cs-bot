@@ -31,7 +31,8 @@ export function httpLoggingMiddleware(req: Request, res: Response, next: NextFun
           ip: resolveClientIp(req),
           ua: req.headers['user-agent'],
         };
-        const isQuiet = req.path === '/healthz' || req.path.startsWith('/docs');
+        const isQuiet =
+          req.path === '/healthz' || req.path === '/metrics' || req.path.startsWith('/docs');
         if (isQuiet) logger.debug(payload);
         else if (res.statusCode >= 500) logger.error(payload);
         else if (res.statusCode >= 400) logger.warn(payload);

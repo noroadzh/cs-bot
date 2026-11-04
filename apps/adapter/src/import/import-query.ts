@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { AppLogger } from '../common/logger.js';
+import { currentTenantId } from '../common/tenant-scope.js';
 import {
   clamp,
   emptyStatusCounts,
@@ -29,12 +30,18 @@ import type {
 const logger = new AppLogger('ImportQuery');
 
 export async function getJob(pool: Pool, jobId: string): Promise<ImportJob | null> {
-  const res = await pool.query('SELECT * FROM import_job WHERE id = $1', [jobId]);
+  const res = await pool.query('SELECT * FROM import_job WHERE id = $1 AND tenant_id = $2', [
+    jobId,
+    currentTenantId(),
+  ]);
   return res.rows.length === 0 ? null : mapJob(res.rows[0]);
 }
 
 export async function getJobRow(pool: Pool, jobId: string): Promise<ImportJobRow | null> {
-  const res = await pool.query('SELECT * FROM import_job WHERE id = $1', [jobId]);
+  const res = await pool.query('SELECT * FROM import_job WHERE id = $1 AND tenant_id = $2', [
+    jobId,
+    currentTenantId(),
+  ]);
   if (res.rows.length === 0) return null;
   return mapJobRow(res.rows[0]);
 }
@@ -46,9 +53,14 @@ export async function listJobs(
   const limit = clamp(opts.limit ?? 50, 1, 200);
   const offset = Math.max(0, opts.offset ?? 0);
   const status = opts.status === undefined ? null : opts.status;
+  const tenantId = currentTenantId();
 
-  const where = status === null ? '' : 'WHERE status = $3';
-  const params = status === null ? [limit, offset] : [limit, offset, status];
+  const where =
+    status === null
+      ? 'WHERE tenant_id = $3'
+      : 'WHERE tenant_id = $3 AND status = $4';
+  const params =
+    status === null ? [limit, offset, tenantId] : [limit, offset, tenantId, status];
 
   const [page, count] = await Promise.all([
     pool.query(
@@ -56,8 +68,10 @@ export async function listJobs(
       params,
     ),
     pool.query(
-      `SELECT COUNT(*)::int AS n FROM import_job ${status === null ? '' : 'WHERE status = $1'}`,
-      status === null ? [] : [status],
+      `SELECT COUNT(*)::int AS n FROM import_job ${
+        status === null ? 'WHERE tenant_id = $1' : 'WHERE tenant_id = $1 AND status = $2'
+      }`,
+      status === null ? [tenantId] : [tenantId, status],
     ),
   ]);
   return {
@@ -70,7 +84,10 @@ export async function listJobs(
 
 export async function countJobsByStatus(pool: Pool): Promise<Record<ImportJobStatus, number>> {
   const out = emptyStatusCounts();
-  const res = await pool.query('SELECT status, COUNT(*)::int AS n FROM import_job GROUP BY status');
+  const res = await pool.query(
+    'SELECT status, COUNT(*)::int AS n FROM import_job WHERE tenant_id = $1 GROUP BY status',
+    [currentTenantId()],
+  );
   for (const r of res.rows) {
     const status = String(r.status) as ImportJobStatus;
     if (status in out) out[status] = Number(r.n);
@@ -163,7 +180,10 @@ export async function deleteJob(pool: Pool, jobId: string): Promise<{ deletedIte
   }
   const before = await countItemsByStatus(pool, jobId);
   const deletedItems = Object.values(before).reduce((a, b) => a + b, 0);
-  await pool.query('DELETE FROM import_job WHERE id = $1', [jobId]);
+  await pool.query('DELETE FROM import_job WHERE id = $1 AND tenant_id = $2', [
+    jobId,
+    currentTenantId(),
+  ]);
   const after = await countItemsByStatus(pool, jobId);
   const leftover = Object.values(after).reduce((a, b) => a + b, 0);
   if (leftover !== 0) {

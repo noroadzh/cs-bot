@@ -53,6 +53,43 @@ export class CommandCertificateProvider implements CertificateProvider {
   }
 }
 
+/**
+ * 通配证书 + SNI：从共享目录读取 fullchain/privkey（或 *.crt/*.key），
+ * 校验请求域名落在 baseDomain 下；同一材料挂到各租户 nginx（SNI 靠 server_name）。
+ */
+export class WildcardCertificateProvider implements CertificateProvider {
+  constructor(
+    private readonly sharedDir: string,
+    private readonly baseDomain: string,
+  ) {}
+
+  async issue(domain: string): Promise<IssuedCert> {
+    const base = this.baseDomain.replace(/^\*\./, '').toLowerCase();
+    const host = domain.toLowerCase();
+    if (!base || !(host === base || host.endsWith(`.${base}`))) {
+      throw new Error(`wildcard SNI domain mismatch: ${domain} not under ${base}`);
+    }
+    const candidates = [
+      ['fullchain.pem', 'privkey.pem'],
+      ['wildcard.crt', 'wildcard.key'],
+      [`*.${base}.crt`, `*.${base}.key`],
+    ] as const;
+    let lastErr: Error | undefined;
+    for (const [c, k] of candidates) {
+      try {
+        const cert = await readFile(`${this.sharedDir}/${c}`, 'utf8');
+        const key = await readFile(`${this.sharedDir}/${k}`, 'utf8');
+        return { cert, key };
+      } catch (err) {
+        lastErr = err as Error;
+      }
+    }
+    throw new Error(
+      `wildcard cert material missing in ${this.sharedDir}: ${(lastErr as Error)?.message ?? 'not found'}`,
+    );
+  }
+}
+
 /** 订阅期授权签发（调用 M9 签发，绑定实例指纹） */
 export interface LicenseIssuer {
   issue(tenant: {

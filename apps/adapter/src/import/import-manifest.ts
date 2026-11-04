@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { HttpException, HttpStatus } from '@nestjs/common';
 import type { Pool } from 'pg';
 import { AppLogger } from '../common/logger.js';
+import { currentTenantId } from '../common/tenant-scope.js';
 import { buildReviewManifest, type ManifestRow } from './review-manifest.js';
 
 export const MANIFEST_RETENTION_MS = 30 * 86_400_000;
@@ -18,8 +19,8 @@ export async function buildJobManifest(
   nowMs = Date.now(),
 ): Promise<Buffer> {
   const jobRes = await pool.query(
-    'SELECT id, manifest_generated_at FROM import_job WHERE id = $1',
-    [jobId],
+    'SELECT id, manifest_generated_at FROM import_job WHERE id = $1 AND tenant_id = $2',
+    [jobId, currentTenantId()],
   );
   if (jobRes.rows.length === 0) {
     throw new HttpException(

@@ -1,7 +1,10 @@
 import { Module } from '@nestjs/common';
 import { HealthController } from './health.controller.js';
+import { MetricsController } from './metrics.controller.js';
+import { MetricsService } from './metrics.service.js';
 import { LicenseService } from '../license/license.service.js';
 import { ConfigService } from '../config/config.service.js';
+import { UsageModule } from '../usage/usage.module.js';
 
 const HealthRedis = {
   provide: 'HEALTH_REDIS',
@@ -22,7 +25,8 @@ const HealthPg = {
 };
 
 @Module({
-  controllers: [HealthController],
-  providers: [LicenseService, HealthRedis, HealthPg],
+  imports: [UsageModule],
+  controllers: [HealthController, MetricsController],
+  providers: [LicenseService, HealthRedis, HealthPg, MetricsService],
 })
 export class HealthModule {}

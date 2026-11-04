@@ -54,6 +54,9 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
 
   // 多模型路由目录（JSON 数组字符串，可空）
   MODEL_CATALOG_JSON: EnvString.optional().default('[]'),
+  /** 选路策略：latency | cost | name（配合 MODEL_ROUTE_NAME） */
+  MODEL_ROUTE_POLICY: z.enum(['latency', 'cost', 'name']).default('latency'),
+  MODEL_ROUTE_NAME: EnvString.optional().default(''),
 
   // Mode
   USE_MOCK_LLM: EnvBool(true),
@@ -169,9 +172,18 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   PLATFORM_PROVISION_TIMEOUT_MS: EnvInt(120000), // 120s
   PLATFORM_MASTER_KEY: EnvString.optional().default(''),
   PLATFORM_TLS_PROVIDER: EnvString.default('fake'),
+  /** dedicated=每租户证书；wildcard=共用通配证书 + SNI */
+  PLATFORM_TLS_MODE: z.enum(['dedicated', 'wildcard']).default('dedicated'),
+  PLATFORM_WILDCARD_BASE_DOMAIN: EnvString.optional().default(''),
+  PLATFORM_WILDCARD_CERT_DIR: EnvString.optional().default(''),
   PLATFORM_CERT_DIR: EnvString.default('data/tenants/certs'),
   PLATFORM_BACKUP_DIR: EnvString.default('backup/tenants'),
   PLATFORM_CERT_CMD: EnvString.optional().default(''),
+  MODEL_PROBE_INTERVAL_MS: EnvInt(30_000),
+  MODEL_PROBE_TIMEOUT_MS: EnvInt(5_000),
+  MODEL_PROBE_FAIL_THRESHOLD: EnvInt(2),
+  METRICS_ENABLED: EnvBool(false),
+  METRICS_ALLOW_CIDRS: EnvString.optional().default(''),
   LICENSE_ISSUER: EnvString.default('noop'),
   LICENSE_ISSUER_BIN: EnvString.default('tools/license-issuer/license-issuer'),
   LICENSE_ISSUER_KEY: EnvString.optional().default(''),
