@@ -14,8 +14,65 @@ export function mockApiPlugin(): Plugin {
 }
 
 function handler(tenants: { id: string; name: string; status: string; plan: string; contact: string }[]): Connect.NextHandleFunction {
+  const orders = new Map<string, { id: string; tenantId: string; days: number; amountCents: number; channel: string; status: string }>();
   return (req, res, next) => {
     const url = req.url ?? '';
+    const path = url.split('?')[0];
+    if (url.startsWith('/self-serve')) {
+      if (req.method === 'POST' && path === '/self-serve/register') {
+        readJson(req, (body) => {
+          const row = {
+            id: `t${tenants.length + 1}`,
+            name: String(body.name ?? ''),
+            status: 'trialing',
+            plan: String(body.plan ?? 'standard'),
+            contact: String(body.email ?? ''),
+          };
+          tenants.push(row);
+          send(res, 201, { tenantId: row.id, status: row.status, email: row.contact, verified: false });
+        });
+        return;
+      }
+      if (req.method === 'POST' && path === '/self-serve/orders') {
+        readJson(req, (body) => {
+          const id = `ord-${orders.size + 1}`;
+          const order = {
+            id,
+            tenantId: String(body.tenantId ?? ''),
+            days: Number(body.days ?? 30),
+            amountCents: Number(body.amountCents ?? 9900),
+            channel: 'mock',
+            status: 'created',
+          };
+          orders.set(id, order);
+          send(res, 201, order);
+        });
+        return;
+      }
+      const payMatch = path.match(/^\/self-serve\/orders\/([^/]+)\/pay$/);
+      if (req.method === 'POST' && payMatch) {
+        const order = orders.get(payMatch[1]);
+        if (!order) {
+          send(res, 404, { errCode: 'ORDER_NOT_FOUND' });
+          return;
+        }
+        order.status = 'paid';
+        send(res, 200, order);
+        return;
+      }
+      const getMatch = path.match(/^\/self-serve\/orders\/([^/]+)$/);
+      if (req.method === 'GET' && getMatch) {
+        const order = orders.get(getMatch[1]);
+        if (!order) {
+          send(res, 404, { errCode: 'ORDER_NOT_FOUND' });
+          return;
+        }
+        send(res, 200, order);
+        return;
+      }
+      next();
+      return;
+    }
     if (!url.startsWith('/admin') && !url.startsWith('/platform')) {
       next();
       return;
@@ -24,7 +81,6 @@ function handler(tenants: { id: string; name: string; status: string; plan: stri
       send(res, 401, { errCode: 'UNAUTHORIZED', detail: '未授权' });
       return;
     }
-    const path = url.split('?')[0];
     if (req.method === 'GET' && path === '/admin/miss-records' && url.includes('format=xlsx')) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

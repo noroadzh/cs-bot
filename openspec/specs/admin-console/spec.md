@@ -43,3 +43,45 @@ The data plane MUST proxy FastGPT dataset/document APIs under `/admin/knowledge/
 - **WHEN** an operator triggers one-click ingest for an approved miss or learning suggestion
 - **THEN** the adapter writes through `FastGPTClient` and the knowledge UI can refresh collection status afterward
 
+### Requirement: Quality inspection console page
+
+The tenant admin-web MUST provide a `/quality` page that lists recent inspections and active threshold breaches and MUST allow submitting a manual quality-check sample via the admin API.
+
+#### Scenario: Quality page loads inspections
+
+- **WHEN** an authenticated operator opens `/quality`
+- **THEN** the page displays items from `GET /admin/archive/quality-inspections`
+
+#### Scenario: Manual sample from UI
+
+- **WHEN** the operator submits a sample on `/quality`
+- **THEN** the UI calls `POST /admin/archive/quality-check` and refreshes the list using the returned `inspectionId` / alerts
+
+### Requirement: Archive operations console page
+
+The tenant admin-web MUST provide `/archive` listing archive-linked import jobs and pull state, with an action to trigger a one-shot pull when pull is enabled.
+
+#### Scenario: Archive page loads jobs
+
+- **WHEN** an authenticated operator opens `/archive`
+- **THEN** the UI loads archive job/pull-state APIs with Basic Auth
+
+#### Scenario: Trigger pull from UI
+
+- **WHEN** the operator triggers pull on `/archive`
+- **THEN** the UI calls the admin pull endpoint and shows async status without blocking the SPA
+
+### Requirement: Self-serve billing console
+
+The platform (or dedicated self-serve) admin-web surface MUST expose `/register`, `/billing`, and `/billing/orders/:id` calling control-plane self-serve APIs. Mock channel MUST offer an explicit simulate-pay action calling the existing mock pay endpoint. When self-serve is disabled, the UI MUST surface the API `errCode`.
+
+#### Scenario: Register then create order
+
+- **WHEN** a user completes register on `/register`
+- **THEN** the UI shows `tenantId` and can navigate to order creation on `/billing`
+
+#### Scenario: Mock pay from UI
+
+- **WHEN** the order channel is mock
+- **THEN** simulate-pay succeeds and the UI polls order status until `paid`
+

@@ -41,6 +41,7 @@ import {
   SubscriptionReminder,
   WebhookNotifier,
 } from './subscription-reminder.js';
+import { WildcardTlsService } from './wildcard-tls.service.js';
 
 @Module({})
 export class PlatformModule {
@@ -67,6 +68,7 @@ export class PlatformModule {
         TenantUsageService,
         PlatformAuditService,
         TenantExpirySweepService,
+        WildcardTlsService,
         {
           provide: SubscriptionReminder,
           useFactory: () =>

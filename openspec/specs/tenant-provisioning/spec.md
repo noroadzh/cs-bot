@@ -16,7 +16,7 @@ The system MUST initialize per-tenant isolated resources — database `tenant_<i
 
 ### Requirement: TLS certificate provisioning
 
-The system MUST request or issue a TLS certificate for the tenant domain. Modes MUST include dedicated per-tenant certificate and wildcard-certificate with SNI: in wildcard mode, provision MUST attach the tenant hostname to an SNI-capable nginx (or equivalent) configuration that references the shared wildcard material without requiring a unique ACME run per tenant. Certificate issuance or SNI attach failure MUST fail the provision and roll back. Dedicated subdomain mode MAY keep per-tenant cert files as today.
+The system MUST request or issue a TLS certificate for the tenant domain. Modes MUST include dedicated per-tenant certificate and wildcard-certificate with SNI: in wildcard mode, provision MUST attach the tenant hostname to an SNI-capable nginx (or equivalent) configuration that references the shared wildcard material without requiring a unique ACME run per tenant. When `PLATFORM_TLS_MODE=wildcard`, the platform MUST obtain and renew the shared wildcard certificate for the configured base domain using ACME DNS-01 or an equivalent `PLATFORM_CERT_CMD` that performs DNS-01, writing material to the shared wildcard cert directory. Certificate issuance, renewal, or SNI attach failure MUST fail the related job and MUST NOT silently serve known-expired shared material without ops alert. Dedicated subdomain mode MAY keep per-tenant cert files as today.
 
 #### Scenario: TLS issued
 
@@ -28,14 +28,29 @@ The system MUST request or issue a TLS certificate for the tenant domain. Modes 
 - **WHEN** TLS mode is wildcard and provision runs for tenant host `t1.saas.example`
 - **THEN** the instance edge config serves that host via SNI using the shared wildcard certificate material
 
+#### Scenario: Wildcard ACME DNS-01 material
+
+- **WHEN** wildcard mode is enabled and DNS-01 credentials are valid
+- **THEN** shared cert material exists under the wildcard directory and tenant provision only attaches SNI without per-tenant ACME
+
 ### Requirement: Subscription license issuance
 
-The system MUST call the M9 license issuance to produce a subscription-period license bound to the instance fingerprint, and persist it on the tenant record.
+The system MUST call the M9 license issuance to produce a subscription-period license bound to the instance fingerprint, and persist it on the tenant record. For dedicated tenants, when provision used a placeholder or platform-wide fingerprint, after a successful instance health probe the control plane MUST collect the live instance fingerprint via an internal authenticated endpoint, persist `tenant.fingerprint`, re-issue and deploy a license bound to that fingerprint, and trigger reload. Collection/re-issue failure MUST leave the tenant provisioned but MUST set a pending fingerprint flag and expose an operator retry; it MUST NOT weaken signature, fingerprint, anti-replay, or anti-debug checks.
 
 #### Scenario: License bound to instance
 
 - **WHEN** provision succeeds
 - **THEN** the tenant holds a license bound to its fingerprint and subscription expiry
+
+#### Scenario: Post-provision fingerprint rebind
+
+- **WHEN** dedicated provision succeeds and the live instance fingerprint differs from the pre-provision placeholder
+- **THEN** the tenant fingerprint is updated, a new license is issued and installed, and the instance reloads successfully
+
+#### Scenario: Fingerprint collection pending
+
+- **WHEN** the instance is unreachable for fingerprint collection within timeout
+- **THEN** the tenant remains active with fingerprint pending and operator retry is available without silent license bypass
 
 ### Requirement: Tenant secret store
 

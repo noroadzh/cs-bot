@@ -2,15 +2,20 @@
  * 自助计费：订单持久化 → 支付回调 → renew + 审计
  * 微信/支付宝商户配置走 env；无凭证时 channel=mock（sandbox）
  */
-import { Injectable, Optional, OnModuleDestroy } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional, OnModuleDestroy } from '@nestjs/common';
 import { Pool } from 'pg';
 import { ConfigService } from '../config/config.service.js';
 import { TenantService } from './tenant.service.js';
 import { PlatformAuditService } from './platform-audit.service.js';
 import { AppLogger } from '../common/logger.js';
 import { randomUUID } from 'crypto';
+import {
+  type PaymentChannel,
+  type PrepayArtifacts,
+  resolvePaymentProvider,
+} from './billing/payment-provider.js';
 
-export type PaymentChannel = 'wechat' | 'alipay' | 'mock';
+export type { PaymentChannel };
 
 export interface BillingOrder {
   id: string;
@@ -22,6 +27,8 @@ export interface BillingOrder {
   createdAt: string;
   paidAt?: string;
 }
+
+export type CreateOrderResult = BillingOrder & { prepay?: PrepayArtifacts };
 
 @Injectable()
 export class BillingService implements OnModuleDestroy {
@@ -43,11 +50,11 @@ export class BillingService implements OnModuleDestroy {
   }
 
   paymentConfigured(): boolean {
-    const cfg = ConfigService.instance;
-    return Boolean(
-      (cfg.PAYMENT_WECHAT_MCH_ID && cfg.PAYMENT_WECHAT_API_KEY) ||
-        (cfg.PAYMENT_ALIPAY_APP_ID && cfg.PAYMENT_ALIPAY_PRIVATE_KEY),
-    );
+    return this.channelConfigured('wechat') || this.channelConfigured('alipay');
+  }
+
+  channelConfigured(channel: PaymentChannel): boolean {
+    return resolvePaymentProvider(channel).configured();
   }
 
   async createOrder(input: {
@@ -55,9 +62,13 @@ export class BillingService implements OnModuleDestroy {
     days: number;
     amountCents: number;
     channel?: PaymentChannel;
-  }): Promise<BillingOrder> {
+  }): Promise<CreateOrderResult> {
     const channel: PaymentChannel =
-      input.channel ?? (this.paymentConfigured() ? 'wechat' : 'mock');
+      input.channel ?? (this.channelConfigured('wechat') ? 'wechat' : 'mock');
+    const provider = resolvePaymentProvider(channel);
+    if (channel !== 'mock' && !provider.configured()) {
+      throw new Error(`payment channel ${channel} is not configured`);
+    }
     const id = randomUUID();
     const res = await this.pool.query(
       `INSERT INTO billing_order
@@ -66,7 +77,29 @@ export class BillingService implements OnModuleDestroy {
        RETURNING id, tenant_id, days, amount_cents, channel, status, created_at, paid_at`,
       [id, input.tenantId, input.days, input.amountCents, channel],
     );
-    return mapRow(res.rows[0]);
+    const order = mapRow(res.rows[0]);
+    if (channel === 'mock') {
+      return order;
+    }
+    const prepay = provider.createPrepay(order);
+    return { ...order, prepay };
+  }
+
+  /** mock 直付：无凭证或 channel=mock；真实渠道须走 webhook */
+  mockPayAllowed(order: BillingOrder): boolean {
+    if (order.channel === 'mock') return true;
+    return !this.paymentConfigured();
+  }
+
+  async mockPay(orderId: string): Promise<BillingOrder> {
+    const order = await this.getOrder(orderId);
+    if (!order) {
+      throw new BadRequestException({ errCode: 'ORDER_NOT_FOUND' });
+    }
+    if (!this.mockPayAllowed(order)) {
+      throw new BadRequestException({ errCode: 'PAYMENT_USE_WEBHOOK' });
+    }
+    return this.markPaid(orderId, 'mock-pay');
   }
 
   async markPaid(orderId: string, actor = 'payment-webhook'): Promise<BillingOrder> {

@@ -92,6 +92,60 @@ export class AsrService {
     return this.transcribe(prepared.buf, prepared.filename);
   }
 
+  /**
+   * 从视频抽取 JPEG 关键帧（ffmpeg）。count=0 或失败返回空数组。
+   * 调用方可用 VL 识别后作为 ASR 失败兜底。
+   */
+  async extractKeyframes(video: Buffer, count?: number): Promise<Buffer[]> {
+    const n = count ?? ConfigService.instance.VIDEO_KEYFRAME_COUNT ?? 0;
+    if (n <= 0) return [];
+    this.assertWithinLimit(video, 'video');
+    const id = randomUUID();
+    const dir = join(tmpdir(), `csbot-kf-${id}`);
+    const inPath = join(dir, 'in.bin');
+    await fs.mkdir(dir, { recursive: true });
+    try {
+      await fs.writeFile(inPath, video);
+      const frames: Buffer[] = [];
+      for (let i = 0; i < n; i++) {
+        const outPath = join(dir, `f${i}.jpg`);
+        const ss = i === 0 ? '0' : String(Math.min(i, 30));
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(
+            'ffmpeg',
+            ['-y', '-ss', ss, '-i', inPath, '-frames:v', '1', '-q:v', '2', outPath],
+            { stdio: ['ignore', 'ignore', 'pipe'] },
+          );
+          let err = '';
+          child.stderr?.on('data', (chunk: Buffer) => {
+            err += chunk.toString();
+          });
+          const timer = setTimeout(() => {
+            child.kill('SIGKILL');
+            reject(new Error('video keyframe extract timeout'));
+          }, ConfigService.instance.VIDEO_KEYFRAME_EXTRACT_TIMEOUT_MS ?? 30_000);
+          child.on('error', (e) => {
+            clearTimeout(timer);
+            reject(new Error(`ffmpeg unavailable: ${e.message}`));
+          });
+          child.on('close', (code) => {
+            clearTimeout(timer);
+            if (code === 0) resolve();
+            else reject(new Error(`ffmpeg keyframe exit ${code}: ${err.slice(-200)}`));
+          });
+        });
+        frames.push(await fs.readFile(outPath));
+      }
+      this.logger.log({ detail: 'keyframe-ok', count: frames.length });
+      return frames;
+    } catch (err) {
+      this.logger.warn({ detail: 'keyframe-fail', err: (err as Error).message });
+      return [];
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
   private async ffmpegExtract(video: Buffer): Promise<Buffer> {
     const id = randomUUID();
     const dir = join(tmpdir(), `csbot-asr-${id}`);

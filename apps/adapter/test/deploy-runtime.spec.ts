@@ -105,4 +105,17 @@ describe('adapter runtime mounts', () => {
     expect(backup).toContain('pg_control_');
     expect(backup).toContain('CONTROL_PLANE_DB');
   });
+
+  it('SaaS 通配 DNS-01 续期脚本独立于私有化 LE', () => {
+    const wild = readFileSync(join(ROOT, 'deploy', 'renew-wildcard-acme-dns01.sh'), 'utf8');
+    const single = readFileSync(join(ROOT, 'deploy', 'issue-letsencrypt.sh'), 'utf8');
+    expect(wild).toContain('PLATFORM_WILDCARD_BASE_DOMAIN');
+    expect(wild).toContain('PLATFORM_WILDCARD_CERT_DIR');
+    expect(wild).toContain('PLATFORM_CERT_CMD');
+    expect(wild).toContain('CERTBOT_DNS_PLUGIN');
+    expect(wild).toContain('--preferred-challenges dns');
+    expect(wild).not.toContain('--standalone');
+    expect(single).toContain('--standalone');
+    expect(single).not.toContain('PLATFORM_WILDCARD');
+  });
 });

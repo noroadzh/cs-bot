@@ -40,6 +40,7 @@ import { UpgradeOrchestrator } from './upgrade-orchestrator.js';
 import { PlatformMonitor } from './platform-monitor.js';
 import { TenantOffboarding } from './tenant-offboarding.js';
 import { TenantSecretsService } from './tenant-secrets.service.js';
+import { WildcardTlsService } from './wildcard-tls.service.js';
 
 /** PLATFORM_ENABLED=false 时所有 /platform 路由 404 */
 @Injectable()
@@ -86,6 +87,7 @@ export class PlatformController {
     private readonly monitor: PlatformMonitor,
     private readonly offboarding: TenantOffboarding,
     private readonly secrets: TenantSecretsService,
+    private readonly wildcardTls: WildcardTlsService,
   ) {}
 
   private actor(req: Request): string {
@@ -170,6 +172,18 @@ export class PlatformController {
   @ApiOperation({ summary: '编排开通租户实例（docker compose up + probe）' })
   async provision(@Param('id') id: string, @Req() req: Request) {
     return this.tenants.provision(id, this.actor(req));
+  }
+
+  @Post('tenants/:id/collect-fingerprint')
+  @ApiOperation({ summary: '回采 dedicated 实例机器指纹（失败可重试）' })
+  async collectFingerprint(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.collectFingerprint(id, this.actor(req));
+  }
+
+  @Post('tenants/:id/reissue-license')
+  @ApiOperation({ summary: '按当前指纹重签并下发 license + 热加载' })
+  async reissueLicense(@Param('id') id: string, @Req() req: Request) {
+    return this.tenants.reissueLicense(id, this.actor(req));
   }
 
   @Post('tenants/:id/renew')
@@ -281,6 +295,22 @@ export class PlatformController {
   @ApiOperation({ summary: '手动触发过期扫描' })
   async triggerSweep() {
     return this.sweep.sweep();
+  }
+
+  // -----------------------------------------------------------------------
+  // Wildcard TLS (SaaS DNS-01)
+  // -----------------------------------------------------------------------
+
+  @Get('tls/wildcard/status')
+  @ApiOperation({ summary: '通配 TLS 材料与过期状态' })
+  async wildcardTlsStatus() {
+    return this.wildcardTls.status();
+  }
+
+  @Post('tls/wildcard/renew')
+  @ApiOperation({ summary: '触发通配 TLS DNS-01 续期（PLATFORM_CERT_CMD）' })
+  async wildcardTlsRenew() {
+    return this.wildcardTls.renew();
   }
 
   // -----------------------------------------------------------------------

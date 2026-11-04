@@ -25,6 +25,8 @@ export interface Tenant {
   tenancyMode?: 'dedicated' | 'shared';
   /** 租户实例机器指纹；签发优先用此值 */
   fingerprint?: string | null;
+  /** 开通后指纹回采或许可证重签待重试 */
+  fingerprintPending?: boolean;
   status: TenantStatus;
   host: string | null;
   port: number | null;
@@ -96,7 +98,10 @@ export type PlatformAuditAction =
   | 'tenant.destroy_scheduled'
   | 'tenant.destroyed'
   | 'tenant.credentials'
-  | 'shell_access';
+  | 'shell_access'
+  | 'tenant.fingerprint_collect'
+  | 'license.reissue'
+  | 'license.reissue_failed';
 
 export interface AuditAppendOpts {
   action: PlatformAuditAction;

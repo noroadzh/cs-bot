@@ -93,6 +93,7 @@ describe('package-delivery', () => {
         'deploy/install.sh',
         'deploy/setup.sh',
         'deploy/issue-letsencrypt.sh',
+        'deploy/renew-wildcard-acme-dns01.sh',
         'deploy/render-admin-allow.sh',
         'deploy/collect-logs.sh',
         'deploy/init-control-db.sh',

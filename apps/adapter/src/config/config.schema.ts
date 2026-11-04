@@ -42,6 +42,17 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   ASR_TIMEOUT_MS: EnvInt(60_000),
   MAX_VOICE_BYTES: EnvInt(20 * 1024 * 1024),
   MAX_VIDEO_BYTES: EnvInt(100 * 1024 * 1024),
+  /** 视频 ASR 失败时抽关键帧数量（0=关闭） */
+  VIDEO_KEYFRAME_COUNT: EnvInt(1),
+  VIDEO_KEYFRAME_EXTRACT_TIMEOUT_MS: EnvInt(30_000),
+  /** 企微会话存档拉取（与群回调分离） */
+  WECOM_ARCHIVE_ENABLED: EnvBool(false),
+  WECOM_ARCHIVE_PULL_URL: EnvString.optional().default(''),
+  WECOM_ARCHIVE_SECRET: EnvString.optional().default(''),
+  WECOM_ARCHIVE_CALLBACK_SECRET: EnvString.optional().default(''),
+  WECOM_ARCHIVE_PULL_TIMEOUT_MS: EnvInt(15_000),
+  WECOM_ARCHIVE_PULL_INTERVAL_MS: EnvInt(0),
+
   IMAGE_CHAT_MODE: z.enum(['question', 'describe']).default('question'),
   AUTO_LEARNING_ENABLED: EnvBool(false),
 
@@ -110,6 +121,13 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   /** 双通道失败告警：窗口内失败次数阈值 / 窗口 / 冷却 */
   /** 运维事件告警冷却（验签失败等），默认 30 分钟 */
   OPS_ALERT_COOLDOWN_MS: EnvInt(1_800_000),
+  /** 质检：敏感命中 > 该值触发告警（默认 0：任意命中） */
+  QUALITY_SENSITIVE_HITS_THRESHOLD: EnvInt(0),
+  /** 质检：拒答率超过该比例触发（0–1） */
+  QUALITY_REFUSAL_RATE_THRESHOLD: EnvFloat(0.5),
+  /** 质检：p95 延迟毫秒超过该值触发 */
+  QUALITY_P95_LATENCY_MS_THRESHOLD: EnvInt(8_000),
+
   LLM_ALERT_THRESHOLD: EnvInt(3),
   LLM_ALERT_WINDOW_MS: EnvInt(300_000),
   LLM_ALERT_COOLDOWN_MS: EnvInt(1_800_000),

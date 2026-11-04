@@ -42,4 +42,11 @@ describe('AsrService media matrix', () => {
     expect(extract).not.toHaveBeenCalled();
     expect(prepared.filename).toBe('audio.amr');
   });
+
+  it('VIDEO_KEYFRAME_COUNT=0 时不抽帧', async () => {
+    setConfig({ VIDEO_KEYFRAME_COUNT: 0, MAX_VIDEO_BYTES: 10_000 });
+    const svc = new AsrService(async () => Buffer.from('a'));
+    const frames = await svc.extractKeyframes(Buffer.from('mp4'));
+    expect(frames).toEqual([]);
+  });
 });

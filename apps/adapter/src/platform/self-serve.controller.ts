@@ -1,7 +1,14 @@
 /**
  * 自助注册 / 支付（控制面半公开）
  */
-import { BadRequestException, Body, Controller, Get, Param, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '../config/config.service.js';
 import { TenantService } from './tenant.service.js';
@@ -62,7 +69,7 @@ export class SelfServeController {
   @ApiOperation({ summary: '支付成功回调（sandbox / mock）' })
   async pay(@Param('id') id: string) {
     this.assertEnabled();
-    return this.billing.markPaid(id);
+    return this.billing.mockPay(id);
   }
 
   @Get('orders/:id')

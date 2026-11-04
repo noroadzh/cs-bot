@@ -13,6 +13,7 @@ import { AsrService } from '../media/asr.service.js';
 import { UsageService } from '../usage/usage.service.js';
 import { MissService } from '../miss/miss.service.js';
 import { OpsAlertService } from '../common/ops-alert.service.js';
+import { SensitiveFilterService } from '../filter/sensitive-filter.service.js';
 import { ConfigService } from '../config/config.service.js';
 import { LicenseGateService } from '../license/license-gate.service.js';
 import {
@@ -59,6 +60,7 @@ export class WecomController {
     private readonly licenseGate: LicenseGateService,
     private readonly miss: MissService,
     private readonly asr: AsrService,
+    @Optional() private readonly filter?: SensitiveFilterService,
     @Optional() private readonly opsAlert: OpsAlertService = new OpsAlertService(),
   ) {
     this.installSendHold();
@@ -311,7 +313,7 @@ export class WecomController {
     };
   }
 
-  /** 语音/视频：下载 → ASR → QA；失败引导 + miss */
+  /** 语音/视频：下载 → ASR（视频失败可关键帧 VL）→ QA；双失败引导 + miss */
   private async processVoiceOrVideo(
     msg: {
       MediaId?: string;
@@ -327,10 +329,23 @@ export class WecomController {
     try {
       const buf = await this.wecomClient.downloadMedia(String(msg.MediaId));
       const kind = mediaType === 'video' ? 'video' : 'voice';
-      const transcript = await this.asr.transcribeMedia(buf, kind);
+      let text = '';
+      try {
+        text = await this.asr.transcribeMedia(buf, kind);
+      } catch (asrErr) {
+        this.logger.warn({
+          traceId,
+          detail: 'media-asr-failed',
+          err: (asrErr as Error).message,
+        });
+        if (kind === 'video') {
+          text = await this.videoKeyframeFallback(buf, traceId);
+        }
+        if (!text) throw asrErr;
+      }
       const inbound = msg as any;
-      inbound.Content = transcript;
-      inbound.Recognition = transcript;
+      inbound.Content = text;
+      inbound.Recognition = text;
       await this.routingService.dispatch(inbound, traceId);
     } catch (err) {
       this.logger.warn({ traceId, detail: 'media-asr-failed', err: (err as Error).message });
@@ -350,7 +365,28 @@ export class WecomController {
     }
   }
 
-  /** 图片异步处理：下载 → 识别 → 进入问答或引导话术 */
+  /** 视频 ASR 失败：抽关键帧 → VL 描述 */
+  private async videoKeyframeFallback(buf: Buffer, traceId: string): Promise<string> {
+    const frames = await this.asr.extractKeyframes(buf);
+    for (const frame of frames) {
+      try {
+        const desc = (await this.recognizeService.recognizeImage(frame, 'image/jpeg')).trim();
+        if (desc && desc.toUpperCase() !== '[NO_TEXT]') {
+          this.logger.log({ traceId, detail: 'video-keyframe-vl-ok' });
+          return desc;
+        }
+      } catch (err) {
+        this.logger.warn({
+          traceId,
+          detail: 'video-keyframe-vl-fail',
+          err: (err as Error).message,
+        });
+      }
+    }
+    return '';
+  }
+
+  /** 图片异步处理：下载 → 识别 → describe 直接出站或 question 进 QA */
   private async processImage(
     msg: { MediaId?: string; MsgId?: string; ChatId?: string; FromUserName?: string },
     traceId: string,
@@ -367,11 +403,20 @@ export class WecomController {
         return;
       }
       this.usageService.increment('imagesRecognized');
-      const inbound = msg as any;
-      // describe 模式：把视觉描述当最终回答路径（仍走 routing，由 QA 复述/闲聊）
       const mode = ConfigService.instance.IMAGE_CHAT_MODE ?? 'question';
-      inbound.Content =
-        mode === 'describe' ? `请用口语描述这张图片：${description}` : description;
+      if (mode === 'describe') {
+        const chatId = msg.ChatId || msg.FromUserName;
+        if (!chatId) {
+          await this.sendGuidanceAndSkipRouting(msg, traceId, guidance);
+          return;
+        }
+        const outbound = this.filter?.sweep(description) ?? description;
+        await this.wecomClient.sendText(chatId, outbound);
+        this.logger.log({ traceId, chatId, detail: 'image-describe-sent' });
+        return;
+      }
+      const inbound = msg as any;
+      inbound.Content = description;
       inbound.Recognition = description;
       await this.routingService.dispatch(inbound, traceId);
     } catch (err) {

@@ -47,6 +47,10 @@ import type {
   TenantListResult,
   TenantQuota,
 } from './tenant.entity.js';
+import {
+  HttpTenantInstanceClient,
+  type TenantInstanceClient,
+} from './tenant-instance.client.js';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -140,10 +144,16 @@ export class TenantService implements OnModuleDestroy {
     }
     this.certProvider = selectCertificateProvider(cfg);
     this.licenseIssuer = selectLicenseIssuer(cfg);
+    this.instanceClient = new HttpTenantInstanceClient({
+      scheme: cfg.PLATFORM_INSTANCE_SCHEME ?? 'https',
+      verifyTls: cfg.PLATFORM_VERIFY_TLS !== false,
+      timeoutMs: cfg.PLATFORM_INSTANCE_TIMEOUT_MS ?? 8000,
+    });
   }
 
   private certProvider: CertificateProvider;
   private licenseIssuer: LicenseIssuer;
+  private instanceClient: TenantInstanceClient;
 
   setCertificateProvider(p: CertificateProvider): void {
     this.certProvider = p;
@@ -151,6 +161,10 @@ export class TenantService implements OnModuleDestroy {
 
   setLicenseIssuer(p: LicenseIssuer): void {
     this.licenseIssuer = p;
+  }
+
+  setInstanceClient(c: TenantInstanceClient): void {
+    this.instanceClient = c;
   }
 
   // -------------------------------------------------------------------------
@@ -321,6 +335,10 @@ export class TenantService implements OnModuleDestroy {
         payload: { tenantId, instanceHost: tenant.host, instancePort: tenant.port, composeFilePath: provisionerPath(tenantId) },
       });
       await this.tenantSync?.sync(tenantId);
+
+      if (this.secrets) {
+        await this.postProvisionFingerprintRebind(tenantId, actor, issueFingerprint).catch(() => undefined);
+      }
 
       return this.requireTenant(tenantId);
     } catch (err) {
@@ -611,7 +629,7 @@ export class TenantService implements OnModuleDestroy {
     const total = Number(countRes.rows[0].cnt);
 
     const dataRes = await this.pool.query(
-      `SELECT id, name, contact, plan, tenancy_mode, fingerprint, status, host, port, database_url,
+      `SELECT id, name, contact, plan, tenancy_mode, fingerprint, fingerprint_pending, status, host, port, database_url,
               created_at, updated_at, expired_at, last_provision_log, deleted_at
        FROM tenant WHERE ${whereStr}
        ORDER BY created_at DESC
@@ -644,7 +662,7 @@ export class TenantService implements OnModuleDestroy {
 
   async requireTenant(id: string, includeDeleted = false): Promise<Tenant> {
     const res = await this.pool.query(
-      `SELECT id, name, contact, plan, tenancy_mode, fingerprint, status, host, port, database_url,
+      `SELECT id, name, contact, plan, tenancy_mode, fingerprint, fingerprint_pending, status, host, port, database_url,
               created_at, updated_at, expired_at, last_provision_log, deleted_at
        FROM tenant WHERE id = $1${includeDeleted ? '' : ' AND deleted_at IS NULL'}`,
       [id],
@@ -812,6 +830,124 @@ export class TenantService implements OnModuleDestroy {
     return ConfigService.instance.PLATFORM_LICENSE_FINGERPRINT?.trim() ?? '';
   }
 
+  /** 运营重试：回采实例指纹（必要时自动重签 license） */
+  async collectFingerprint(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+    if (tenant.tenancyMode === 'shared') {
+      throw new BadRequestException({
+        errCode: 'FINGERPRINT_COLLECT_FORBIDDEN',
+        detail: 'shared tenancy has no dedicated instance fingerprint',
+      });
+    }
+    if (tenant.status !== 'active') {
+      throw new HttpException(
+        {
+          errCode: 'FINGERPRINT_COLLECT_FORBIDDEN',
+          detail: `collect not allowed from status "${tenant.status}"`,
+          currentStatus: tenant.status,
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    const boundBefore = this.resolveLicenseFingerprint(tenant).trim().toLowerCase();
+    const live = await this.collectLiveFingerprint(tenant);
+    if (!live) {
+      await this.markFingerprintPending(tenantId, true);
+      await this.audit.append({
+        action: 'license.reissue_failed',
+        actor,
+        tenantId,
+        payload: { tenantId, phase: 'collect' },
+      });
+      throw new InternalServerErrorException({
+        errCode: 'INSTANCE_FINGERPRINT_UNREACHABLE',
+        detail: 'could not collect instance fingerprint',
+      });
+    }
+    await this.pool.query(
+      `UPDATE tenant SET fingerprint = $2, updated_at = NOW() WHERE id = $1`,
+      [tenantId, live],
+    );
+    await this.audit.append({
+      action: 'tenant.fingerprint_collect',
+      actor,
+      tenantId,
+      payload: { tenantId },
+    });
+    if (live !== boundBefore) {
+      try {
+        await this.issueAndDeployLicense(tenantId, actor);
+        await this.markFingerprintPending(tenantId, false);
+        await this.audit.append({
+          action: 'license.reissue',
+          actor,
+          tenantId,
+          payload: { tenantId, trigger: 'collect-fingerprint' },
+        });
+      } catch (err) {
+        await this.markFingerprintPending(tenantId, true);
+        await this.audit.append({
+          action: 'license.reissue_failed',
+          actor,
+          tenantId,
+          payload: { tenantId, phase: 'reissue', error: (err as Error).message.slice(0, 200) },
+        });
+        throw err;
+      }
+    } else {
+      await this.markFingerprintPending(tenantId, false);
+    }
+    return this.requireTenant(tenantId);
+  }
+
+  /** 运营重试：按当前 tenant.fingerprint 重签并下发 license + 热加载 */
+  async reissueLicense(tenantId: string, actor = 'system'): Promise<Tenant> {
+    const tenant = await this.requireTenant(tenantId);
+    if (tenant.tenancyMode === 'shared') {
+      throw new BadRequestException({
+        errCode: 'LICENSE_REISSUE_FORBIDDEN',
+        detail: 'shared tenancy has no dedicated instance license mount',
+      });
+    }
+    if (tenant.status !== 'active') {
+      throw new HttpException(
+        {
+          errCode: 'LICENSE_REISSUE_FORBIDDEN',
+          detail: `reissue not allowed from status "${tenant.status}"`,
+          currentStatus: tenant.status,
+        },
+        HttpStatus.CONFLICT,
+      );
+    }
+    const fp = this.resolveLicenseFingerprint(tenant);
+    if (ConfigService.instance.LICENSE_ISSUER === 'shell' && !fp) {
+      throw new BadRequestException({
+        errCode: 'LICENSE_FINGERPRINT_MISSING',
+        detail: 'tenant.fingerprint or PLATFORM_LICENSE_FINGERPRINT is required for shell license issuance',
+      });
+    }
+    try {
+      await this.issueAndDeployLicense(tenantId, actor);
+      await this.markFingerprintPending(tenantId, false);
+      await this.audit.append({
+        action: 'license.reissue',
+        actor,
+        tenantId,
+        payload: { tenantId, trigger: 'reissue-license' },
+      });
+    } catch (err) {
+      await this.markFingerprintPending(tenantId, true);
+      await this.audit.append({
+        action: 'license.reissue_failed',
+        actor,
+        tenantId,
+        payload: { tenantId, phase: 'reissue', error: (err as Error).message.slice(0, 200) },
+      });
+      throw err;
+    }
+    return this.requireTenant(tenantId);
+  }
+
   /** 开通/采集后回写实例指纹 */
   async setFingerprint(tenantId: string, fingerprint: string): Promise<Tenant> {
     const fp = fingerprint.trim();
@@ -826,6 +962,146 @@ export class TenantService implements OnModuleDestroy {
       [tenantId, fp],
     );
     return this.requireTenant(tenantId);
+  }
+
+  /** dedicated 开通健康探测后：回采指纹 → 更新 → 必要时重签 license */
+  private async postProvisionFingerprintRebind(
+    tenantId: string,
+    actor: string,
+    issuedWithFingerprint: string,
+  ): Promise<void> {
+    const tenant = await this.requireTenant(tenantId);
+    if (tenant.tenancyMode === 'shared') return;
+    if (ConfigService.instance.LICENSE_ISSUER === 'noop') return;
+    await this.runFingerprintRebind(tenantId, actor, issuedWithFingerprint);
+  }
+
+  private async runFingerprintRebind(
+    tenantId: string,
+    actor: string,
+    issuedWithFingerprint: string,
+  ): Promise<void> {
+    const tenant = await this.requireTenant(tenantId);
+    const live = await this.collectLiveFingerprint(tenant);
+    if (!live) {
+      await this.markFingerprintPending(tenantId, true);
+      await this.audit.append({
+        action: 'license.reissue_failed',
+        actor,
+        tenantId,
+        payload: { tenantId, phase: 'collect', trigger: 'post-provision' },
+      });
+      return;
+    }
+
+    const issuedNorm = issuedWithFingerprint.trim().toLowerCase();
+    const storedNorm = tenant.fingerprint?.trim().toLowerCase() ?? '';
+
+    if (live === issuedNorm && storedNorm === live) {
+      await this.markFingerprintPending(tenantId, false);
+      return;
+    }
+
+    await this.pool.query(
+      `UPDATE tenant SET fingerprint = $2, updated_at = NOW() WHERE id = $1`,
+      [tenantId, live],
+    );
+
+    if (live === issuedNorm) {
+      await this.markFingerprintPending(tenantId, false);
+      await this.audit.append({
+        action: 'tenant.fingerprint_collect',
+        actor,
+        tenantId,
+        payload: { tenantId, trigger: 'post-provision' },
+      });
+      return;
+    }
+
+    try {
+      await this.issueAndDeployLicense(tenantId, actor);
+      await this.markFingerprintPending(tenantId, false);
+      await this.audit.append({
+        action: 'license.reissue',
+        actor,
+        tenantId,
+        payload: { tenantId, trigger: 'post-provision' },
+      });
+    } catch (err) {
+      await this.markFingerprintPending(tenantId, true);
+      await this.audit.append({
+        action: 'license.reissue_failed',
+        actor,
+        tenantId,
+        payload: {
+          tenantId,
+          phase: 'reissue',
+          trigger: 'post-provision',
+          error: (err as Error).message.slice(0, 200),
+        },
+      });
+    }
+  }
+
+  private async collectLiveFingerprint(tenant: Tenant): Promise<string | null> {
+    if (!tenant.host || !tenant.port) return null;
+    const token = (await this.secrets?.load(tenant.id))?.TENANT_SYNC_TOKEN?.trim();
+    if (!token) return null;
+    try {
+      return await this.instanceClient.fetchFingerprint(
+        { host: tenant.host, port: tenant.port },
+        token,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  private async issueAndDeployLicense(tenantId: string, _actor: string): Promise<void> {
+    const tenant = await this.requireTenant(tenantId);
+    const issueFingerprint = this.resolveLicenseFingerprint(tenant);
+    if (ConfigService.instance.LICENSE_ISSUER === 'shell' && !issueFingerprint) {
+      throw new BadRequestException({
+        errCode: 'LICENSE_FINGERPRINT_MISSING',
+        detail: 'tenant.fingerprint or PLATFORM_LICENSE_FINGERPRINT is required for shell license issuance',
+      });
+    }
+    const quota = await this.quota.getQuota(tenantId);
+    await this.licenseIssuer.issue({
+      id: tenant.id,
+      host: tenant.host,
+      fingerprint: issueFingerprint || undefined,
+      expiresAtMs: tenant.expiredAt ? Date.parse(tenant.expiredAt) : Date.now() + 365 * 86_400_000,
+      maxChats: quota?.maxChats,
+    });
+    await this.syncLicenseFile(tenantId);
+    await this.reloadInstanceLicense(tenant);
+  }
+
+  private async reloadInstanceLicense(tenant: Tenant): Promise<void> {
+    if (!tenant.host || !tenant.port) return;
+    const adminPassword = (await this.secrets?.load(tenant.id))?.ADMIN_PASSWORD;
+    if (!adminPassword) {
+      await this.provisioner.restart(tenant);
+      return;
+    }
+    const adminUser = ConfigService.instance.ADMIN_USER ?? 'admin';
+    try {
+      await this.instanceClient.reloadLicense(
+        { host: tenant.host, port: tenant.port },
+        adminUser,
+        adminPassword,
+      );
+    } catch {
+      await this.provisioner.restart(tenant);
+    }
+  }
+
+  private async markFingerprintPending(tenantId: string, pending: boolean): Promise<void> {
+    await this.pool.query(
+      `UPDATE tenant SET fingerprint_pending = $2, updated_at = NOW() WHERE id = $1`,
+      [tenantId, pending],
+    );
   }
 
   /**
@@ -873,6 +1149,7 @@ function mapTenantRow(row: Record<string, unknown>): Tenant {
     plan: row.plan === 'enhanced' ? 'enhanced' : 'standard',
     tenancyMode: row.tenancy_mode === 'shared' ? 'shared' : 'dedicated',
     fingerprint: row.fingerprint == null ? null : String(row.fingerprint),
+    fingerprintPending: row.fingerprint_pending === true || row.fingerprint_pending === 't',
     status: String(row.status) as Tenant['status'],
     host: row.host === null || row.host === undefined ? null : String(row.host),
     port: row.port === null || row.port === undefined ? null : Number(row.port),
