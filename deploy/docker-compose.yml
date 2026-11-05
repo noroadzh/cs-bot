@@ -107,6 +107,14 @@ services:
       - ../apps/adapter/src/platform/018-tenant-trialing.sql:/docker-entrypoint-initdb.d/19-tenant-trialing.sql:ro
       - ../apps/adapter/src/platform/019-tenant-plan.sql:/docker-entrypoint-initdb.d/20-tenant-plan.sql:ro
       - ../apps/adapter/src/platform/020-tenant-fingerprint-tenancy.sql:/docker-entrypoint-initdb.d/21-tenant-fingerprint-tenancy.sql:ro
+      - ../apps/adapter/src/miss/015-miss-tenant.sql:/docker-entrypoint-initdb.d/22-miss-tenant.sql:ro
+      - ../apps/adapter/src/media/016-asset-tenant.sql:/docker-entrypoint-initdb.d/23-asset-tenant.sql:ro
+      - ../apps/adapter/src/import/017-import-tenant.sql:/docker-entrypoint-initdb.d/24-import-tenant.sql:ro
+      - ../apps/adapter/src/miss/018-learning-audit.sql:/docker-entrypoint-initdb.d/25-learning-audit.sql:ro
+      - ../apps/adapter/src/platform/021-billing-order.sql:/docker-entrypoint-initdb.d/26-billing-order.sql:ro
+      - ../apps/adapter/src/platform/022-finetune-job.sql:/docker-entrypoint-initdb.d/27-finetune-job.sql:ro
+      - ../apps/adapter/src/platform/023-tenant-fingerprint-pending.sql:/docker-entrypoint-initdb.d/28-tenant-fingerprint-pending.sql:ro
+      - ../apps/adapter/src/import/023-quality-inspection.sql:/docker-entrypoint-initdb.d/29-quality-inspection.sql:ro
       - ./init-control-db.sh:/docker-entrypoint-initdb.d/00-control-db.sh:ro
       - ../apps/adapter/src/platform/007-tenant.sql:/control-migrations/01-tenant.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/control-migrations/02-control-plane.sql:ro
@@ -118,6 +126,9 @@ services:
       - ../apps/adapter/src/platform/018-tenant-trialing.sql:/control-migrations/08-tenant-trialing.sql:ro
       - ../apps/adapter/src/platform/019-tenant-plan.sql:/control-migrations/09-tenant-plan.sql:ro
       - ../apps/adapter/src/platform/020-tenant-fingerprint-tenancy.sql:/control-migrations/10-tenant-fingerprint-tenancy.sql:ro
+      - ../apps/adapter/src/platform/021-billing-order.sql:/control-migrations/11-billing-order.sql:ro
+      - ../apps/adapter/src/platform/022-finetune-job.sql:/control-migrations/12-finetune-job.sql:ro
+      - ../apps/adapter/src/platform/023-tenant-fingerprint-pending.sql:/control-migrations/13-tenant-fingerprint-pending.sql:ro
       - ../apps/adapter/src/platform/008-control-plane.sql:/docker-entrypoint-initdb.d/09-control-plane.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cs} -d ${POSTGRES_DB:-csbot}"]
