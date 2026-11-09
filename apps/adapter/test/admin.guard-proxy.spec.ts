@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, afterAll, jest } from '@jest/globals';
 import { HttpException } from '@nestjs/common';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
@@ -12,13 +12,16 @@ const makeCtx = (peer: string, xff?: string): any => {
       authorization: basic('admin', 'secret123'),
       ...(xff ? { 'x-forwarded-for': xff } : {}),
     },
+    path: '/admin/license',
+    url: '/admin/license',
   };
-  return { switchToHttp: () => ({ getRequest: () => req }) };
+  const res = { setHeader: jest.fn() };
+  return { switchToHttp: () => ({ getRequest: () => req, getResponse: () => res }) };
 };
 
-const statusOf = (fn: () => boolean): number => {
+const statusOf = async (fn: () => Promise<boolean>): Promise<number> => {
   try {
-    fn();
+    await fn();
     return 200;
   } catch (e) {
     return (e as HttpException).getStatus();
@@ -34,20 +37,28 @@ describe('AdminGuard trusted proxy', () => {
       ALLOWED_ADMIN_IPS: '198.51.100.0/24',
       TRUSTED_PROXY_CIDRS: '172.30.0.0/24',
     });
+    const identity = {
+      authenticate: jest.fn(async (user: string, pass: string) =>
+        user === 'admin' && pass === 'secret123'
+          ? { id: 'u1', username: 'admin', roleCode: 'admin' as const }
+          : null,
+      ),
+    };
+    const audit = { append: jest.fn() };
     const mod = await import('../src/admin/admin.guard.js');
-    guard = new mod.AdminGuard();
+    guard = new mod.AdminGuard(identity as any, audit as any);
   });
   afterAll(() => resetConfig());
 
-  it('admits a whitelisted client forwarded by nginx', () => {
-    expect(guard.canActivate(makeCtx('172.30.0.2', '198.51.100.9'))).toBe(true);
+  it('admits a whitelisted client forwarded by nginx', async () => {
+    expect(await guard.canActivate(makeCtx('172.30.0.2', '198.51.100.9'))).toBe(true);
   });
 
-  it('rejects a non-whitelisted forwarded client', () => {
-    expect(statusOf(() => guard.canActivate(makeCtx('172.30.0.2', '203.0.113.9')))).toBe(403);
+  it('rejects a non-whitelisted forwarded client', async () => {
+    expect(await statusOf(() => guard.canActivate(makeCtx('172.30.0.2', '203.0.113.9')))).toBe(403);
   });
 
-  it('ignores XFF from an untrusted direct peer', () => {
-    expect(statusOf(() => guard.canActivate(makeCtx('203.0.113.9', '198.51.100.9')))).toBe(403);
+  it('ignores XFF from an untrusted direct peer', async () => {
+    expect(await statusOf(() => guard.canActivate(makeCtx('203.0.113.1', '198.51.100.9')))).toBe(403);
   });
 });

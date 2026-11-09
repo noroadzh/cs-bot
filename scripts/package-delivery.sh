@@ -45,6 +45,8 @@ copy_file deploy/collect-logs.sh
 copy_file deploy/init-control-db.sh
 copy_file deploy/backup.sh
 copy_file deploy/logrotate.conf
+copy_file scripts/bootstrap-admin-user.sh
+copy_file scripts/hash-admin-password.mjs
 copy_file .env.template
 copy_file "docs/03-交付实施/部署包使用说明.md"
 copy_file "docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md"
@@ -52,7 +54,8 @@ copy_file "docs/03-交付实施/用户使用手册-私有化版.md"
 cp "$DEST/docs/03-交付实施/部署包使用说明.md" "$DEST/使用说明.md"
 chmod +x "$DEST/deploy/setup.sh" "$DEST/deploy/install.sh" "$DEST/deploy/build-images.sh" \
   "$DEST/deploy/issue-letsencrypt.sh" "$DEST/deploy/collect-logs.sh" "$DEST/deploy/backup.sh" \
-  "$DEST/deploy/init-perms.sh" "$DEST/deploy/render-admin-allow.sh"
+  "$DEST/deploy/init-perms.sh" "$DEST/deploy/render-admin-allow.sh" \
+  "$DEST/scripts/bootstrap-admin-user.sh"
 
 [[ -d "$ROOT/config" ]] || fail "missing required directory: config/"
 cp -R "$ROOT/config" "$DEST/config"

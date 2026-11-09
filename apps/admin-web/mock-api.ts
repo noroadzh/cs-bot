@@ -102,6 +102,62 @@ function handler(tenants: { id: string; name: string; status: string; plan: stri
       });
       return;
     }
+    if (req.method === 'GET' && path === '/admin/users') {
+      send(res, 200, {
+        total: 1,
+        limit: 50,
+        offset: 0,
+        rows: [{ id: '1', username: 'admin', roleCode: 'admin', enabled: true, createdAt: '2026-01-01T00:00:00.000Z' }],
+      });
+      return;
+    }
+    if (req.method === 'GET' && path === '/admin/audit-logs') {
+      send(res, 200, {
+        total: 1,
+        limit: 50,
+        offset: 0,
+        rows: [{
+          id: 1,
+          username: 'admin',
+          roleCode: 'admin',
+          method: 'GET',
+          path: '/admin/license',
+          status: 200,
+          costMs: 12,
+          clientIp: '127.0.0.1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        }],
+      });
+      return;
+    }
+    if (req.method === 'GET' && path === '/platform/users') {
+      send(res, 200, {
+        total: 1,
+        limit: 50,
+        offset: 0,
+        rows: [{ id: '1', username: 'admin', roleCode: 'admin', enabled: true, createdAt: '2026-01-01T00:00:00.000Z' }],
+      });
+      return;
+    }
+    if (req.method === 'GET' && path === '/platform/audit-logs') {
+      send(res, 200, {
+        total: 1,
+        limit: 50,
+        offset: 0,
+        rows: [{
+          id: 1,
+          username: 'admin',
+          roleCode: 'admin',
+          method: 'GET',
+          path: '/platform/tenants',
+          status: 200,
+          costMs: 12,
+          clientIp: '127.0.0.1',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        }],
+      });
+      return;
+    }
     if (req.method === 'GET' && path === '/admin/config-check') {
       send(res, 200, { mode: {}, config: { ADMIN_USER: { present: true } } });
       return;

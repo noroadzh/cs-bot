@@ -4,7 +4,7 @@
 - **状态**: 6 个 `gap-v3-*` change **已实现、已 sync 主规格、已归档**（`openspec/changes/archive/2026-11-04-gap-v3-*`）
 - **共享非目标**（各 change proposal 均引用）:
   - 单进程多租户 ALS
-  - 完整用户表 RBAC（维持 env 双账号）
+  - OAuth/SSO、细粒度权限点矩阵、跨库身份联邦（用户表 RBAC 已由 `admin-user-rbac` 交付）
   - k8s GPU Operator / LoRA 训练执行器（保持 P2 外部 worker）
   - 微信个人号（永久排除）
 

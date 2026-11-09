@@ -1,0 +1,178 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #e8ece9;
+  color: #1c2421;
+}
+
+.console {
+  min-height: 100vh;
+}
+
+.console-sider {
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+  overflow: auto;
+  border-right: 1px solid #0e1815;
+}
+
+.console-sider .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.console-brand {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 22px 18px 16px;
+}
+
+.console-mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  background: #1f6b5a;
+  color: #f4faf7;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.console-brand-name {
+  color: #f4faf7;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.console-brand-sub {
+  margin-top: 2px;
+  color: #8ea39b;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.console-nav {
+  flex: 1;
+  border-inline-end: none !important;
+  padding-bottom: 12px;
+}
+
+.console-logout {
+  margin: 8px 12px 16px;
+  padding: 8px 12px;
+  border: 1px solid #2a4038;
+  border-radius: 8px;
+  background: transparent;
+  color: #c9d5d0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.console-logout:hover {
+  background: #1d332c;
+  color: #f4faf7;
+}
+
+.console-top {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 28px 0;
+}
+
+.console-kicker {
+  margin: 0 0 4px;
+  color: #5c6b66;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.console-top h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.console-main {
+  padding: 18px 28px 32px;
+}
+
+.console-main .ant-table-wrapper,
+.console-main .ant-descriptions {
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(20, 34, 30, 0.05), 0 10px 28px rgba(20, 34, 30, 0.05);
+}
+
+.console-main .ant-table-wrapper {
+  padding: 4px 8px 8px;
+  overflow-x: auto;
+}
+
+.console-main .ant-table {
+  min-width: 880px;
+}
+
+.console-main .ant-table-thead > tr > th,
+.console-main .ant-table-thead > tr > th .ant-table-column-title {
+  white-space: nowrap !important;
+}
+
+.console-main .ant-descriptions {
+  padding: 8px 16px 16px;
+}
+
+.console-main .ant-card {
+  border: none;
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(20, 34, 30, 0.05), 0 10px 28px rgba(20, 34, 30, 0.05);
+}
+
+.login-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px 16px;
+  background:
+    radial-gradient(900px 420px at 10% -10%, rgba(31, 107, 90, 0.18), transparent 60%),
+    linear-gradient(165deg, #10211c 0%, #1a3330 42%, #e8ece9 42.1%);
+}
+
+.login-panel {
+  width: min(420px, 100%);
+}
+
+.login-kicker {
+  margin: 0 0 8px;
+  color: #d5ebe4;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+}
+
+.login-panel h1 {
+  margin: 0 0 20px;
+  color: #f7fbf9;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+}
+
+.login-panel .ant-card {
+  border: none;
+  border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(16, 33, 28, 0.18);
+}

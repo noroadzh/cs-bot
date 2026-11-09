@@ -10,11 +10,13 @@ import { promises as fs } from 'node:fs';
 import { join as joinPath } from 'node:path';
 import { Pool } from 'pg';
 import { join } from 'node:path';
-import { AdminGuard } from '../admin/admin.guard.js';
+import { AdminAuthModule } from '../admin/admin-auth.module.js';
 import { ConfigService } from '../config/config.service.js';
 import { PlatformController } from './platform.controller.js';
 import { SelfServeController } from './self-serve.controller.js';
 import { GpuCatalogController } from './gpu-catalog.controller.js';
+import { PlatformUsersController } from './platform-users.controller.js';
+import { PlatformRequestAuditController } from './platform-request-audit.controller.js';
 import { GpuHealthService } from './gpu-health.service.js';
 import { FinetuneJobService } from './finetune-job.service.js';
 import { BillingService } from './billing.service.js';
@@ -23,7 +25,6 @@ import { TenantQuotaService } from './tenant-quota.service.js';
 import { TenantUsageService } from './tenant-usage.service.js';
 import { PlatformAuditService } from './platform-audit.service.js';
 import { QaEngineModule } from '../qa/qa-engine.module.js';
-import { RolesGuard } from '../admin/roles.guard.js';
 import { TenantExpirySweepService } from './tenant-expiry-sweep.service.js';
 import { TenantSecretStore } from './tenant-secret-store.js';
 import { TenantSecretsService } from './tenant-secrets.service.js';
@@ -48,11 +49,15 @@ export class PlatformModule {
   static forRoot(): DynamicModule {
     return {
       module: PlatformModule,
-      imports: [QaEngineModule],
-      controllers: [PlatformController, SelfServeController, GpuCatalogController],
+      imports: [QaEngineModule, AdminAuthModule],
+      controllers: [
+        PlatformController,
+        SelfServeController,
+        GpuCatalogController,
+        PlatformUsersController,
+        PlatformRequestAuditController,
+      ],
       providers: [
-        AdminGuard,
-        RolesGuard,
         BillingService,
         GpuHealthService,
         FinetuneJobService,

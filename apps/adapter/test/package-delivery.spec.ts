@@ -47,6 +47,8 @@ describe('package-delivery', () => {
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/issue-letsencrypt.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/render-admin-allow.sh');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/collect-logs.sh');
+    expect(list).toContain('cs-bot-deploy-9.9.9/scripts/bootstrap-admin-user.sh');
+    expect(list).toContain('cs-bot-deploy-9.9.9/scripts/hash-admin-password.mjs');
     expect(list).toContain('cs-bot-deploy-9.9.9/.env.template');
     expect(list).toContain('cs-bot-deploy-9.9.9/使用说明.md');
     expect(list).toContain('cs-bot-deploy-9.9.9/docs/03-交付实施/部署包使用说明.md');
@@ -80,7 +82,7 @@ describe('package-delivery', () => {
   it('rejects internal artifacts inside the package', () => {
     const fakeRoot = mkdtempSync(join(tmpdir(), 'csbot-root-'));
     try {
-      for (const dir of ['deploy/nginx', 'config', 'apps/adapter/src', 'docs/03-交付实施']) {
+      for (const dir of ['deploy/nginx', 'config', 'apps/adapter/src', 'docs/03-交付实施', 'scripts']) {
         mkdirSync(join(fakeRoot, dir), { recursive: true });
       }
       for (const rel of [
@@ -99,6 +101,8 @@ describe('package-delivery', () => {
         'deploy/init-control-db.sh',
         'deploy/backup.sh',
         'deploy/logrotate.conf',
+        'scripts/bootstrap-admin-user.sh',
+        'scripts/hash-admin-password.mjs',
         '.env.template',
         'docs/03-交付实施/部署包使用说明.md',
         'docs/03-交付实施/部署手册-微信群智能客服机器人MVP.md',

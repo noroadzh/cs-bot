@@ -1,4 +1,4 @@
-import { Alert, Button, Form, Input, InputNumber, Space, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, InputNumber, Space, Typography } from 'antd';
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
@@ -34,8 +34,7 @@ export function BillingPage() {
   }, [order, polling]);
 
   return (
-    <>
-      <Typography.Title level={3}>自助续费</Typography.Title>
+    <Card style={{ maxWidth: 640 }}>
       {errCode ? (
         <Alert type="error" message={`操作失败 (${errCode})`} style={{ marginBottom: 16 }} />
       ) : null}
@@ -106,9 +105,9 @@ export function BillingPage() {
           }
         />
       ) : null}
-      <Typography.Paragraph style={{ marginTop: 16 }}>
+      <Typography.Paragraph style={{ marginTop: 16, marginBottom: 0 }}>
         <Link to="/register">注册新租户</Link>
       </Typography.Paragraph>
-    </>
+    </Card>
   );
 }

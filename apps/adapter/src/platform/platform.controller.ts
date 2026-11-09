@@ -22,6 +22,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AdminGuard } from '../admin/admin.guard.js';
+import { ADMIN_USER_KEY, type AdminUserContext } from '../admin/admin-roles.js';
 import { ConfigService } from '../config/config.service.js';
 import { CanActivate, ExecutionContext, BadRequestException } from '@nestjs/common';
 import { requestContext } from '../common/request-context.js';
@@ -91,14 +92,9 @@ export class PlatformController {
   ) {}
 
   private actor(req: Request): string {
-    // Basic Auth 已由 AdminGuard 校验；用 user 名作为 actor
-    const auth = (req.headers?.authorization ?? '') as string;
-    try {
-      const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8');
-      return decoded.split(':')[0] || 'admin';
-    } catch {
-      return 'admin';
-    }
+    const user = (req as Request & { [ADMIN_USER_KEY]?: AdminUserContext })[ADMIN_USER_KEY];
+    if (user?.username) return user.username;
+    return 'admin';
   }
 
   // -----------------------------------------------------------------------

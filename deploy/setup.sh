@@ -115,12 +115,12 @@ EOF
 explain_secrets() {
   cat <<'EOF'
 步骤 4/8  口令（向导生成，不是从别的系统查到的）
-  ADMIN_PASSWORD         打开 https://域名/admin 的口令，用户名默认 admin。改它之后 up -d adapter，旧口令立即失效。
+  运营台首个管理员      用户名/密码写入数据库 admin_user（不再用 .env 登录）。启动后用该账号打开 /console。
   POSTGRES_PASSWORD      第一次启动时写入数据库。之后只改 .env 不会改掉库里已有口令，适配层会连不上库。
   FASTGPT_ROOT_PASSWORD  FastGPT 登录口令，用户名固定 root。只在第一次初始化时生效。
   FASTGPT_FILE_TOKEN     内部文件令牌，不能用来登录。之后修改会使已有文件链接失效。
   REDIS_PASSWORD         必须留空。填了之后健康检查不带口令，Redis 会一直不健康，适配层不起。
-四项口令各不相同。请当场抄下来，向导不会再次显示。
+请当场抄下管理员口令与库口令，向导不会再次显示。
 EOF
 }
 
@@ -193,7 +193,7 @@ FastGPT 知识库（8443 默认拒绝所有人）：
   换企业或应用           同时改 WECHAT_CORP_ID、WECHAT_AGENT_ID、WECHAT_AGENT_SECRET，再 up -d adapter。
   换大模型 Key           改 LLM_PRIMARY_API_KEY 或 LLM_FALLBACK_API_KEY，再 up -d adapter。
   换知识库应用 Key       改 FASTGPT_API_KEY，再 up -d adapter。占位符不换成真实 Key 时问答失败。
-  换管理口令             改 ADMIN_PASSWORD，再 up -d adapter。旧口令立即不能登录 /admin。
+  换管理口令             在运营台「用户」页改密码，或用 bootstrap-admin-user.sh 重建首个 admin。
   换数据库口令           不能只改 POSTGRES_PASSWORD。库里的口令是第一次启动时写入的。
   换 FastGPT 登录口令    不能只改 FASTGPT_ROOT_PASSWORD。它只在第一次初始化时成为 root 口令。
   换文件令牌             改 FASTGPT_FILE_TOKEN 会使已有文件链接失效，再 up -d fastgpt。
@@ -310,23 +310,31 @@ step_llm() {
 step_secrets() {
   explain_secrets
   pause
-  local admin pg rootp file
-  admin="$(openssl rand -hex 24)"
+  local admin_user admin_pass pg rootp file
+  admin_user="$(ask "运营台首个管理员用户名（建议 admin）")"
+  [[ -n "$admin_user" ]] || admin_user="admin"
+  while true; do
+    admin_pass="$(ask "运营台首个管理员密码（≥8 位）")"
+    [ "${#admin_pass}" -ge 8 ] && break
+    echo "管理员密码至少 8 位。" >&2
+  done
   pg="$(openssl rand -hex 24)"
   rootp="$(openssl rand -hex 24)"
   file="$(openssl rand -hex 24)"
   cat <<EOF
 
 请立刻抄写，关闭终端后脚本不会再打印：
-  ADMIN_PASSWORD=$admin
+  CONSOLE_ADMIN_USER=$admin_user
+  CONSOLE_ADMIN_PASSWORD=$admin_pass
   POSTGRES_PASSWORD=$pg
   FASTGPT_ROOT_PASSWORD=$rootp
   FASTGPT_FILE_TOKEN=$file
   REDIS_PASSWORD=
 EOF
   pause
-  set_kv ADMIN_USER "admin"
-  set_kv ADMIN_PASSWORD "$admin"
+  printf '%s\n' "$admin_user" > "$ROOT/.setup-admin-user"
+  printf '%s\n' "$admin_pass" > "$ROOT/.setup-admin-password"
+  chmod 600 "$ROOT/.setup-admin-user" "$ROOT/.setup-admin-password" 2>/dev/null || true
   set_kv POSTGRES_PASSWORD "$pg"
   set_kv FASTGPT_ROOT_PASSWORD "$rootp"
   set_kv FASTGPT_FILE_TOKEN "$file"
@@ -437,6 +445,29 @@ EOF
     return 0
   fi
   "$ROOT/deploy/install.sh"
+  if [ -f "$ROOT/.setup-admin-user" ] && [ -f "$ROOT/.setup-admin-password" ]; then
+    local au ap hash
+    au="$(tr -d '\n' < "$ROOT/.setup-admin-user" | tr '[:upper:]' '[:lower:]')"
+    ap="$(tr -d '\n' < "$ROOT/.setup-admin-password")"
+    echo "写入运营台首个管理员到数据库…"
+    # shellcheck disable=SC1090
+    set -a; [ -f "$ENV_FILE" ] && . "$ENV_FILE"; set +a
+    hash="$(node "$ROOT/scripts/hash-admin-password.mjs" "$ap" | tr -d '\n')"
+    if docker compose --env-file "$ENV_FILE" -f "$ROOT/deploy/docker-compose.yml" exec -T pg \
+      psql -U "${POSTGRES_USER:-cs}" -d "${POSTGRES_DB:-csbot}" -v ON_ERROR_STOP=1 <<SQL
+INSERT INTO admin_role (code, name) VALUES ('admin', 'Administrator'), ('operator', 'Operator')
+ON CONFLICT (code) DO NOTHING;
+INSERT INTO admin_user (id, username, password_hash, role_code, enabled)
+SELECT gen_random_uuid(), '$au', '$hash', 'admin', TRUE
+WHERE NOT EXISTS (SELECT 1 FROM admin_user WHERE role_code='admin' AND enabled=TRUE);
+SQL
+    then
+      echo "首个管理员已写入：$au"
+    else
+      echo "[setup] WARN: 自动写入管理员失败，请手动：DATABASE_URL=... ./scripts/bootstrap-admin-user.sh --user $au --password '***'" >&2
+    fi
+    rm -f "$ROOT/.setup-admin-user" "$ROOT/.setup-admin-password"
+  fi
   print_after
 }
 

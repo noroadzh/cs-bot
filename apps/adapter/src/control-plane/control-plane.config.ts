@@ -9,8 +9,8 @@ export const ControlPlaneConfigSchema = z.preprocess(preprocessEnv, z.object({
   HOST: EnvString.default('0.0.0.0'),
   PORT: EnvInt(3100),
 
-  ADMIN_USER: EnvString.default('admin'),
-  ADMIN_PASSWORD: EnvString.min(6),
+  ADMIN_USER: EnvString.optional().default('admin'),
+  ADMIN_PASSWORD: EnvString.optional().default(''),
   ALLOWED_ADMIN_IPS: EnvString.default('127.0.0.1/32'),
 
   PLATFORM_ENABLED: EnvBool(true),

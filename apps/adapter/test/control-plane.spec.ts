@@ -23,9 +23,9 @@ describe('ControlPlaneConfig', () => {
     expect(cfg.PLATFORM_TLS_PROVIDER).toBe('file');
   });
 
-  it('缺 DATABASE_URL/ADMIN_PASSWORD → 拒绝', () => {
+  it('缺 DATABASE_URL → 拒绝；ADMIN_PASSWORD 可选（库用户鉴权）', () => {
     expect(ControlPlaneConfigSchema.safeParse({ ADMIN_PASSWORD: '123456' }).success).toBe(false);
-    expect(ControlPlaneConfigSchema.safeParse({ DATABASE_URL: 'x' }).success).toBe(false);
+    expect(ControlPlaneConfigSchema.safeParse({ DATABASE_URL: 'postgresql://cs:cs@127.0.0.1:5432/csbot_control' }).success).toBe(true);
   });
 });
 
@@ -40,9 +40,9 @@ describe('ControlPlaneAppModule', () => {
     await moduleRef.close();
   });
 
-  it('/platform/report 接受 CONTROL_PLANE_TOKEN Bearer', () => {
+  it('/platform/report 接受 CONTROL_PLANE_TOKEN Bearer', async () => {
     setConfig({ CONTROL_PLANE_TOKEN: 'token-1' });
-    const guard = new AdminGuard();
+    const guard = new AdminGuard({} as any, { append: () => undefined } as any);
     const ctx: any = {
       switchToHttp: () => ({
         getRequest: () => ({
@@ -50,23 +50,26 @@ describe('ControlPlaneAppModule', () => {
           ip: '203.0.113.9',
           headers: { authorization: 'Bearer token-1' },
         }),
+        getResponse: () => ({ setHeader: () => undefined }),
       }),
     };
-    expect(guard.canActivate(ctx)).toBe(true);
+    expect(await guard.canActivate(ctx)).toBe(true);
   });
 
-  it('错误 Bearer 且 IP 不在白名单 → 拒绝', () => {
+  it('错误 Bearer 且 IP 不在白名单 → 拒绝', async () => {
     setConfig({ CONTROL_PLANE_TOKEN: 'token-1', ALLOWED_ADMIN_IPS: '10.0.0.0/8' });
-    const guard = new AdminGuard();
+    const guard = new AdminGuard({} as any, { append: () => undefined } as any);
     const ctx: any = {
       switchToHttp: () => ({
         getRequest: () => ({
           path: '/platform/report',
+          method: 'POST',
           ip: '203.0.113.9',
           headers: { authorization: 'Bearer wrong' },
         }),
+        getResponse: () => ({ setHeader: () => undefined }),
       }),
     };
-    expect(() => guard.canActivate(ctx)).toThrow();
+    await expect(guard.canActivate(ctx)).rejects.toThrow();
   });
 });

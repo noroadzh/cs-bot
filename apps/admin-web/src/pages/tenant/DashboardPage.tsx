@@ -24,11 +24,11 @@ export function DashboardPage() {
   return (
     <div>
       {error ? <Alert type="error" message={error} /> : null}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}><Card><Statistic title="消息量" value={data?.messages ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="命中" value={data?.hits ?? 0} /></Card></Col>
-        <Col span={6}><Card><Statistic title="命中率" value={((data?.hitRate ?? 0) * 100).toFixed(1)} suffix="%" /></Card></Col>
-        <Col span={6}><Card><Statistic title="拒答率" value={((data?.refusalRate ?? 0) * 100).toFixed(1)} suffix="%" /></Card></Col>
+      <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+        <Col xs={24} sm={12} lg={6}><Card><Statistic title="消息量" value={data?.messages ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} lg={6}><Card><Statistic title="命中" value={data?.hits ?? 0} /></Card></Col>
+        <Col xs={24} sm={12} lg={6}><Card><Statistic title="命中率" value={((data?.hitRate ?? 0) * 100).toFixed(1)} suffix="%" /></Card></Col>
+        <Col xs={24} sm={12} lg={6}><Card><Statistic title="拒答率" value={((data?.refusalRate ?? 0) * 100).toFixed(1)} suffix="%" /></Card></Col>
       </Row>
       <Table
         rowKey={(r) => `${r.chatId}-${r.question}`}

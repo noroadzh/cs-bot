@@ -1,4 +1,4 @@
-import { Alert, Button, Form, Input, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { registerTenant, SelfServeError } from '../../selfServeApi.js';
@@ -9,8 +9,7 @@ export function RegisterPage() {
   const [loading, setLoading] = useState(false);
 
   return (
-    <>
-      <Typography.Title level={3}>自助注册</Typography.Title>
+    <Card style={{ maxWidth: 520 }}>
       {errCode ? (
         <Alert type="error" message={`注册失败 (${errCode})`} style={{ marginBottom: 16 }} />
       ) : null}
@@ -46,9 +45,9 @@ export function RegisterPage() {
           注册并前往续费
         </Button>
       </Form>
-      <Typography.Paragraph style={{ marginTop: 16 }}>
+      <Typography.Paragraph style={{ marginTop: 16, marginBottom: 0 }}>
         已有租户？<Link to="/billing">直接续费</Link>
       </Typography.Paragraph>
-    </>
+    </Card>
   );
 }

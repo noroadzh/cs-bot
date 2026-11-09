@@ -4,10 +4,12 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App.js';
+import { consoleTheme } from './theme.js';
+import './console.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ConfigProvider locale={zhCN}>
+    <ConfigProvider locale={zhCN} theme={consoleTheme}>
       <AntApp>
         <BrowserRouter basename="/console">
           <App />

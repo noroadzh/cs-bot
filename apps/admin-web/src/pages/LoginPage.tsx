@@ -25,20 +25,28 @@ export function LoginPage({ onReady }: { onReady: () => void }) {
     }
   }
 
+  const title = surface === 'platform' ? 'SaaS 控制台' : '租户运营台';
+
   return (
-    <Card title={surface === 'platform' ? 'SaaS 控制台' : '租户运营台'} style={{ maxWidth: 420, margin: '48px auto' }}>
-      {error ? <Alert type="error" message={error} style={{ marginBottom: 16 }} /> : null}
-      <Form layout="vertical" onFinish={submit}>
-        <Form.Item name="user" label="账号" rules={[{ required: true, message: '请填写账号' }]}>
-          <Input autoComplete="username" />
-        </Form.Item>
-        <Form.Item name="password" label="口令" rules={[{ required: true, message: '请填写口令' }]}>
-          <Input.Password autoComplete="current-password" />
-        </Form.Item>
-        <Button type="primary" htmlType="submit" loading={pending} block>
-          登录
-        </Button>
-      </Form>
-    </Card>
+    <div className="login-screen">
+      <div className="login-panel">
+        <p className="login-kicker">微信群智能客服</p>
+        <h1>{title}</h1>
+        <Card>
+          {error ? <Alert type="error" message={error} style={{ marginBottom: 16 }} /> : null}
+          <Form layout="vertical" onFinish={submit} requiredMark={false}>
+            <Form.Item name="user" label="账号" rules={[{ required: true, message: '请填写账号' }]}>
+              <Input autoComplete="username" size="large" />
+            </Form.Item>
+            <Form.Item name="password" label="口令" rules={[{ required: true, message: '请填写口令' }]}>
+              <Input.Password autoComplete="current-password" size="large" />
+            </Form.Item>
+            <Button type="primary" htmlType="submit" loading={pending} block size="large">
+              登录
+            </Button>
+          </Form>
+        </Card>
+      </div>
+    </div>
   );
 }

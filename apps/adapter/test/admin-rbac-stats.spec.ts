@@ -3,7 +3,6 @@ import { HttpException } from '@nestjs/common';
 import { RolesGuard } from '../src/admin/roles.guard.js';
 import { ADMIN_ROLE_KEY } from '../src/admin/admin-roles.js';
 import { ROLES_KEY } from '../src/admin/roles.decorator.js';
-import { resolveAdminRole } from '../src/admin/admin-roles.js';
 import { StatsController } from '../src/admin/stats.controller.js';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
@@ -12,17 +11,10 @@ describe('Admin RBAC + stats', () => {
     setConfig({
       ADMIN_USER: 'admin',
       ADMIN_PASSWORD: 'secret123',
-      ADMIN_OPERATOR_USER: 'ops',
-      ADMIN_OPERATOR_PASSWORD: 'ops12345',
       ALLOWED_ADMIN_IPS: '127.0.0.1/32',
     });
   });
   afterEach(() => resetConfig());
-
-  it('operator 用户解析为 operator 角色', () => {
-    expect(resolveAdminRole('ops', { ADMIN_USER: 'admin', ADMIN_OPERATOR_USER: 'ops' })).toBe('operator');
-    expect(resolveAdminRole('admin', { ADMIN_USER: 'admin', ADMIN_OPERATOR_USER: 'ops' })).toBe('admin');
-  });
 
   it('operator 访问 admin-only reload → 403', () => {
     const reflector = {

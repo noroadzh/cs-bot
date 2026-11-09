@@ -27,9 +27,9 @@ export const AppConfigSchema = z.preprocess(preprocessEnv, z.object({
   LLM_RETRY_DELAY_MS: EnvInt(1000),
   LLM_PRIMARY_MODEL: EnvString.default('deepseek-chat'),
 
-  // Admin（ADMIN_* = admin 角色；OPERATOR_* 可选，登录后为 operator）
-  ADMIN_USER: EnvString.default('admin'),
-  ADMIN_PASSWORD: EnvString.min(6),
+  // Admin：登录只认 DB 用户；下列 ADMIN_* 仅供升级 bootstrap 读取，运行时鉴权不使用
+  ADMIN_USER: EnvString.optional().default('admin'),
+  ADMIN_PASSWORD: EnvString.optional().default(''),
   ADMIN_OPERATOR_USER: EnvString.optional().default(''),
   ADMIN_OPERATOR_PASSWORD: EnvString.optional().default(''),
   ALLOWED_ADMIN_IPS: EnvString.default('127.0.0.1/32'),

@@ -49,7 +49,7 @@
 | **多模型路由** | 完成 | `FastGPTQaEngine` 经 `ModelRouterService.pick` / `pickFallback`；跳过 unhealthy |
 | **GPU 集群调度** | 部分完成 | 注册 + 定时/手动 probe + unhealthy 跳过；无 k8s/swarm provisioner |
 | **LoRA 微调任务** | 部分完成 | `finetune_job` 表 + create/list/status/complete→catalog；训练执行仍外部 |
-| **数据看板 / RBAC / 知识代理** | 部分完成 | `/admin/stats`、operator/admin、`/admin/knowledge/*`、admin-web 页；角色体系非用户表，双账号 env |
+| **数据看板 / RBAC / 知识代理** | 完成 | `/admin/stats`、库表 `admin_user`+`admin_role`（admin/operator）、全量请求审计、`/admin/knowledge/*`、admin-web 用户/审计页；env 双账号已硬切 |
 | **Prometheus 指标** | 完成（可选） | `METRICS_ENABLED` + `/metrics` + CIDR；access log 降噪 |
 
 ---
@@ -130,8 +130,9 @@
 | 15 | ~~开通后指纹回采重签~~ | `2026-11-04-gap-v3-post-provision-fingerprint-license` | 已归档 |
 | 16 | ~~支付预下单/webhook + 自助页~~ | `2026-11-04-gap-v3-platform-billing-sdk` | 已归档 |
 | 17 | ~~通配 ACME renew~~ | `2026-11-04-gap-v3-wildcard-acme-deepen` | 已归档 |
+| 18 | ~~用户表 RBAC + 全量管理审计~~ | `archive/2026-11-09-admin-user-rbac` | `.cursor/plan/admin-user-rbac.md` |
 
-**明确不立项（非目标）**：单进程多租户 ALS；用户表 RBAC；k8s GPU Operator；LoRA 训练执行器；微信个人号。
+**明确不立项（非目标）**：单进程多租户 ALS；OAuth/SSO / 权限点矩阵 / 跨库身份联邦；k8s GPU Operator；LoRA 训练执行器；微信个人号。
 
 总览施工单：`.cursor/plan/remaining-gaps-roadmap.md`。
 

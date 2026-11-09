@@ -287,7 +287,7 @@ ${adminCidrs.length > 0 ? `  # 租户 FastGPT 后台（初始化/知识运营）
     const files: { name: string; content: string }[] = [];
     const roots = existsSync('/app/migrate')
       ? ['/app/migrate']
-      : ['miss', 'media', 'license', 'import'].map((d) => join(process.cwd(), 'src', d));
+      : ['miss', 'media', 'license', 'import', 'admin'].map((d) => join(process.cwd(), 'src', d));
     for (const root of roots) {
       try {
         for (const f of readdirSync(root).sort()) {
