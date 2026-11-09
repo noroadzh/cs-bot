@@ -1,16 +1,19 @@
 ---
-description: 行为变更必须 openspec + .cursor/plan 结合落地
+description: 行为变更必须 openspec + .cursor/plan 结合落地，并映射 Superpowers 过程 skill
 alwaysApply: true
 ---
 
-# OpenSpec 与 `.cursor/plan` 结合
+# OpenSpec、`.cursor/plan` 与 Superpowers
 
-行为变更、补齐骨架到可验收、跨模块改造时，**两层一起用**，不要只写 plan 就开工，也不要只改 openspec 却无施工单。
+行为变更、补齐骨架到可验收、跨模块改造时，**契约 + 施工单一起用**，并用 Superpowers 过程 skill 驱动各阶段。不要只写 plan 就开工，也不要只改 openspec 却无施工单。
+
+Skill 触发表与路径覆盖见 `superpowers-mapping`。
 
 ## 分工
 
 | 层 | 路径 | 职责 |
 |---|---|---|
+| 过程 | Superpowers skills | 怎么想、怎么测、怎么验收；不另起规格目录 |
 | 契约 | `openspec/changes/<name>/` → 归档进 `openspec/specs/` | 要什么、Scenario、非目标、与现有规格差异 |
 | 施工 | `.cursor/plan/<主题短名>.md` | 怎么干：文件清单、顺序、测试命令、风险；**引用**对应 change / spec 路径 |
 
@@ -18,18 +21,26 @@ alwaysApply: true
 
 ## 标准流程
 
-1. **OpenSpec**：有现成 change 则更新；否则 `openspec` 新建（proposal → specs → design → tasks）。纯 bugfix、无行为变化可跳过。
-2. **Plan**：在 `.cursor/plan/` 写执行单，链到 change 的 `tasks.md` / 关键 Scenario；目录不存在则创建。
-3. **实现**：按 openspec tasks + plan 勾选推进；行为以 Scenario 验收。
-4. **收尾**：更新 plan / 差距表状态；change 完成后走 archive；勿把执行 plan 正文塞进 openspec 目录。
+1. **Brainstorm**（`brainstorming`）：新功能 / 行为变更先澄清意图与方案；产出写入 OpenSpec，不写 `docs/superpowers/specs`。
+2. **OpenSpec**：有现成 change 则更新；否则新建（proposal → specs → design → tasks）。纯 bugfix、无行为变化可跳过本步与 brainstorm。
+3. **Plan**（`writing-plans`）：在 `.cursor/plan/` 写执行单，链到 change 的 `tasks.md` / 关键 Scenario；目录不存在则创建。
+4. **实现**：
+   - 本会话多独立任务 → `subagent-driven-development`，写权限跟 `.cursor/agents/*`
+   - 另开会话执行 → `executing-plans`
+   - 写生产代码前 → `test-driven-development`（离线 stub、覆盖率门禁不变）
+   - 遇失败 / 异常 → `systematic-debugging`，先复现再改
+5. **验收**（`verification-before-completion`）：跑通约定测试 / build，有证据再声称完成；行为以 Scenario 验收。
+6. **收尾**：更新 plan / 差距表状态；change 完成后走 archive；勿把执行 plan 正文塞进 openspec。用户明确要求 commit/PR 时再用 `finishing-a-development-branch`。
 
 ## 例外（可省略一层）
 
-- 一两行修复、文案、无对外行为变化：可双省略或只写极短 plan。
+- 一两行修复、文案、无对外行为变化：可双省略 OpenSpec/长 plan，或只写极短 plan；仍建议 verification。
 - 已有 delta 仅接线：plan 写接线与测试，并标明所依据的 openspec Scenario；若验收口径要收紧，先改 delta 再写 plan。
+- 纯 bugfix：可跳过 brainstorming，从 `systematic-debugging` + TDD 起。
 
 ## 禁止
 
 - 用 `.cursor/plan` 替代 openspec 定义产品行为
 - 在 openspec 里堆长篇施工步骤（那是 plan 的事）
 - 静默改行为却不更新 openspec
+- 新建 `docs/superpowers/` 作为规格或施工正文（路径以本仓库为准）

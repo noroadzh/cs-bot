@@ -1,0 +1,41 @@
+---
+description: Superpowers 映射接入：skill 触发表与落盘路径覆盖（不另起 docs/superpowers）
+alwaysApply: true
+---
+
+# Superpowers 映射
+
+本仓库采用 **映射接入**：用 Superpowers 的过程 skill，落盘仍走 OpenSpec + `.cursor/plan`。本仓库约定优先于 Superpowers 默认路径。
+
+## 路径覆盖
+
+| Superpowers 默认 | 本仓库 |
+|---|---|
+| `docs/superpowers/specs/*.md` | `openspec/changes/<name>/`（归档进 `openspec/specs/`） |
+| `docs/superpowers/plans/*.md` | `.cursor/plan/<主题短名>.md` |
+
+禁止新建 `docs/superpowers/` 作为规格或施工正文。
+
+## Skill 触发（有适用则先读再做）
+
+| 场景 | Skill |
+|---|---|
+| 会话开始 / 不确定用哪个 | `using-superpowers` |
+| 新功能、行为变更、创意设计 | `brainstorming` → 产出进 OpenSpec，不另写 design 目录 |
+| 有规格/需求、动手前写施工单 | `writing-plans` → 写到 `.cursor/plan/` |
+| 本会话按 plan 拆任务执行 | `subagent-driven-development` + `.cursor/agents/*` 写权限 |
+| 另开会话执行已有 plan | `executing-plans` |
+| 实现功能或修 bug | `test-driven-development`（遵守 `adapter-testing`） |
+| bug / 测试失败 / 异常行为 | `systematic-debugging`（先复现再改） |
+| 声称完成、通过、可合并前 | `verification-before-completion` |
+| 实现完成要收尾分支 | `finishing-a-development-branch`（仅用户明确要求 commit/PR 时） |
+| 完成后要审查 / 收到审查意见 | `requesting-code-review` / `receiving-code-review` |
+| 需要隔离工作区 | `using-git-worktrees`（可选，非强制） |
+
+## 与领域代理
+
+Superpowers 编排过程；写文件边界仍以 `.cursor/agents/` 与 `AGENTS.md` 为准。跨模块任务优先按领域代理拆分，同一文件同一时刻只允许一个写者。
+
+## 优先级
+
+用户明示指令 > 本仓库 `AGENTS.md` / `.cursor/rules` / OpenSpec > Superpowers skill 默认路径与落盘习惯。

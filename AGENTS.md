@@ -63,6 +63,16 @@ pnpm -C apps/adapter build
 pnpm -C apps/adapter test:integration   # 需要 TEST_PG_URL
 ```
 
+## 开发流程与 Superpowers
+
+采用 **映射接入**：用 Superpowers 过程 skill，落盘仍走 OpenSpec + `.cursor/plan`。细则见 `.cursor/rules/superpowers-mapping.mdc` 与 `openspec-plan-workflow.mdc`。
+
+- 行为契约：`openspec/`（禁止用 `docs/superpowers/specs`）
+- 施工单：`.cursor/plan/<主题短名>.md`（禁止用 `docs/superpowers/plans`）
+- 典型顺序：`brainstorming` → OpenSpec → `writing-plans` → `subagent-driven-development` / `executing-plans` → `test-driven-development` → `verification-before-completion`；遇障用 `systematic-debugging`
+- 写文件边界仍以本节「并行子代理」与 `.cursor/agents/` 为准；Superpowers 不覆盖领域写权限或 R-1～R-8
+- 用户明示指令与本文件优先于 Superpowers 默认路径
+
 ## 并行子代理
 
 定义在 `.cursor/agents/`。同一时刻只有一个代理写同一个文件。领域代理只写自己的目录；`app.module.ts`、`admin.module.ts`、`packages/shared`、`src/common`、`src/config`、`jest.config.cjs`、`test/__setup__` 只由 `adapter-foundation` 写。接线等领域代理交出清单后再改。
