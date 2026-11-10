@@ -10,7 +10,7 @@
     "start:prod": "node dist/main",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage",
+    "test:cov": "jest --coverage && node ./scripts/check-coverage-global.mjs",
     "test:integration": "jest test/integration --runInBand",
     "test:acceptance": "jest test/acceptance --runInBand --forceExit",
     "obfuscate": "npx --yes javascript-obfuscator@4.1.1 dist --output dist"

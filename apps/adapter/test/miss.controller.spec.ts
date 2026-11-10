@@ -40,7 +40,7 @@ describe('MissController.list', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     exportService = makeExport();
-    controller = new MissController(exportService);
+    controller = new MissController(exportService, {} as any);
   });
 
   describe('分支: days 参数', () => {

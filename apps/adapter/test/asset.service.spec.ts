@@ -107,6 +107,7 @@ describe('AssetService', () => {
         expect.stringMatching(/^\/assets\//),
         5,
         expect.any(String),
+        expect.any(String), // tenant_id
       ]);
       expect(asset).toEqual({
         id: ROW.id,
@@ -170,6 +171,7 @@ describe('AssetService', () => {
         '手册',
         'https://cdn.example.com/x.pdf',
         null,
+        expect.any(String), // tenant_id
       ]);
       expect(asset.type).toBe('link');
       expect(asset.size).toBeNull();
@@ -203,7 +205,7 @@ describe('AssetService', () => {
         offset: 0,
         rows: [expect.objectContaining({ id: ROW.id })],
       });
-      expect(poolQuery.mock.calls[1][1]).toEqual([50, 0]);
+      expect(poolQuery.mock.calls[1][1]).toEqual([expect.any(String), 50, 0]);
     });
 
     it('limit 超过 100 被钳制为 100', async () => {
@@ -214,7 +216,7 @@ describe('AssetService', () => {
       const res = await svc.findAll({ limit: 500, offset: 20 });
 
       expect(res.limit).toBe(100);
-      expect(poolQuery.mock.calls[1][1]).toEqual([100, 20]);
+      expect(poolQuery.mock.calls[1][1]).toEqual([expect.any(String), 100, 20]);
     });
   });
 

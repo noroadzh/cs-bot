@@ -4,9 +4,10 @@ import { ImportJobService } from './import-job.service.js';
 import { SensitiveRedactor } from './sensitive-redactor.js';
 import { ConfigService } from '../config/config.service.js';
 import { ImportCleanupService } from './import-cleanup.service.js';
+import { AdminAuthModule } from '../admin/admin-auth.module.js';
 
 @Module({
-  imports: [],
+  imports: [AdminAuthModule],
   controllers: [ImportController],
   providers: [
     ImportJobService,

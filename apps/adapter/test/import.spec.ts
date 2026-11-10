@@ -22,7 +22,14 @@ import { AppModule } from '../src/app.module.js';
 import { ConfigService } from '../src/config/config.service.js';
 import { AppConfigSchema, AppConfigInput } from '../src/config/config.schema.js';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
+import {
+  adminUserQueryResult,
+  makeAdminDbUser,
+  type AdminDbUser,
+} from './__setup__/admin-db-auth.js';
 import request from 'supertest';
+
+let importAdminUser: AdminDbUser;
 
 // ---------------------------------------------------------------------------
 // 全局 mock：ioredis / pg / axios
@@ -75,6 +82,10 @@ const _singleRow = {
 };
 
 const pgQueryMock = jest.fn((sql, params) => {
+  if (importAdminUser) {
+    const hit = adminUserQueryResult(String(sql), params as unknown[] | undefined, importAdminUser);
+    if (hit) return Promise.resolve(hit);
+  }
   // import_item SELECT
   // FOR UPDATE (e.g. reviewItem SELECT ... FOR UPDATE)
   if (sql.includes('FOR UPDATE')) {
@@ -120,10 +131,10 @@ const pgQueryMock = jest.fn((sql, params) => {
   if (sql.includes('import_item') && sql.includes('COUNT')) {
     return Promise.resolve({ rows: [{ n: String(_rows.import_items.length) }], rowCount: 1 });
   }
-  // import_job COUNT — used by listJobs
+  // import_job COUNT — used by listJobs（tenant_id 在 $1，可选 status 在 $2）
   if (sql.includes('import_job') && sql.includes('COUNT') && !sql.includes('GROUP BY')) {
-    if (sql.includes('WHERE')) {
-      const status = ((params || [])[0]);
+    if (sql.includes('status')) {
+      const status = ((params || [])[1]);
       const count = _rows.import_jobs.filter((j) => j.status === status).length;
       return Promise.resolve({ rows: [{ n: String(count) }], rowCount: 1 });
     }
@@ -368,6 +379,7 @@ const adminAuth = (user = 'admin', pass = 'admin-test-pwd') =>
   `Basic ${Buffer.from(`${user}:${pass}`, 'utf8').toString('base64')}`;
 
 beforeAll(async () => {
+  importAdminUser = await makeAdminDbUser({ password: 'admin-test-pwd' });
   const fs = await import('node:fs');
   fs.writeFileSync(MOCK_LICENSE_PATH, mockLicense, 'utf8');
   process.env.LICENSE_FILE = MOCK_LICENSE_PATH;

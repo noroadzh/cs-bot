@@ -58,7 +58,7 @@ describe('MissService', () => {
     expect(query).toHaveBeenCalledTimes(1);
     const [sql, params] = query.mock.calls[0] as [string, any[]];
     expect(sql).toContain(INSERT_SQL);
-    expect(params).toEqual(['t-1', 'chat-1', 'u-1', 'q1', 0.1, 'mock', null]);
+    expect(params).toEqual(['t-1', 'chat-1', 'u-1', 'q1', 0.1, 'mock', null, '']);
     expect((svc as any).fifo).toHaveLength(0);
   });
 

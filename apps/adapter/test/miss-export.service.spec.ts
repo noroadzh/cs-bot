@@ -199,7 +199,7 @@ describe('MissExportService', () => {
       expect(items).toHaveLength(1);
       const item = items[0] as unknown as Record<string, unknown>;
       expect(Object.keys(item).sort()).toEqual(
-        ['chatId', 'createdAt', 'mediaType', 'question', 'score', 'status', 'userId'].sort(),
+        ['chatId', 'createdAt', 'id', 'mediaType', 'question', 'score', 'status', 'userId'].sort(),
       );
       expect(item.userId).toBe('wx***23');
       expect(item.chatId).toBe('chat-1');
@@ -224,8 +224,9 @@ describe('MissExportService', () => {
     const svc = new MissExportService({} as any);
     await svc.queryRecords(90, { from: '2026-01-01', to: '2026-01-31' });
     const [sql, params] = poolQuery.mock.calls[0];
-    expect(sql).toContain('created_at >= $1');
-    expect(sql).toContain('created_at <= $2');
-    expect(params).toEqual(['2026-01-01', '2026-01-31']);
+    expect(sql).toContain('tenant_id = $1');
+    expect(sql).toContain('created_at >= $2');
+    expect(sql).toContain('created_at <= $3');
+    expect(params).toEqual([expect.any(String), '2026-01-01', '2026-01-31']);
   });
 });

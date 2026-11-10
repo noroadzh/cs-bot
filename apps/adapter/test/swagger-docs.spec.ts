@@ -33,6 +33,13 @@ import { RoutingService } from '../src/routing/routing.service.js';
 import { MediaRecognizeService } from '../src/media/media-recognize.service.js';
 import { WecomClient } from '../src/wecom/wecom-client.js';
 import { LicenseGateService } from '../src/license/license-gate.service.js';
+import { AdminGuard } from '../src/admin/admin.guard.js';
+import { AdminIdentityService } from '../src/admin/admin-identity.service.js';
+import { AdminRequestAuditService } from '../src/admin/admin-request-audit.service.js';
+import { RolesGuard } from '../src/admin/roles.guard.js';
+import { AsrService } from '../src/media/asr.service.js';
+import { SensitiveFilterService } from '../src/filter/sensitive-filter.service.js';
+import { OpsAlertService } from '../src/common/ops-alert.service.js';
 // 导入 DTO 触发 @ApiProperty 装饰器元数据注册（side-effect import）
 import '../src/admin/dto/admin-responses.dto.js';
 import '../src/admin/dto/miss-export.dto.js';
@@ -199,10 +206,21 @@ describe('swagger 文档产出：SWAGGER_ENABLED 闸门', () => {
       WecomCrypto,
       RoutingService,
       MediaRecognizeService,
-      WecomClient,
       LicenseGateService,
       MissService,
+      AsrService,
+      SensitiveFilterService,
+      OpsAlertService,
+      AdminGuard,
+      AdminIdentityService,
+      AdminRequestAuditService,
+      RolesGuard,
     ] as Type<unknown>[]).map((cls) => ({ provide: cls, useValue: {} })),
+    // WecomController.installSendHold 会读 sendText；空对象会炸
+    {
+      provide: WecomClient,
+      useValue: { sendText: async () => undefined, sendMedia: async () => undefined },
+    },
     { provide: 'HEALTH_REDIS', useValue: {} },
     { provide: 'HEALTH_PG', useValue: {} },
   ];

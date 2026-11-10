@@ -1,18 +1,35 @@
 /**
  * 不含镜像的安装包：安装脚本、构建脚本、配置，且无镜像 tar / 私钥
  */
-import { describe, it, expect, afterAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const ROOT = join(process.cwd(), '..', '..');
 const SCRIPT = join(ROOT, 'scripts', 'package-install.sh');
+const CARGO_LOCK = join(ROOT, 'packages', 'license-native', 'Cargo.lock');
 const outDir = mkdtempSync(join(tmpdir(), 'csbot-install-'));
+let wroteCargoLock = false;
+
+beforeAll(() => {
+  // Cargo.lock 在 .gitignore；安装包脚本仍要求存在。无 cargo 时写占位以便离线单测。
+  if (!existsSync(CARGO_LOCK)) {
+    writeFileSync(CARGO_LOCK, '# placeholder for package-install unit test\n', 'utf8');
+    wroteCargoLock = true;
+  }
+});
 
 afterAll(() => {
   rmSync(outDir, { recursive: true, force: true });
+  if (wroteCargoLock && existsSync(CARGO_LOCK)) {
+    try {
+      unlinkSync(CARGO_LOCK);
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
 describe('package-install', () => {

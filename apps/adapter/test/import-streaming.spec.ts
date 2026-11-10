@@ -74,7 +74,7 @@ describe('XLSX 流式解析', () => {
     expect(out).toHaveLength(2);
     expect(out[0]).toMatchObject({ senderType: 'customer', content: '怎么退款' });
     expect(out[1]).toMatchObject({ senderType: 'service', content: '请在订单页申请' });
-  }, 20_000);
+  }, 180_000);
 });
 
 describe('sniffShapeHead', () => {

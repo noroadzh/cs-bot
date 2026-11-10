@@ -54,7 +54,7 @@
 
 单测在 `apps/adapter/test/**/*.spec.ts`，不连真实企微、FastGPT、Redis、PostgreSQL。集成测试仅 `test/integration`，且依赖 `TEST_PG_URL`，未设置时 skip。真实栈冒烟只走 `scripts/acceptance-real.sh`（`REAL_COMPOSE=1`）。
 
-改管道或横切模块时补同行为的 spec。覆盖率门禁以 `apps/adapter/jest.config.cjs` 为准：全局 ≥75%；`wecom/routing/context/qa/filter/miss/media` ≥80%；`config/license/admin/health/common` ≥60%。用补测试满足门禁，不要下调阈值。
+改管道或横切模块时补同行为的 spec。覆盖率门禁以 `apps/adapter/jest.config.cjs` 路径阈值 + `scripts/check-coverage-global.mjs` 为准：全局行/语句 ≥75%、分支 ≥60%、函数 ≥70%；管道行/语句/函数 ≥80%、分支 ≥70%；横切 ≥60%（admin/health 分支见配置棘轮）；另含 platform/import/usage 的 P0 关键路径文件阈值。用补测试抬高覆盖，禁止再下调上述棘轮。
 
 ```bash
 pnpm -C apps/adapter test

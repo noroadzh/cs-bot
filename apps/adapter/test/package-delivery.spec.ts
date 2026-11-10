@@ -32,10 +32,14 @@ describe('package-delivery', () => {
   it('produces an allowlisted package with verifiable checksums', () => {
     runPackage({ VERSION: '9.9.9', OUT_DIR: outDir });
     const tar = join(outDir, 'cs-bot-deploy-9.9.9.tar.gz');
-    const list = execFileSync('tar', ['-tzf', tar], {
+    const listRaw = execFileSync('tar', ['-tzf', tar], {
       encoding: 'utf8',
-      env: { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' },
+      env: { ...process.env, LANG: 'C.UTF-8', LC_ALL: 'C.UTF-8' },
     });
+    // 部分环境 tar -t 把非 ASCII 打成 \ddd 八进制转义
+    const list = listRaw.replace(/\\(\d{3})/g, (_, o: string) =>
+      String.fromCharCode(parseInt(o, 8)),
+    );
 
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/docker-compose.yml');
     expect(list).toContain('cs-bot-deploy-9.9.9/deploy/Dockerfile.adapter');

@@ -68,8 +68,22 @@ function makeController(crypto: any, routing: any, gateCheck?: jest.Mock, opsAle
   };
   const licenseGate = { check: gateCheck ?? jest.fn(async () => ({ allowed: true })) };
   const miss = { record: jest.fn(async () => undefined) };
+  const asr = { transcribe: jest.fn(async () => ({ text: '' })) };
+  const filter = { filter: jest.fn((t: string) => t) };
   const alert = opsAlert ?? { alert: jest.fn(async () => true) };
-  const controller = new WecomController(crypto, routing, usageService, recognizeService, wecomClient, licenseGate, miss, alert);
+  // 构造顺序：… miss, asr, filter?, opsAlert
+  const controller = new WecomController(
+    crypto,
+    routing,
+    usageService,
+    recognizeService,
+    wecomClient,
+    licenseGate,
+    miss,
+    asr as any,
+    filter as any,
+    alert as any,
+  );
   // 暴露给用例断言埋点/下载调用；不改变控制器自身行为
   Object.assign(controller as any, { __usage: usageService, __recognize: recognizeService, __client: wecomClient, __activeSend: activeSend, __gate: licenseGate, __miss: miss, __alert: alert, __imageQueue: (controller as any).imageQueue });
   return { controller, wecomClient, alert, LICENSE_INVALID_TEXT, LICENSE_CHAT_LIMIT_TEXT };

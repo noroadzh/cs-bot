@@ -17,8 +17,24 @@ import { ConfigService } from '../src/config/config.service.js';
 import { AppConfigSchema } from '../src/config/config.schema.js';
 import type { AppConfigInput } from '../src/config/config.schema.js';
 import { setConfig } from './__setup__/test-helpers.js';
+import {
+  adminUserQueryResult,
+  makeAdminDbUser,
+  type AdminDbUser,
+} from './__setup__/admin-db-auth.js';
 import request from 'supertest';
 import { LicenseService } from '../src/license/license.service.js';
+
+const ADMIN_PASSWORD = 'admin-test-pwd';
+let smokeAdminUser: AdminDbUser;
+
+const pgQuery = jest.fn(async (sql: string, params?: unknown[]) => {
+  if (smokeAdminUser) {
+    const hit = adminUserQueryResult(sql, params, smokeAdminUser);
+    if (hit) return hit;
+  }
+  return { rows: [] };
+}) as jest.MockedFunction<(sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }>>;
 
 // ---------------------------------------------------------------------------
 // 全局 mock（ioredis / pg / axios）
@@ -41,11 +57,11 @@ jest.mock('ioredis', () => ({
 jest.mock('pg', () => ({
   Client: jest.fn().mockImplementation(() => ({
     connect: jest.fn().mockResolvedValue(undefined),
-    query: jest.fn().mockResolvedValue({ rows: [] }),
+    query: (...args: unknown[]) => pgQuery(...(args as [string, unknown[]?])),
     end: jest.fn().mockResolvedValue(undefined),
   })),
   Pool: jest.fn().mockImplementation(() => ({
-    query: jest.fn().mockResolvedValue({ rows: [] }),
+    query: (...args: unknown[]) => pgQuery(...(args as [string, unknown[]?])),
     end: jest.fn().mockResolvedValue(undefined),
   })),
 }));
@@ -83,7 +99,7 @@ const validEnv: Record<string, unknown> = {
   LLM_PRIMARY_API_KEY: 'llm-primary-mock-1234',
   LLM_FALLBACK_BASE_URL: 'https://llm-fallback.example.com',
   LLM_FALLBACK_API_KEY: 'llm-fallback-mock-1234',
-  ADMIN_PASSWORD: 'admin-test-pwd',
+  ADMIN_PASSWORD,
   MOCK_QA_FILE: '',
   KEYWORDS_FILE: '',
   WECHAT_BOT_USER_ID: '',
@@ -98,10 +114,11 @@ const validEnv: Record<string, unknown> = {
 
 let app: any;
 
-const adminAuth = (user = 'admin', pass = 'admin-test-pwd'): string =>
+const adminAuth = (user = 'admin', pass = ADMIN_PASSWORD): string =>
   `Basic ${Buffer.from(`${user}:${pass}`, 'utf8').toString('base64')}`;
 
 beforeAll(async () => {
+  smokeAdminUser = await makeAdminDbUser({ password: ADMIN_PASSWORD });
   // 写入 mock license 文件
   const fs = await import('node:fs');
   fs.writeFileSync(MOCK_LICENSE_PATH, mockLicense, 'utf8');

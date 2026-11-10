@@ -227,6 +227,7 @@ describe('ImportJobService.createFromFile', () => {
           expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
           expect.stringMatching(/data[\\/]import[\\/][0-9a-f-]+[\\/]source\.csv$/),
           'text/csv',
+          expect.any(String), // tenant_id（空串=私有化单实例）
         ],
       );
     });
@@ -432,7 +433,7 @@ describe('ImportJobService 查询/删除', () => {
     (poolQuery.mock.calls[callIdx][0] as string).replace(/\s+/g, ' ').trim();
 
   describe('listJobs 分页 + status 过滤', () => {
-    it('无过滤：total 取全表数，SQL 不带 WHERE，参数 [limit, offset]', async () => {
+    it('无过滤：total 取全表数，按 tenant_id 隔离，参数含 limit/offset', async () => {
       poolQuery.mockResolvedValueOnce({ rows: [jobRow({ id: 'j1' }), jobRow({ id: 'j2' })] });
       poolQuery.mockResolvedValueOnce({ rows: [{ n: 17 }] });
 
@@ -442,9 +443,9 @@ describe('ImportJobService 查询/删除', () => {
       expect(page.total).toBe(17);
       expect(page.limit).toBe(2);
       expect(page.offset).toBe(4);
-      expect(sqlOf(0)).not.toContain('WHERE');
+      expect(sqlOf(0)).toContain('WHERE tenant_id');
       expect(sqlOf(0)).toContain('ORDER BY created_at DESC');
-      expect(poolQuery.mock.calls[0][1]).toEqual([2, 4]);
+      expect(poolQuery.mock.calls[0][1]).toEqual([2, 4, expect.any(String)]);
     });
 
     it('status 过滤：total 是过滤后的数，不是全表数', async () => {
@@ -455,10 +456,10 @@ describe('ImportJobService 查询/删除', () => {
 
       expect(page.items).toHaveLength(1);
       expect(page.total).toBe(3);
-      expect(sqlOf(0)).toContain('WHERE status = $3');
-      expect(sqlOf(1)).toContain('WHERE status = $1');
-      // 计数查询不能复用带 LIMIT/OFFSET 的参数位
-      expect(poolQuery.mock.calls[1][1]).toEqual(['parsed']);
+      expect(sqlOf(0)).toMatch(/WHERE.*status/i);
+      expect(sqlOf(1)).toMatch(/WHERE.*status/i);
+      // 计数查询参数：tenant_id + status
+      expect(poolQuery.mock.calls[1][1]).toEqual([expect.any(String), 'parsed']);
     });
 
     it('limit 超上限被夹到 200；负 offset 归零；NaN 落回下限', async () => {
@@ -467,13 +468,13 @@ describe('ImportJobService 查询/删除', () => {
       poolQuery.mockResolvedValueOnce({ rows: [jobRow()] });
       poolQuery.mockResolvedValueOnce({ rows: [{ n: 1 }] });
       await svc.listJobs({ limit: 9999, offset: -3 });
-      expect(poolQuery.mock.calls[0][1]).toEqual([200, 0]);
+      expect(poolQuery.mock.calls[0][1]).toEqual([200, 0, expect.any(String)]);
 
       poolQuery.mockClear();
       poolQuery.mockResolvedValueOnce({ rows: [jobRow()] });
       poolQuery.mockResolvedValueOnce({ rows: [{ n: 1 }] });
       await svc.listJobs({ limit: Number.NaN, offset: 10 });
-      expect(poolQuery.mock.calls[0][1]).toEqual([1, 10]);
+      expect(poolQuery.mock.calls[0][1]).toEqual([1, 10, expect.any(String)]);
     });
   });
 
@@ -563,7 +564,7 @@ describe('ImportJobService 查询/删除', () => {
       const res = await svc.deleteJob('j1');
 
       expect(res.deletedItems).toBe(5);
-      expect(sqlOf(2)).toBe('DELETE FROM import_job WHERE id = $1');
+      expect(sqlOf(2)).toBe('DELETE FROM import_job WHERE id = $1 AND tenant_id = $2');
       expect(fsRm).toHaveBeenCalledTimes(1);
       // 用正则而非 path.join：避免为断言引入 path 依赖，同时兼容两种分隔符
       expect(String(fsRm.mock.calls[0][0])).toMatch(/data[\\/]import[\\/]j1/);

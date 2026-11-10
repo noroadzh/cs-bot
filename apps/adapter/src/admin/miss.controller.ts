@@ -54,7 +54,11 @@ export class MissController {
 
   @Patch('miss/:id')
   @ApiOperation({ summary: '更新未命中处理状态（0 未处理 / 1 已补录 / 2 忽略）' })
-  @ApiResponse({ status: 200, description: '更新后的状态' })
+  @ApiResponse({
+    status: 200,
+    description: '更新后的状态',
+    schema: { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] },
+  })
   @ApiResponse({ status: 400, type: ErrorResponseDto, description: 'status 非法' })
   @ApiResponse({ status: 404, type: ErrorResponseDto, description: '记录不存在' })
   async updateStatus(
