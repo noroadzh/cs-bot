@@ -125,7 +125,8 @@ preflight() {
   verify_checksums
 
   # 强口令（概设 §9：FastGPT 后台口令强密码等）
-  check_secret ADMIN_PASSWORD required
+  # ADMIN_PASSWORD 已不再用于运营台登录（库表 admin_user）；若 .env 仍填写则校验强度，便于旧包兼容。
+  check_secret ADMIN_PASSWORD optional
   check_secret POSTGRES_PASSWORD required
   check_secret FASTGPT_ROOT_PASSWORD required
   check_secret REDIS_PASSWORD optional

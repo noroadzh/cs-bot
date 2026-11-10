@@ -3,8 +3,8 @@
 | 项 | 内容 |
 |---|---|
 | 文档名称 | 部署手册（私有化部署形态 A 为主，附 SaaS 形态租户开通） |
-| 版本 | V1.19（分步部署向导 `deploy/setup.sh`） |
-| 日期 | 2026-11-01 |
+| 版本 | V1.20（运营台库表登录 + 升级 bootstrap） |
+| 日期 | 2026-11-09 |
 | 适用对象 | 客户方 IT / 运维人员、交付工程师 |
 | 适用系统 | 微信群智能客服机器人 MVP（对应《概要设计》V1.28 / 《详细设计》V1.18） |
 | 关联文档 | 《PRD V1.5》《概要设计 V1.28》《详细设计 V1.18》《测试报告 V1.5》《用户使用手册-SaaS版 V1.1》《用户使用手册-私有化版 V1.1》《项目报价单》 |
@@ -15,7 +15,9 @@
 
 ## 0. 照着做
 
-解压并校验之后，在终端执行 `sudo ./deploy/setup.sh`。向导按 8 步说明每个参数的作用和影响，写入 `.env`，放入证书和授权，再调用 `install.sh`。部署完成后执行 `./deploy/setup.sh --after`，查看企微接收消息页面要填的 URL、Token、EncodingAESKey，以及以后改 Secret、口令、证书时要改哪个变量、执行哪条命令。`install.sh` 本身不提问，适合已经填好配置后的重复启动。
+解压并校验之后，在终端执行 `sudo ./deploy/setup.sh`。向导按 8 步说明每个参数的作用和影响，写入 `.env`，收集**运营台首个管理员**用户名/密码并在启动后写入数据库 `admin_user`，放入证书和授权，再调用 `install.sh`。部署完成后执行 `./deploy/setup.sh --after`，查看企微接收消息页面要填的 URL、Token、EncodingAESKey，以及以后改 Secret、口令、证书时要改哪个变量、执行哪条命令。`install.sh` 本身不提问，适合已经填好配置后的重复启动。
+
+> **BREAKING（鉴权）**：运营台 `/console` 与 `/admin/*`、控制面 `/platform/*` 的 Basic Auth **只认数据库用户**，不再读取 `.env` 里的 `ADMIN_USER` / `ADMIN_PASSWORD` / `ADMIN_OPERATOR_*`。新装用 setup 向导创建首个 admin；从旧版升级须先跑 `scripts/bootstrap-admin-user.sh`，否则无法登录。
 
 下面的命令与 `deploy/setup.sh`、`deploy/install.sh`、`deploy/docker-compose.yml`、根目录 `.env.template` 一致。工作目录始终是 `/opt/cs-bot`。
 
@@ -119,8 +121,7 @@ LLM_FALLBACK_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_FALLBACK_API_KEY=sk-你的通义Key
 
 POSTGRES_PASSWORD=第3个openssl结果
-ADMIN_USER=admin
-ADMIN_PASSWORD=第4个openssl结果
+# 运营台登录账号不在 .env：用 setup.sh 创建首个 admin，或升级时跑 bootstrap-admin-user.sh
 ALLOWED_ADMIN_IPS=你的运维公网IP/32
 
 FASTGPT_ADMIN_PORT=8443
@@ -349,7 +350,7 @@ sudo ./deploy/install.sh
 脚本自动完成：预检（docker/compose、`.env` 必填项、**SHA256SUMS 完整性**、**强口令**、证书、license、镜像）→ 建目录 → 校正归属 → 加载 `images/*.tar` → `docker compose -f deploy/docker-compose.yml up -d` → 轮询 `/healthz` → 输出容器状态与访问地址。缺项时直接失败并指出缺什么，不会半启动。
 
 - **完整性**：包内存在 `SHA256SUMS.txt` 时逐个重算，任何不一致立即中止（概设 §9）。
-- **强口令**：`ADMIN_PASSWORD` / `POSTGRES_PASSWORD` / `FASTGPT_ROOT_PASSWORD` 必填且 ≥12 位，拒绝 `cs`、`fastgpt123456`、`please_change_me` 等默认值；生成方式 `openssl rand -base64 24`。
+- **强口令**：`POSTGRES_PASSWORD` / `FASTGPT_ROOT_PASSWORD` 必填且 ≥12 位，拒绝 `cs`、`fastgpt123456`、`please_change_me` 等默认值；生成方式 `openssl rand -hex 24`。运营台首个管理员密码由 `setup.sh` 收集（或升级脚本传入），同样禁止弱口令；`.env` 里的 `ADMIN_PASSWORD` 若仍填写则仅做兼容校验，**不能用来登录**。
 
 | 场景 | 命令 |
 |---|---|
@@ -422,7 +423,7 @@ docker images | grep -E "adapter|fastgpt"    # 确认 tag 与 compose 文件一�
 ```bash
 cp .env.template .env && chmod 600 .env
 # 生成强口令（≥12 位）：把输出填入 .env 对应项，勿用默认值
-openssl rand -base64 24   # ADMIN_PASSWORD / POSTGRES_PASSWORD / FASTGPT_ROOT_PASSWORD
+openssl rand -hex 24   # POSTGRES_PASSWORD / FASTGPT_ROOT_PASSWORD（运营台口令由 setup 收集，不写 .env）
 vim .env
 ```
 
@@ -449,7 +450,8 @@ vim .env
 | CONFIDENCE_THRESHOLD | | 0.75 | 置信度阈值（默认 0.75） |
 | CONTEXT_ROUNDS / CONTEXT_TTL_SEC | | 5 / 600 | 上下文轮数 / TTL |
 | LLM_TIMEOUT_MS | | 15000 | LLM 硬超时 |
-| ADMIN_USER / ADMIN_PASSWORD | ★ | admin / 强口令 | 管理接口 Basic Auth |
+| （运营台账号） | ★ | setup / bootstrap | 写入库表 `admin_user`；Basic Auth 只认库用户，不认 `ADMIN_*` |
+| ADMIN_USER / ADMIN_PASSWORD / ADMIN_OPERATOR_* | | 可留空 | 已废弃登录路径；仅兼容旧 `.env`，填了也不鉴权 |
 | ALLOWED_ADMIN_IPS | ★ | 203.0.113.0/24 | 管理接口来源白名单 |
 | TRUSTED_PROXY_CIDRS | | 172.30.0.0/24 | 仅这些代理地址转发来的 X-Forwarded-For 被采信（默认 compose 子网） |
 | CSBOT_SUBNET | | 172.30.0.0/24 | compose 内部子网；与宿主网络冲突时修改 |
@@ -672,6 +674,18 @@ curl -s https://<域名>/healthz             # 5. 验证 + 群内冒烟
 
 > **镜像校验说明**：交付方在发布镜像时须同时提供 `sha256` 指纹（`docker images --no-trunc` 输出），用户导入后用同样命令提取并逐字符核对。若指纹不一致则存在被植入恶意代码的风险，立即停止部署并联系交付方。
 
+> **从 env 双账号升级到库表登录（BREAKING）**：新版本启动后，`.env` 的 `ADMIN_*` 不再能登录。在新镜像与迁移生效后、验证运营台之前，若库中尚无 enabled admin，执行：
+>
+> ```bash
+> cd /opt/cs-bot
+> # 数据面（租户/私有化）
+> DATABASE_URL="postgresql://cs:<POSTGRES_PASSWORD>@127.0.0.1:5432/csbot" \
+>   ./scripts/bootstrap-admin-user.sh --user admin --password '<强口令≥8>'
+> # SaaS 控制面另对控制库再跑一次（改 DATABASE_URL 指向控制面库）
+> ```
+>
+> 已有 enabled admin 时脚本会跳过。之后用该库用户登录 `/console`；多人账号在运营台「用户」页维护。
+
 ### 9.4 授权续期（到期前 15 天系统每日告警提醒）
 
 ```bash
@@ -826,7 +840,7 @@ tar czf logs.tgz logs deploy/nginx/logs
 1. 联系交付方平台运营，提供：企业名称、联系人、订阅档位（标准/增强）、企微 CorpID。
 2. 平台 30 分钟内完成租户实例开通（独立数据库/独立域名/独立证书），返回：租户域名、管理员初始口令（一次性展示）。
 3. 客户通过约定安全渠道（加密邮件/工单）提供企微 Secret/Token/AESKey 与 LLM Key；平台运营经 `PUT /platform/tenants/:id/secrets` 写入租户密钥库（AES-256-GCM），必要时 `POST .../restart` 生效。
-   > 说明：租户运营台挂在数据面同源 `/console`，SaaS 控制台挂在控制面同源 `/console`。静态目录未构建时这两个入口不挂载。接口 URL、Basic Auth 与 IP 白名单不变。构建命令：`pnpm -C apps/admin-web build:tenant` 与 `build:platform`。目录可用 `ADMIN_CONSOLE_DIR` 覆盖。
+   > 说明：租户运营台挂在数据面同源 `/console`，SaaS 控制台挂在控制面同源 `/console`。静态目录未构建时这两个入口不挂载。Basic Auth 使用各实例库表 `admin_user`（开通时返回的管理员口令即首个 admin），IP 白名单仍生效。构建命令：`pnpm -C apps/admin-web build:tenant` 与 `build:platform`。目录可用 `ADMIN_CONSOLE_DIR` 覆盖。
 4. 企微后台把回调 URL 配置为 `https://<租户域名>/wecom/callback`，保存校验通过即完成。
 5. 日常：知识运营在租户专属 FastGPT 后台维护知识库；升级由平台统一执行（提前 3 个工作日通知）。
 6. 订阅到期：前 30/15/7 天提醒 → 7 天宽限期（问答可用；加群由适配层准入拦截，知识库变更需运营在 FastGPT 后台人工冻结，适配层无法强制）→ 宽限期满仅提示续期；续费即时恢复。
@@ -868,9 +882,9 @@ LLM_PRIMARY_BASE_URL=https://api.deepseek.com/v1
 LLM_PRIMARY_API_KEY=
 LLM_FALLBACK_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 LLM_FALLBACK_API_KEY=
-# ---- 管理接口（必填）----
-ADMIN_USER=admin
-ADMIN_PASSWORD=
+# ---- 管理接口 ----
+# 登录账号在库表 admin_user（setup.sh 创建 / bootstrap-admin-user.sh 升级），不在此处。
+# ADMIN_* 可留空；仅兼容旧包，填了也不再鉴权。
 ALLOWED_ADMIN_IPS=192.168.1.0/24
 # ---- 业务参数（默认即可）----
 CONFIDENCE_THRESHOLD=0.75
