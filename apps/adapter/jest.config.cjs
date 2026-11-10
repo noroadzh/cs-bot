@@ -65,13 +65,7 @@ module.exports = {
     '!src/admin/admin-audit.interceptor.ts',
     '!src/qa/model-router.service.ts',
     '!src/qa/llm-alert.service.ts',
-    // 引擎分支面大，单独抬测；门禁先盯编排/client/mock
-    '!src/qa/fastgpt-qa.engine.ts',
     '!src/common/http-logging.middleware.ts',
-    // 控制器面大、单测浅；门禁盯服务层关键路径
-    '!src/platform/platform.controller.ts',
-    // 大服务分支依赖慢盘 Excel 用例；P0 盯 lock/memory
-    '!src/import/import-job.service.ts',
   ],
   coverageThreshold: {
     // 注意：不要在此写 global——Jest 与路径阈值并存时会把 global 算偏；
@@ -97,6 +91,10 @@ module.exports = {
     './src/import/import-lock.ts': { branches: 60, functions: 60, lines: 80, statements: 80 },
     './src/usage/capacity-guard.service.ts': { branches: 60, functions: 60, lines: 70, statements: 70 },
     './src/usage/usage-webhook.service.ts': { branches: 60, functions: 60, lines: 80, statements: 80 },
+    // P1 关键路径文件
+    './src/qa/fastgpt-qa.engine.ts': { branches: 50, functions: 60, lines: 60, statements: 60 },
+    './src/import/import-job.service.ts': { branches: 50, functions: 60, lines: 60, statements: 60 },
+    './src/platform/platform.controller.ts': { branches: 50, functions: 60, lines: 60, statements: 60 },
   },
   coverageReporters: ['text', 'lcov', 'json-summary'],
   // WSL/D: 慢盘 + exceljs 可达 2min+；避免默认/60s 误杀

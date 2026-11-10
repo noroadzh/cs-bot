@@ -912,7 +912,131 @@ describe('ImportJobService 审核流转', () => {
       expect(poolQuery).toHaveBeenCalledTimes(5);
     });
   });
+});
 
+describe('ImportJobService startParse / lock / 委托路径', () => {
+  let svc: ImportJobService;
+
+  beforeAll(() => setConfig());
+  afterAll(() => resetConfig());
+  beforeEach(() => {
+    poolQuery.mockReset();
+    poolConnect.mockReset().mockResolvedValue({
+      query: (sql: string, params?: unknown[]) =>
+        /^\s*(BEGIN|COMMIT|ROLLBACK)\b/i.test(sql)
+          ? Promise.resolve({ rows: [], rowCount: 0 })
+          : poolQuery(sql, params),
+      release: jest.fn(),
+    });
+    fsRm.mockReset().mockResolvedValue(undefined);
+    svc = makeSvc();
+  });
+
+  it('onModuleInit：中断 parsing + resetOnBoot', async () => {
+    poolQuery.mockResolvedValue({ rows: [], rowCount: 0 });
+    const reset = jest.spyOn(svc['lock'], 'resetOnBoot').mockResolvedValue(undefined as any);
+    await svc.onModuleInit();
+    expect(reset).toHaveBeenCalled();
+    expect(poolQuery.mock.calls[0][0]).toContain("status='parsing'");
+  });
+
+  it('setDatasetClient / setSearchClient 可注入', () => {
+    const ds = { ensureDataset: jest.fn(), writeBatch: jest.fn(), deleteDataset: jest.fn() };
+    const search = { searchSimilar: jest.fn() };
+    svc.setDatasetClient(ds as any);
+    svc.setSearchClient(search as any);
+    expect(svc['getDatasetClient']()).toBe(ds);
+    expect(svc['getSearchClient']()).toBe(search);
+  });
+
+  it('startParse：job 不存在 → 404', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [] });
+    await expect(svc.startParse('missing')).rejects.toMatchObject({ status: HttpStatus.NOT_FOUND });
+  });
+
+  it('startParse：非 uploaded → 409 IMPORT_BAD_STATE', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [jobRow({ status: 'parsed' })] });
+    await expect(svc.startParse('job-0001')).rejects.toMatchObject({ status: HttpStatus.CONFLICT });
+  });
+
+  it('startParse：uploaded → 抢锁入队并返回 job', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [jobRow()] });
+    jest.spyOn(svc['lock'], 'acquire').mockResolvedValue(undefined as any);
+    jest.spyOn(svc['lock'], 'release').mockResolvedValue(undefined as any);
+    jest.spyOn(svc['tasks'], 'enqueue').mockReturnValue(true);
+    const job = await svc.startParse('job-0001');
+    expect(job.id).toBe('job-0001');
+    expect(svc['lock'].acquire).toHaveBeenCalledWith('job-0001', 'parsing');
+  });
+
+  it('startParse：队列满 → 释锁并 409 IMPORT_BUSY', async () => {
+    poolQuery.mockResolvedValueOnce({ rows: [jobRow()] });
+    jest.spyOn(svc['lock'], 'acquire').mockResolvedValue(undefined as any);
+    const release = jest.spyOn(svc['lock'], 'release').mockResolvedValue(undefined as any);
+    jest.spyOn(svc['tasks'], 'enqueue').mockReturnValue(false);
+    await expect(svc.startParse('job-0001')).rejects.toMatchObject({ status: HttpStatus.CONFLICT });
+    expect(release).toHaveBeenCalledWith('job-0001');
+  });
+
+  it('forceReleaseImportLock 委托 ImportLock', async () => {
+    jest.spyOn(svc['lock'], 'forceRelease').mockResolvedValue({ released: true } as any);
+    await expect(svc.forceReleaseImportLock()).resolves.toEqual({ released: true });
+  });
+
+  it('countJobsByStatus / countItemsByStatus / listUnpaired 委托查询层', async () => {
+    poolQuery
+      .mockResolvedValueOnce({ rows: [{ status: 'uploaded', n: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ review_status: 'pending', n: 2 }] })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [{ total: 0 }] });
+    await svc.countJobsByStatus();
+    await svc.countItemsByStatus('job-0001');
+    await svc.listUnpaired('job-0001');
+    expect(poolQuery.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('parseJob：finally 总会释锁（即使解析失败）', async () => {
+    const acquire = jest.spyOn(svc as any, 'acquireImportLock').mockResolvedValue(undefined);
+    const release = jest.spyOn(svc as any, 'releaseImportLock').mockResolvedValue(undefined);
+    poolQuery.mockResolvedValue({ rows: [] });
+    await expect(svc.parseJob('job-0001')).rejects.toBeTruthy();
+    expect(acquire).toHaveBeenCalledWith('job-0001', 'parsing');
+    expect(release).toHaveBeenCalledWith('job-0001');
+  });
+
+  it('confirm：finally 总会释锁；rollback/retry 可调用', async () => {
+    const acquire = jest.spyOn(svc as any, 'acquireImportLock').mockResolvedValue(undefined);
+    const release = jest.spyOn(svc as any, 'releaseImportLock').mockResolvedValue(undefined);
+    poolQuery.mockResolvedValue({ rows: [] });
+    await expect(svc.confirm('job-0001', [])).rejects.toBeTruthy();
+    expect(acquire).toHaveBeenCalledWith('job-0001', 'importing');
+    expect(release).toHaveBeenCalledWith('job-0001');
+    // rollback/retry：缺失 job 时实现可能 resolve 或 reject，只要求调用不挂死
+    await Promise.allSettled([svc.rollback('job-0001'), svc.retry('job-0001')]);
+  });
+
+  it('惰性 client / guardMemory / updateStatus / cleanupSource', async () => {
+    setConfig({
+      FASTGPT_BASE_URL: 'http://fg.example',
+      FASTGPT_API_KEY: 'k'.repeat(8),
+      FASTGPT_DATASET_IDS: 'ds1',
+      IMPORT_MEMORY_LIMIT_MB: 999999,
+      IMPORT_RULES_FILE: '',
+      IMPORT_BLACKLIST_FILE: '',
+    });
+    const local = makeSvc();
+    expect(local['getDatasetClient']()).toBeTruthy();
+    expect(local['getSearchClient']()).toBeTruthy();
+    expect(local['getCleaner']()).toBeTruthy();
+    expect(local['getBlacklist']()).toBeTruthy();
+    await local['guardMemory']();
+    poolQuery.mockResolvedValue({ rows: [], rowCount: 1 });
+    await local['updateStatus']('job-0001', 'parsed');
+    await local['updateStatus']('job-0001', 'parsed', 3);
+    await local['updateStatusUnlessRolledBack']('job-0001', 'approved');
+    await local['cleanupSource']('job-0001');
+    expect(fsRm).toHaveBeenCalled();
+  });
 });
 
 /** GROUP BY review_status 的行形状 */

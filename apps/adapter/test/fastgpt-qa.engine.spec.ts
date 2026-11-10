@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { ErrCode, type AskReq, type AskResult } from '@cs-bot/shared';
 import { setConfig, resetConfig } from './__setup__/test-helpers.js';
 
+type AnyFn = (...args: any[]) => any;
 const post = jest.fn<(url: string, body: any) => Promise<any>>();
 
 jest.mock('axios', () => ({
@@ -315,5 +316,73 @@ describe('FastGPTQaEngine', () => {
 
     expect(value.answer).toBe('空答案');
     expect(value.source).toBe('primary');
+  });
+
+  it('probeHealth：连续健康满 5 分钟后标记 healthy', async () => {
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const engine = new FastGPTQaEngine(ConfigService as any, { search: async () => null } as any);
+    (engine as any).healthy = false;
+    (engine as any).healthySince = null;
+    const get = jest.fn(async () => ({ status: 200 }));
+    (engine as any).primaryHttp = { get };
+    const t0 = 1_000;
+    await expect(engine.probeHealth(t0)).resolves.toBe(true);
+    expect((engine as any).healthy).toBe(false);
+    await expect(engine.probeHealth(t0 + 5 * 60_000)).resolves.toBe(true);
+    expect((engine as any).healthy).toBe(true);
+  });
+
+  it('router：高分主路直接返回；低分切次选', async () => {
+    setConfig({ CONFIDENCE_THRESHOLD: 0.75, MODEL_MODE: 'cloud' });
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const ep1 = { id: 'm1', baseUrl: 'http://a', apiKey: 'k' };
+    const ep2 = { id: 'm2', baseUrl: 'http://b', apiKey: 'k' };
+    const router = {
+      list: () => [ep1, ep2],
+      pick: () => ep1,
+      pickFallback: () => ep2,
+    };
+    const chat = jest.fn<AnyFn>()
+      .mockResolvedValueOnce({ answer: 'low', quotes: [], score: 0.2 })
+      .mockResolvedValueOnce({ answer: 'fb', quotes: [], score: 0.9 });
+    const fastgpt = { chat, forEndpoint: () => ({ chat }) };
+    const engine = new FastGPTQaEngine(
+      ConfigService as any,
+      { search: async () => null } as any,
+      fastgpt as any,
+      router as any,
+    );
+    const value = expectOk(await engine.ask(req()));
+    expect(value.answer).toBe('fb');
+    expect(value.source).toBe('fallback');
+    expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  it('hybrid 不健康且有 fallback：优先 fallback 高分', async () => {
+    setConfig({
+      MODEL_MODE: 'hybrid',
+      CONFIDENCE_THRESHOLD: 0.75,
+      LLM_FALLBACK_BASE_URL: 'https://fb.example.com',
+      LLM_FALLBACK_API_KEY: 'fb-key',
+      LLM_RETRY_DELAY_MS: 1,
+    });
+    const { FastGPTQaEngine } = await import('../src/qa/fastgpt-qa.engine.js');
+    const { ConfigService } = await import('../src/config/config.service.js');
+    const engine = new FastGPTQaEngine(ConfigService as any, { search: async () => null } as any);
+    (engine as any).healthy = false;
+    (engine as any).lastProbeAt = Date.now();
+    (engine as any).fallback = {
+      post: jest.fn(async () => ({
+        data: {
+          choices: [{ message: { content: 'fb-first' } }],
+          responseData: [{ quoteList: [{ id: '1', content: 'c', score: 0.95 }] }],
+        },
+      })),
+    };
+    const value = expectOk(await engine.ask(req()));
+    expect(value.answer).toBe('fb-first');
+    expect(value.source).toBe('fallback');
   });
 });
